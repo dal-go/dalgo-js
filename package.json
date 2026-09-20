@@ -1,0 +1,45 @@
+{
+  "name": "@dal-go/dalgo",
+  "version": "0.1.0",
+  "description": "Database abstraction layer for TypeScript and browser applications",
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "pnpm lint && pnpm test && pnpm build",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dal-go/dalgo-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dal-go/dalgo-js/issues"
+  },
+  "homepage": "https://dalgo.io/",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.11.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.1"
+  }
+}
