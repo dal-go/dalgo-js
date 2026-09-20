@@ -20,7 +20,7 @@ pnpm add @dal-go/dalgo @dal-go/dalgo2firestore firebase
 ```ts
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { collection } from "@dal-go/dalgo";
+import { collection, key } from "@dal-go/dalgo";
 import { FirestoreDatabase } from "@dal-go/dalgo2firestore";
 
 interface Item {
@@ -31,6 +31,7 @@ interface Item {
 
 const app = initializeApp(firebaseConfig);
 const db = new FirestoreDatabase(getFirestore(app));
+const spaceKey = key("spaces", spaceId);
 const items = collection<Item>("items").in(spaceKey);
 
 const page = await db.query(
