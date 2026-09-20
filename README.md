@@ -12,8 +12,11 @@ uses Firebase's modular Web SDK and therefore works directly in browsers.
 ## Install
 
 ```sh
-pnpm add @dal-go/dalgo @dal-go/dalgo2firestore firebase
+pnpm add github:dal-go/dalgo-js github:dal-go/dalgo2firestore-js firebase
 ```
+
+The repositories currently build as `@dal-go/dalgo` and
+`@dal-go/dalgo2firestore`; the first npm publication has not been performed.
 
 ## Query from a browser
 
