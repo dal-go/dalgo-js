@@ -18,8 +18,9 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "pnpm lint && pnpm test && pnpm build",
+    "check": "eslint . && vitest run && tsc -p tsconfig.build.json",
     "lint": "eslint .",
+    "prepare": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest"
   },
