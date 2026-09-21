@@ -42,6 +42,7 @@ interface Budget {
   readonly maxRetainedBytes: number;
   readonly signal?: AbortSignal;
   readonly memo: WeakMap<RecursiveDTQLQuery, Map<string, Promise<Data[]>>>;
+  readonly existsMemo: WeakMap<RecursiveDTQLQuery, Map<string, Promise<boolean>>>;
   readonly rowIDs: WeakMap<object, number>;
   nextRowID: number;
 }
@@ -49,6 +50,8 @@ interface Budget {
 const defaults = { maxFetchedRows: 10_000, maxResultRows: 10_000, maxCandidateEvaluations: 100_000, maxRetainedBytes: 16 * 1024 * 1024 };
 const boundSchemas = new WeakMap<RecursiveDTQLQuery, DTQLSchema>();
 const aggregateFunctions = new Set(["count", "sum", "avg", "min", "max", "first", "last"]);
+const freeOuterBindings = new WeakMap<RecursiveDTQLQuery, boolean>();
+const bindingStack: RecursiveDTQLQuery[] = [];
 
 /** Parses the additive recursive wire model. Legacy parseDTQL stays unchanged. */
 export function parseRecursiveDTQL(input: unknown, schema: DTQLSchema): RecursiveDTQLQuery {
@@ -97,7 +100,7 @@ export async function executeRecursiveDTQLQuery(
     maxCandidateEvaluations: options.maxCandidateEvaluations ?? defaults.maxCandidateEvaluations,
     maxRetainedBytes: options.maxRetainedBytes ?? defaults.maxRetainedBytes,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
-    memo: new WeakMap(), rowIDs: new WeakMap(), nextRowID: 0,
+    memo: new WeakMap(), existsMemo: new WeakMap(), rowIDs: new WeakMap(), nextRowID: 0,
   };
   for (const key of ["maxFetchedRows", "maxResultRows", "maxCandidateEvaluations", "maxRetainedBytes"] as const) {
     if (!Number.isSafeInteger(budget[key]) || budget[key] <= 0) throw new TypeError(`query_limit at root: ${key} must be a positive safe integer`);
@@ -128,6 +131,9 @@ async function evaluateQuery(executor: QueryExecutor, query: RecursiveDTQLQuery,
   groups = groups.slice(start, query.limit === undefined ? undefined : start + query.limit);
   const output = await projectGroups(executor, query, groups, budget, options, path);
   chargeResults(budget, output.length, path);
+  // The projected rows are new retained values in addition to any fetched leaf
+  // records. This also accounts for values held by the nested-result memo.
+  chargeBytes(budget, output, path);
   return output;
 }
 
@@ -207,10 +213,23 @@ async function queryExists(executor: QueryExecutor, query: RecursiveDTQLQuery, o
   return groups.slice(start, query.limit === undefined ? undefined : start + query.limit).length > 0;
 }
 
-// Cache nested scalar/set evaluations by the actual outer-row binding. This is
-// conservative for uncertain recursive shapes: no result crosses bindings.
+async function evaluateExists(executor: QueryExecutor, query: RecursiveDTQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<boolean> {
+  const key = freeOuterBindings.get(query) === true ? bindingKey(outer, budget) : "uncorrelated";
+  let entries = budget.existsMemo.get(query);
+  if (entries === undefined) { entries = new Map(); budget.existsMemo.set(query, entries); }
+  let result = entries.get(key);
+  if (result === undefined) {
+    result = queryExists(executor, query, outer, budget, options, path);
+    entries.set(key, result);
+  }
+  return result;
+}
+
+// Cache nested scalar/set evaluations by the actual outer-row binding. The
+// binder resolves unqualified fields into resolvedSources, allowing this check
+// to prove that a node has no free outer binding and safely run it once.
 async function evaluateNested(executor: QueryExecutor, query: RecursiveDTQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Data[]> {
-  const key = outer.size === 0 ? "root" : bindingKey(outer, budget);
+  const key = freeOuterBindings.get(query) === true ? bindingKey(outer, budget) : "uncorrelated";
   let entries = budget.memo.get(query);
   if (entries === undefined) { entries = new Map(); budget.memo.set(query, entries); }
   let result = entries.get(key);
@@ -270,7 +289,7 @@ async function condition(executor: QueryExecutor, value: RecursiveDTQLCondition,
     return unknown ? undefined : value.kind === "and";
   }
   if (value.kind === "exists" || value.kind === "not-exists") {
-    const exists = await queryExists(executor, value.query, row, budget, options, `${path}.query`);
+    const exists = await evaluateExists(executor, value.query, row, budget, options, `${path}.query`);
     return value.kind === "exists" ? exists : !exists;
   }
   const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>;
@@ -297,7 +316,7 @@ async function condition(executor: QueryExecutor, value: RecursiveDTQLCondition,
 async function expression(executor: QueryExecutor, value: RecursiveDTQLExpression, row: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string, group?: readonly Environment[]): Promise<unknown> {
   if (value.kind === "query") {
     const rows = await evaluateNested(executor, value.query, row, budget, options, `${path}.query`);
-    if (rows.length > 1) shape(`${path}.query`, "scalar query returned more than one row");
+    if (rows.length > 1) cardinality(`${path}.query`, "scalar query returned more than one row");
     const first = rows[0];
     if (first === undefined) return null;
     const values = Object.values(first);
@@ -354,6 +373,7 @@ function chargeResults(budget: Budget, count: number, path: string): void { budg
 function chargeBytes(budget: Budget, value: unknown, path: string): void { budget.retained += new TextEncoder().encode(JSON.stringify(value)).byteLength; if (budget.retained > budget.maxRetainedBytes) limit(path, "retained_bytes"); }
 function cancelled(budget: Budget, path: string): void { if (budget.signal?.aborted === true) throw budget.signal.reason ?? new DOMException(`query cancelled at ${path}`, "AbortError"); }
 function shape(path: string, reason: string): never { throw new TypeError(`shape at ${path}: ${reason}`); }
+function cardinality(path: string, reason: string): never { throw new RangeError(`cardinality at ${path.replace(/^root\./, "")}: ${reason}`); }
 function limit(path: string, counter: string): never { throw new RangeError(`query_limit at ${path}: ${counter}`); }
 
 type BoundSource = ReadonlySet<string>;
@@ -364,7 +384,10 @@ function at(path: string, suffix: string): string { return path === "" ? suffix 
 // Binding is deliberately separate from execution. It rejects missing and
 // forward aliases before a provider sees a leaf query, while retaining source
 // names in the public AST for canonical serialization.
-function bindQuery(query: RecursiveDTQLQuery, schema: DTQLSchema, outers: readonly ReadonlyMap<string, BoundSource>[], path: string): BoundSource {
+function bindQuery(query: RecursiveDTQLQuery, schema: DTQLSchema, outers: readonly ReadonlyMap<string, BoundSource>[], path: string, projectionRequired = true): BoundSource {
+  freeOuterBindings.set(query, false);
+  bindingStack.push(query);
+  try {
   const local = bindRelation(query.from, schema, outers, path === "" ? "from" : `${path}.from`);
   bindCondition(query.where, schema, local, outers, at(path, "where"));
   for (const [index, expression] of (query.groupBy ?? []).entries()) bindExpression(expression, schema, local, outers, `${at(path, "groupBy")}[${index.toString()}]`, "ordinary");
@@ -379,7 +402,12 @@ function bindQuery(query: RecursiveDTQLQuery, schema: DTQLSchema, outers: readon
       scalarShape(column.expression.query, `${columnPath}.query`);
     }
   }
-  return outputFields(query, local, path);
+  // EXISTS observes only whether the logical pipeline has a row. It neither
+  // projects columns nor needs a derived relation output schema.
+  return projectionRequired ? outputFields(query, local, path) : new Set();
+  } finally {
+    bindingStack.pop();
+  }
 }
 
 function bindRelation(relation: RecursiveDTQLRelation, schema: DTQLSchema, outers: readonly ReadonlyMap<string, BoundSource>[], path: string): ReadonlyMap<string, BoundSource> {
@@ -429,17 +457,25 @@ function bindField(reference: QueryFieldReference, local: ReadonlyMap<string, Bo
     const candidates = [...local.entries()].filter(([, fields]) => fields.has(reference.field));
     if (candidates.length > 1) throw new TypeError(`${category} at ${path}: ambiguous unqualified field ${reference.field}`);
     if (candidates.length === 1) { const [alias] = candidates[0] ?? []; if (alias !== undefined) resolvedSources.set(reference, alias); return; }
-    for (const scope of outers) {
+    for (const [index, scope] of outers.entries()) {
       const outerCandidates = [...scope.entries()].filter(([, fields]) => fields.has(reference.field));
       if (outerCandidates.length > 1) throw new TypeError(`${category} at ${path}: ambiguous unqualified field ${reference.field}`);
-      if (outerCandidates.length === 1) { const [alias] = outerCandidates[0] ?? []; if (alias !== undefined) resolvedSources.set(reference, alias); return; }
+      if (outerCandidates.length === 1) { const [alias] = outerCandidates[0] ?? []; if (alias !== undefined) resolvedSources.set(reference, alias); markOuterBinding(index); return; }
     }
     throw new TypeError(`${category} at ${path}: unknown field ${reference.field}`);
   }
   let fields = local.get(reference.source);
-  if (fields === undefined) for (const scope of outers) { fields = scope.get(reference.source); if (fields !== undefined) break; }
+  if (fields === undefined) for (const [index, scope] of outers.entries()) { fields = scope.get(reference.source); if (fields !== undefined) { markOuterBinding(index); break; } }
   if (fields === undefined) throw new TypeError(`${category} at ${path}.source: unknown source alias ${reference.source}`);
   if (!fields.has(reference.field)) throw new TypeError(`${category} at ${path}: unknown field ${reference.field}`);
+}
+
+// This is lexical provenance, not an alias-name check. Scope zero belongs to
+// the immediate parent query, so it marks only the child; each outer scope
+// crossed marks one additional enclosing query. A later JOIN may reuse an
+// alias but cannot change the scope through which a field was bound.
+function markOuterBinding(scopeIndex: number): void {
+  for (const query of bindingStack.slice(-(scopeIndex + 1))) freeOuterBindings.set(query, true);
 }
 
 function bindExpression(value: RecursiveDTQLExpression, schema: DTQLSchema, local: ReadonlyMap<string, BoundSource>, outers: readonly ReadonlyMap<string, BoundSource>[], path: string, context: "ordinary" | "column" | "membership" = "ordinary"): void {
@@ -456,7 +492,7 @@ function bindExpression(value: RecursiveDTQLExpression, schema: DTQLSchema, loca
 function bindCondition(value: RecursiveDTQLCondition | undefined, schema: DTQLSchema, local: ReadonlyMap<string, BoundSource>, outers: readonly ReadonlyMap<string, BoundSource>[], path: string): void {
   if (value === undefined) return;
   if (value.kind === "and" || value.kind === "or") { value.conditions.forEach((child, index) => { bindCondition(child, schema, local, outers, `${path}.${value.kind}[${index.toString()}]`); }); return; }
-  if (value.kind === "exists" || value.kind === "not-exists") { bindQuery(value.query, schema, [local, ...outers], `${path}.query`); return; }
+  if (value.kind === "exists" || value.kind === "not-exists") { bindQuery(value.query, schema, [local, ...outers], `${path}.query`, false); return; }
   const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>;
   bindExpression(comparison.left, schema, local, outers, `${path}.left`);
   const membership = comparison.operator === "in" || comparison.operator === "not-in";

@@ -38,7 +38,7 @@ describe("recursive DTQL fixtures", () => {
       if (entry.error !== undefined) {
         const expected = JSON.parse(fixture(entry.error)) as { readonly category: string; readonly path: string; readonly message: string };
         if (expected.category === "cardinality") {
-          await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), parseRecursiveDTQL(fixture(input), schema))).rejects.toThrow(expected.message);
+          await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), parseRecursiveDTQL(fixture(input), schema))).rejects.toThrow(`${expected.category} at ${expected.path}: ${expected.message}`);
         } else {
           expect(() => parseRecursiveDTQL(fixture(input), schema)).toThrow(`${expected.category} at ${expected.path}`);
           expect(() => parseRecursiveDTQL(fixture(input), schema)).toThrow(expected.message);
@@ -137,6 +137,89 @@ describe("recursive DTQL fixtures", () => {
     };
     const rows = (await executeRecursiveDTQLQuery(executor, query)).records.map((record) => record.data);
     expect(rows).toEqual([{ id: 1, matched: 1 }, { id: 2, matched: null }]);
+  });
+
+  it("keeps a derived base correlated when a later JOIN reuses its outer alias", async () => {
+    const scopedSchema: DTQLSchema = { tables: [{ name: "Outer", fields: ["id"] }, { name: "Inner", fields: ["value"] }, { name: "Side", fields: ["id"] }] };
+    const query = parseRecursiveDTQL("from: {name: Outer, alias: x}\norderBy: [{field: id, source: x}]\ncolumns:\n  - {field: id, source: x}\n  - query:\n      as: matched\n      from:\n        query:\n          as: d\n          from: {name: Inner, alias: i}\n          where: {left: {field: value, source: i}, op: '==', right: {field: id, source: x}}\n          columns: [{field: value, source: i}]\n        joins:\n          - from: {name: Side, alias: x}\n            on: [{left: {field: value, source: d}, op: '==', right: {field: id, source: x}}]\n      columns: [{field: value, source: d}]\n", scopedSchema);
+    const executor: QueryExecutor = {
+      async query<T>(leaf: StructuredQuery<T>) {
+        const rows = leaf.source.name === "Outer"
+          ? [{ key: key("Outer", "1"), exists: true as const, data: { id: 1 } }, { key: key("Outer", "2"), exists: true as const, data: { id: 2 } }]
+          : leaf.source.name === "Inner"
+            ? [{ key: key("Inner", "1"), exists: true as const, data: { value: 1 } }, { key: key("Inner", "2"), exists: true as const, data: { value: 2 } }]
+            : [{ key: key("Side", "1"), exists: true as const, data: { id: 1 } }, { key: key("Side", "2"), exists: true as const, data: { id: 2 } }];
+        return { records: rows as never };
+      },
+    };
+    const rows = (await executeRecursiveDTQLQuery(executor, query)).records.map((record) => record.data);
+    expect(rows).toEqual([{ id: 1, matched: 1 }, { id: 2, matched: 2 }]);
+  });
+
+  it("executes an uncorrelated nested scalar once across parent rows", async () => {
+    const scopedSchema: DTQLSchema = { tables: [{ name: "Outer", fields: ["id"] }, { name: "Inner", fields: ["value"] }] };
+    const query = parseRecursiveDTQL("from: {name: Outer, alias: o}\norderBy: [{field: id, source: o}]\ncolumns:\n  - {field: id, source: o}\n  - query:\n      as: shared\n      from: {name: Inner, alias: i}\n      columns: [{field: value, source: i}]\n", scopedSchema);
+    let innerReads = 0;
+    const executor: QueryExecutor = {
+      async query<T>(leaf: StructuredQuery<T>) {
+        if (leaf.source.name === "Inner") innerReads += 1;
+        const records = leaf.source.name === "Outer"
+          ? [{ key: key("Outer", "1"), exists: true as const, data: { id: 1 } }, { key: key("Outer", "2"), exists: true as const, data: { id: 2 } }]
+          : [{ key: key("Inner", "1"), exists: true as const, data: { value: 7 } }];
+        return { records: records as never };
+      },
+    };
+    await expect(executeRecursiveDTQLQuery(executor, query)).resolves.toMatchObject({ records: [{ data: { id: 1, shared: 7 } }, { data: { id: 2, shared: 7 } }] });
+    expect(innerReads).toBe(1);
+  });
+
+  it("executes an uncorrelated EXISTS once across parent rows", async () => {
+    const scopedSchema: DTQLSchema = { tables: [{ name: "Outer", fields: ["id"] }, { name: "Inner", fields: ["value"] }] };
+    const query = parseRecursiveDTQL("from: {name: Outer, alias: o}\nwhere:\n  exists:\n    query:\n      from: {name: Inner, alias: i}\n      where: {left: {field: value, source: i}, op: '==', right: {value: 7}}\ncolumns: [{field: id, source: o}]\n", scopedSchema);
+    let innerReads = 0;
+    const executor: QueryExecutor = {
+      async query<T>(leaf: StructuredQuery<T>) {
+        if (leaf.source.name === "Inner") innerReads += 1;
+        const records = leaf.source.name === "Outer"
+          ? [{ key: key("Outer", "1"), exists: true as const, data: { id: 1 } }, { key: key("Outer", "2"), exists: true as const, data: { id: 2 } }]
+          : [{ key: key("Inner", "1"), exists: true as const, data: { value: 7 } }];
+        return { records: records as never };
+      },
+    };
+    await expect(executeRecursiveDTQLQuery(executor, query)).resolves.toMatchObject({ records: [{ data: { id: 1 } }, { data: { id: 2 } }] });
+    expect(innerReads).toBe(1);
+  });
+
+  it("keeps an uncorrelated scalar shared when its EXISTS uses the scalar's local row", async () => {
+    const scopedSchema: DTQLSchema = { tables: [{ name: "Outer", fields: ["id"] }, { name: "Inner", fields: ["value"] }, { name: "Match", fields: ["value"] }] };
+    const query = parseRecursiveDTQL("from: {name: Outer, alias: o}\ncolumns:\n  - {field: id, source: o}\n  - query:\n      as: shared\n      from: {name: Inner, alias: i}\n      where:\n        exists:\n          query:\n            from: {name: Match, alias: m}\n            where: {left: {field: value, source: m}, op: '==', right: {field: value, source: i}}\n      columns: [{field: value, source: i}]\n", scopedSchema);
+    let innerReads = 0;
+    const executor: QueryExecutor = {
+      async query<T>(leaf: StructuredQuery<T>) {
+        if (leaf.source.name === "Inner") innerReads += 1;
+        const records = leaf.source.name === "Outer"
+          ? [{ key: key("Outer", "1"), exists: true as const, data: { id: 1 } }, { key: key("Outer", "2"), exists: true as const, data: { id: 2 } }]
+          : [{ key: key(leaf.source.name, "1"), exists: true as const, data: { value: 7 } }];
+        return { records: records as never };
+      },
+    };
+    await expect(executeRecursiveDTQLQuery(executor, query)).resolves.toMatchObject({ records: [{ data: { id: 1, shared: 7 } }, { data: { id: 2, shared: 7 } }] });
+    expect(innerReads).toBe(1);
+  });
+
+  it("does not require an EXISTS body to have a collision-free output shape", async () => {
+    const query = parseRecursiveDTQL("from: {name: Customer, alias: c}\nwhere:\n  exists:\n    query:\n      from:\n        name: Customer\n        alias: inner\n        joins:\n          - from: {name: Invoice, alias: i}\n            on: [{left: {field: CustomerId, source: inner}, op: '==', right: {field: CustomerId, source: i}}]\ncolumns: [{field: CustomerId, source: c}]\n", schema);
+    const result = await executeRecursiveDTQLQuery(new MemoryExecutor(), query);
+    expect(result.records.map((record) => record.data.CustomerId)).toContain(1);
+  });
+
+  it("charges retained projected rows as well as fetched leaf records", async () => {
+    const scopedSchema: DTQLSchema = { tables: [{ name: "Small", fields: ["x"] }] };
+    const query = parseRecursiveDTQL("from: {name: Small, alias: s}\ncolumns: [{field: x, source: s}]\n", scopedSchema);
+    const executor: QueryExecutor = { async query() { return { records: [{ key: key("Small", "1"), exists: true as const, data: { x: 1 } }] }; } };
+    // {"x":1} consumes seven bytes; retaining its projected output consumes it
+    // again, so a ten-byte root-wide cap must reject the materialized result.
+    await expect(executeRecursiveDTQLQuery(executor, query, { maxRetainedBytes: 10 })).rejects.toThrow("retained_bytes");
   });
 
   it("rebinds a parsed AST after mutation before reading a leaf", async () => {
