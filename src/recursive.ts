@@ -326,6 +326,7 @@ function parseCondition(value: Record<string, unknown>, schema: DTQLSchema, path
   if (value.exists !== undefined || value.notExists !== undefined) { const yes = value.exists !== undefined; keys(value, new Set([yes ? "exists" : "notExists"]), path); const nested = raw(yes ? value.exists : value.notExists, `${path}.query`); keys(nested, new Set(["query"]), `${path}.query`); return { kind: yes ? "exists" : "not-exists", query: parseQuery(raw(nested.query, `${path}.query`), schema, `${path}.query`) }; }
   if (value.and !== undefined || value.or !== undefined) { const kind = value.and === undefined ? "or" : "and"; keys(value, new Set([kind]), path); return { kind, conditions: list(value[kind], `${path}.${kind}`).map((item, index) => parseCondition(raw(item, `${path}.${kind}[${index.toString()}]`), schema, `${path}.${kind}[${index.toString()}]`)) }; }
   keys(value, new Set(["left", "op", "right"]), path); const op = text(requireValue(value, "op", path), `${path}.op`); const operator = op === "In" ? "in" : op === "NotIn" ? "not-in" : op;
+  if (!["==", "!=", "<", "<=", ">", ">=", "in", "not-in"].includes(operator)) shape(`${path}.op`, `unsupported operator ${op}`);
   return { kind: "comparison", left: parseExpression(requireValue(value, "left", path), schema, `${path}.left`), operator: operator as never, right: parseExpression(requireValue(value, "right", path), schema, `${path}.right`) };
 }
 
@@ -333,10 +334,10 @@ function parseExpression(value: unknown, schema: DTQLSchema, path: string): Recu
   const expression = raw(value, path);
   if (expression.query !== undefined) { keys(expression, new Set(["query"]), path); return { kind: "query", query: parseQuery(raw(expression.query, `${path}.query`), schema, `${path}.query`) }; }
   if (expression.field !== undefined) return { kind: "field", field: fieldReference(expression, path) };
-  if (Object.prototype.hasOwnProperty.call(expression, "value")) return { kind: "literal", value: expression.value as string | number | boolean | null };
-  if (expression.values !== undefined) return { kind: "values", values: list(expression.values, `${path}.values`) as (string | number | boolean | null)[] };
+  if (Object.prototype.hasOwnProperty.call(expression, "value")) { keys(expression, new Set(["value"]), path); return { kind: "literal", value: expression.value as string | number | boolean | null }; }
+  if (expression.values !== undefined) { keys(expression, new Set(["values"]), path); return { kind: "values", values: list(expression.values, `${path}.values`) as (string | number | boolean | null)[] }; }
   if (expression.star === true) return { kind: "star" };
-  if (expression.aggregate !== undefined) { const aggregate = raw(expression.aggregate, `${path}.aggregate`); keys(aggregate, new Set(["function", "args", "distinct"]), `${path}.aggregate`); return { kind: "aggregate", function: text(requireValue(aggregate, "function", `${path}.aggregate`), `${path}.aggregate.function`) as never, args: list(requireValue(aggregate, "args", `${path}.aggregate`), `${path}.aggregate.args`).map((item, index) => parseExpression(item, schema, `${path}.aggregate.args[${index.toString()}]`) as DTQLExpression), ...(aggregate.distinct === true ? { distinct: true } : {}) }; }
+  if (expression.aggregate !== undefined) { keys(expression, new Set(["aggregate"]), path); const aggregate = raw(expression.aggregate, `${path}.aggregate`); keys(aggregate, new Set(["function", "args", "distinct"]), `${path}.aggregate`); return { kind: "aggregate", function: text(requireValue(aggregate, "function", `${path}.aggregate`), `${path}.aggregate.function`) as never, args: list(requireValue(aggregate, "args", `${path}.aggregate`), `${path}.aggregate.args`).map((item, index) => parseExpression(item, schema, `${path}.aggregate.args[${index.toString()}]`) as DTQLExpression), ...(aggregate.distinct === true ? { distinct: true } : {}) }; }
   shape(path, "unknown expression");
 }
 
