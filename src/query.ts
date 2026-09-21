@@ -34,6 +34,90 @@ export interface CollectionGroupSource<T> {
 
 export type QuerySource<T> = CollectionSource<T> | CollectionGroupSource<T>;
 
+/** A qualified field reference used by a relation join predicate. */
+export interface QueryFieldReference {
+  readonly field: string;
+  readonly source: string;
+}
+
+/** The currently supported backend-independent relation join kinds. */
+export type QueryJoinType = "inner" | "left";
+
+/** Case-sensitive physical JOIN preferences retained on one relation edge. */
+export type QueryJoinAlgorithm = "hash" | "merge" | "lookup" | "batchedLookup" | "nestedLoop";
+
+/** Ordered physical JOIN preferences. Each edge owns an independent list. */
+export interface QueryJoinHints {
+  readonly algorithms: readonly QueryJoinAlgorithm[];
+}
+
+/** A structured equality predicate between fields in two visible relations. */
+export interface QueryJoinPredicate {
+  readonly left: QueryFieldReference;
+  readonly operator: "==";
+  readonly right: QueryFieldReference;
+}
+
+/**
+ * A recursive, ordered relation tree used by the distinct join-aware query
+ * variant. Legacy single-source executors do not receive this model.
+ */
+export interface QueryRelation {
+  readonly name: string;
+  readonly schema?: string;
+  readonly alias?: string;
+  readonly joins: readonly QueryJoin[];
+}
+
+export interface QueryJoin {
+  readonly type: QueryJoinType;
+  readonly from: QueryRelation;
+  readonly on: readonly QueryJoinPredicate[];
+  readonly hints?: QueryJoinHints;
+}
+
+/** A structured expression reserved for join-aware DTQL pipeline clauses. */
+export type DTQLExpression =
+  | { readonly kind: "field"; readonly field: QueryFieldReference }
+  | { readonly kind: "literal"; readonly value: string | number | boolean | null }
+  | { readonly kind: "values"; readonly values: readonly (string | number | boolean | null)[] }
+  | { readonly kind: "param"; readonly name: string }
+  | { readonly kind: "star" }
+  | {
+    readonly kind: "aggregate";
+    readonly function: "count" | "sum" | "avg" | "min" | "max" | "first" | "last";
+    readonly args: readonly DTQLExpression[];
+    readonly distinct?: boolean;
+  }
+  | { readonly kind: "binary"; readonly operator: "+" | "-" | "*" | "/"; readonly left: DTQLExpression; readonly right: DTQLExpression };
+
+/** A named projection in a DTQL query. */
+export interface QueryColumn {
+  readonly expression?: DTQLExpression;
+  readonly wildcard?: { readonly source?: string; readonly exclude: readonly string[] };
+  readonly as?: string;
+}
+
+/** A predicate in a join-aware DTQL query. */
+export interface DTQLQueryFilter {
+  readonly field: QueryFieldReference;
+  readonly operator: QueryOperator;
+  readonly value: unknown;
+}
+
+/** A structured HAVING predicate; operators may grow with the expression model. */
+export interface DTQLHaving {
+  readonly left: DTQLExpression;
+  readonly operator: QueryOperator;
+  readonly right: DTQLExpression;
+}
+
+/** An ordering term in a join-aware DTQL query. */
+export interface DTQLQueryOrder {
+  readonly field: QueryFieldReference;
+  readonly direction: OrderDirection;
+}
+
 export interface QueryFilter<T> {
   readonly field: FieldPath<T>;
   readonly operator: QueryOperator;
@@ -59,6 +143,29 @@ export interface StructuredQuery<T> {
   readonly startAfter?: QueryCursor | undefined;
   readonly endAt?: QueryCursor | undefined;
   readonly endBefore?: QueryCursor | undefined;
+}
+
+/**
+ * A parsed DTQL query that needs a join-aware execution entrypoint. It has no
+ * `source` property, making it intentionally incompatible with legacy
+ * `QueryExecutor.query(StructuredQuery)` implementations.
+ */
+export interface JoinedDTQLQuery {
+  readonly kind: "joined-dtql";
+  readonly from: QueryRelation;
+  readonly filters: readonly DTQLQueryFilter[];
+  readonly orders: readonly DTQLQueryOrder[];
+  readonly columns?: readonly QueryColumn[];
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly groupBy?: readonly DTQLExpression[];
+  readonly having?: DTQLHaving;
+}
+
+export type ParsedDTQLQuery<T> = StructuredQuery<T> | JoinedDTQLQuery;
+
+export function isJoinedDTQLQuery<T>(query: ParsedDTQLQuery<T>): query is JoinedDTQLQuery {
+  return "kind" in query;
 }
 
 export interface QueryPage<T> {

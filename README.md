@@ -67,6 +67,66 @@ const query = collectionGroup<Item>("items")
   .build();
 ```
 
+## Recursive DTQL joins
+
+`parseDTQL` returns a distinct `JoinedDTQLQuery` for an aliased relation or a
+relation tree. Execute it through `executeJoinedDTQLQuery`, passing the same
+`DTQLSchema` used to parse the text when columns contain a source-qualified
+wildcard. The executor expands wildcard fields in that schema's declared
+order.
+
+```ts
+const parsed = parseDTQL(dtqlText, schema);
+if (isJoinedDTQLQuery(parsed)) {
+  const page = await executeJoinedDTQLQuery(adapter, parsed, { schema });
+}
+```
+
+The generic executor scans each relation through `QueryExecutor.query` once;
+it does not pass a joined query into an existing adapter. A relation with no
+`schema` scans its collection name directly. A schema-qualified relation needs
+an explicit `resolveSource` callback, which must preserve the complete
+`schema` and `name` identity understood by that adapter:
+
+```ts
+await executeJoinedDTQLQuery(adapter, parsed, {
+  schema,
+  resolveSource: (relation) => ({
+    kind: "collection",
+    name: `${relation.schema}.${relation.name}`,
+  }),
+});
+```
+
+Each JOIN may carry an ordered `hints.algorithms` list. The case-sensitive
+identifiers are `hash`, `merge`, `lookup`, `batchedLookup`, and `nestedLoop`.
+The generic executor honors `hash` when its equality index applies and
+`nestedLoop` when explicitly preferred; it skips the other three until they
+are implemented. Hints never affect logical results or ordering. `nestedLoop`
+deliberately evaluates bounded candidate pairs and can fail with `join_plan` at
+the configured candidate limit.
+
+`@dalgo/core` currently ships no `QueryExecutor` adapter. Its in-repository
+memory executor is tested with generic unqualified scans and with the explicit
+schema mapping above. The local adapter inventory is:
+
+| Adapter checkout or package | Imports current `@dalgo/core` and exposes `QueryExecutor.query` | Recursive JOIN coverage |
+| --- | --- | --- |
+| This package's memory test executor | Yes | Generic executor tests cover it. |
+| `dalgo-http-adapters/packages/firestore` | Yes | No JOIN integration test or resolver. |
+| `dalgo-http-adapters/packages/indexeddb` | Yes | No JOIN integration test or resolver. |
+| Sibling `dalgo2firestore-js` and `dalgo2indexeddb-js` | No, both import legacy `@dal-go/dalgo` | No current-core JOIN support. |
+| Sibling `dalgo2firebase-rtdb-js` | No package source is present in the local checkout | No current-core JOIN support. |
+| `dalgo-http-adapters/packages/firebase-rtdb` and the remaining HTTP packages | No, they import legacy `@dal-go/dalgo` | No current-core JOIN support. |
+
+The current-core Firestore and IndexedDB packages need adapter-owned resolver
+and integration tests before they can claim generic JOIN support. Legacy and
+untested adapters do not gain native or generic JOIN support from this package.
+Their separate dependency pins make an adapter integration test inappropriate
+in this repository; each adapter migration needs its own test. Without
+`resolveSource`, a schema-qualified query fails with `join_plan` before any
+output is returned.
+
 ## Security boundary
 
 DALgo does not turn browser code into a trusted backend. A Firestore browser

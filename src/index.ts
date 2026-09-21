@@ -3,5 +3,6 @@ export * from "./database.js";
 export * from "./dtql.js";
 export * from "./errors.js";
 export * from "./key.js";
+export * from "./join.js";
 export * from "./query.js";
 export * from "./record.js";
