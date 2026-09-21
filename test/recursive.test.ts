@@ -23,6 +23,34 @@ class MemoryExecutor implements QueryExecutor {
 function fixture(name: string): string { return readFileSync(new URL(name, root), "utf8"); }
 
 describe("recursive DTQL fixtures", () => {
+  it("rejects extra or mixed keys on star expressions", () => {
+    expect(() => parseRecursiveDTQL("from: {name: Invoice, alias: i}\ncolumns: [{star: true, unexpected: 1}]\n", schema))
+      .toThrow("shape at root.columns[0]: unsupported key unexpected");
+    expect(() => parseRecursiveDTQL("from: {name: Invoice, alias: i}\ncolumns: [{aggregate: {function: count, args: [{star: true, field: InvoiceId}]}}]\n", schema))
+      .toThrow("shape at root.columns[0].aggregate.args[0]: unsupported key star");
+  });
+
+  it("forms a global group when HAVING alone contains an aggregate", async () => {
+    const executor = new MemoryExecutor();
+    const grouped = parseRecursiveDTQL(`
+from: {name: Invoice, alias: i}
+having:
+  and:
+    - {left: {aggregate: {function: count, args: [{star: true}]}}, op: '>', right: {value: 1}}
+    - {left: {value: 0}, op: '<', right: {aggregate: {function: count, args: [{star: true}]}}}
+`, schema);
+    const rows = (await executeRecursiveDTQLQuery(executor, grouped)).records;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.data).toMatchObject({ InvoiceId: 10 });
+
+    const empty = parseRecursiveDTQL(`
+from: {name: Invoice, alias: i}
+having: {left: {aggregate: {function: count, args: [{star: true}]}}, op: '==', right: {value: 0}}
+`, schema);
+    const emptyExecutor: QueryExecutor = { async query<T>(query: StructuredQuery<T>) { if (query.source.name !== "Invoice") throw new Error("unexpected source"); return { records: [] }; } };
+    expect((await executeRecursiveDTQLQuery(emptyExecutor, empty)).records.map((record) => record.data)).toEqual([{}]);
+  });
+
   it("rejects a recursive YAML alias at its nested path", () => {
     expect(() => parseRecursiveDTQL("from: &r\n  query:\n    as: x\n    from: *r\n", schema))
       .toThrow("shape at root.from.query.from: recursive YAML alias or object cycle");
@@ -123,6 +151,71 @@ describe("recursive DTQL fixtures", () => {
     expect(serialized).toMatchObject({ orderBy: [{ field: "CustomerId" }] });
     expect(JSON.stringify(serialized)).not.toContain('"source":""');
     expect(() => parseRecursiveDTQL(JSON.stringify(serialized), schema)).not.toThrow();
+  });
+
+  it("keeps scalar output naming inside query.as for parsed and constructed ASTs", async () => {
+    const text = "from: {name: Customer, alias: c}\ncolumns:\n  - query:\n      as: InvoiceCount\n      from: {name: Invoice, alias: i}\n      columns: [{aggregate: {function: count, args: [{star: true}]}}]\n";
+    const parsed = parseRecursiveDTQL(text, schema);
+    const serialized = serializeRecursiveDTQL(parsed);
+    expect(serialized.columns).toEqual([{ query: {
+      as: "InvoiceCount", from: { name: "Invoice", alias: "i" },
+      columns: [{ aggregate: { function: "count", args: [{ star: true }] } }],
+    } }]);
+    expect(() => parseRecursiveDTQL(text.replace("  - query:", "  - as: outer\n    query:"), schema))
+      .toThrow("scalar query alias belongs in query.as");
+    const constructed = structuredClone(parsed);
+    const rows = (await executeRecursiveDTQLQuery(new MemoryExecutor(), constructed, { schema })).records.map((record) => record.data);
+    expect(rows).toEqual([{ InvoiceCount: 3 }, { InvoiceCount: 3 }, { InvoiceCount: 3 }]);
+  });
+
+  it("binds nested right JOIN aliases before the enclosing ON", async () => {
+    const scopedSchema: DTQLSchema = { tables: [
+      { name: "A", fields: ["id"] }, { name: "B", fields: ["id", "aId"] }, { name: "C", fields: ["bId", "aId"] },
+    ] };
+    const query = parseRecursiveDTQL(`
+from:
+  name: A
+  alias: a
+  joins:
+    - from:
+        name: B
+        alias: b
+        joins:
+          - from: {name: C, alias: c}
+            on: [{left: {field: id, source: b}, op: '==', right: {field: bId, source: c}}]
+      on: [{left: {field: id, source: a}, op: '==', right: {field: aId, source: c}}]
+columns: [{field: id, source: a}]
+`, scopedSchema);
+    const executor: QueryExecutor = {
+      async query<T>(leaf: StructuredQuery<T>) {
+        const rows = leaf.source.name === "A" ? [{ id: 1 }] : leaf.source.name === "B" ? [{ id: 7, aId: 99 }] : [{ bId: 7, aId: 1 }];
+        return { records: rows.map((value, index) => ({ key: key(leaf.source.name, index.toString()), exists: true as const, data: value as T })) };
+      },
+    };
+    expect((await executeRecursiveDTQLQuery(executor, query)).records.map((record) => record.data)).toEqual([{ id: 1 }]);
+  });
+
+  it("validates and snapshots recursive JOIN algorithm preferences", async () => {
+    const scopedSchema: DTQLSchema = { tables: [{ name: "A", fields: ["id"] }, { name: "B", fields: ["id"] }] };
+    const input = { from: { name: "A", alias: "a", joins: [{
+      from: { name: "B", alias: "b" },
+      on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "id", source: "b" } }],
+      hints: { algorithms: ["hash", "nestedLoop"] },
+    }] }, columns: [{ field: "id", source: "a" }] };
+    const parsed = parseRecursiveDTQL(input, scopedSchema);
+    const inputJoin = input.from.joins[0];
+    if (inputJoin === undefined) throw new Error("missing input JOIN");
+    inputJoin.hints.algorithms[0] = "merge";
+    expect(serializeRecursiveDTQL(parsed)).toMatchObject({ from: { joins: [{ hints: { algorithms: ["hash", "nestedLoop"] } }] } });
+    inputJoin.hints.algorithms = ["hash", "hash"];
+    expect(() => parseRecursiveDTQL(input, scopedSchema)).toThrow("duplicate algorithm hash");
+    const constructed = structuredClone(parsed);
+    const hints = constructed.from.joins[0]?.hints;
+    if (hints === undefined) throw new Error("missing hints");
+    (hints.algorithms as string[])[1] = "hash";
+    const executor = new MemoryExecutor();
+    await expect(executeRecursiveDTQLQuery(executor, constructed, { schema: scopedSchema })).rejects.toThrow("duplicate algorithm hash");
+    expect(executor.calls).toEqual([]);
   });
 
   it("rejects an unbound caller-constructed AST before its executor is called", async () => {

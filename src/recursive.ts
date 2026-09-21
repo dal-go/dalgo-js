@@ -5,6 +5,7 @@ import type { ExistingRecord } from "./record.js";
 import type {
   DTQLExpression,
   QueryFieldReference,
+  QueryJoinAlgorithm,
   QueryPage,
   RecursiveDTQLColumn,
   RecursiveDTQLCondition,
@@ -71,7 +72,7 @@ export function serializeRecursiveDTQL(query: RecursiveDTQLQuery): Record<string
     ...(query.having === undefined ? {} : { having: writeCondition(query.having) }),
     ...(query.orderBy === undefined ? {} : { orderBy: query.orderBy.map((order) => ({ field: order.field.field, ...(order.field.source === "" ? {} : { source: order.field.source }), ...(order.direction === "desc" ? { desc: true } : {}) })) }),
     ...(query.limit === undefined ? {} : { limit: query.limit }), ...(query.offset === undefined ? {} : { offset: query.offset }),
-    ...(query.columns === undefined ? {} : { columns: query.columns.map((column) => ({ ...writeExpression(column.expression), ...(column.as === undefined ? {} : { as: column.as }) })) }),
+    ...(query.columns === undefined ? {} : { columns: query.columns.map((column) => ({ ...writeExpression(column.expression), ...(column.as === undefined || column.expression.kind === "query" ? {} : { as: column.as }) })) }),
   };
 }
 
@@ -252,7 +253,8 @@ function bindingKey(outer: Environment, budget: Budget): string {
 }
 
 function groupsFor(query: RecursiveDTQLQuery, rows: readonly Environment[]): Environment[][] {
-  const aggregates = query.columns?.some((column) => containsAggregate(column.expression)) ?? false;
+  const aggregates = (query.columns?.some((column) => containsAggregate(column.expression)) ?? false)
+    || (query.having !== undefined && containsAggregateCondition(query.having));
   const groups = new Map<string, Environment[]>();
   if (aggregates || query.groupBy !== undefined) {
     if (rows.length === 0 && aggregates && query.groupBy === undefined) groups.set("all", []);
@@ -353,6 +355,11 @@ function legacyExpression(value: DTQLExpression, row: Environment, group: readon
 
 function containsAggregate(value: RecursiveDTQLExpression): boolean { return value.kind === "aggregate" || (value.kind === "binary" && (containsAggregate(value.left) || containsAggregate(value.right))); }
 
+function containsAggregateCondition(value: RecursiveDTQLCondition): boolean {
+  if (value.kind === "and" || value.kind === "or") return value.conditions.some(containsAggregateCondition);
+  return value.kind === "comparison" && (containsAggregate(value.left) || containsAggregate(value.right));
+}
+
 function membership(left: unknown, values: readonly unknown[], negate: boolean): Truth {
   if (values.length === 0) return negate;
   if (left === null || left === undefined) return undefined;
@@ -367,7 +374,7 @@ function joinEqual(left: unknown, right: unknown): boolean {
 
 function field(row: Environment, reference: QueryFieldReference): unknown { return row.get(resolvedSources.get(reference) ?? reference.source)?.data[reference.field]; }
 function merge(row: Environment): Data { const value: Data = {}; for (const record of row.values()) if (record !== undefined) Object.assign(value, record.data); return value; }
-function fieldOutput(column: RecursiveDTQLColumn, path: string): string { if (column.expression.kind === "field") return column.expression.field.field; if (column.expression.kind === "aggregate") return column.expression.function; return shape(path, "non-field column requires as"); }
+function fieldOutput(column: RecursiveDTQLColumn, path: string): string { if (column.expression.kind === "field") return column.expression.field.field; if (column.expression.kind === "aggregate") return column.expression.function; if (column.expression.kind === "query" && column.expression.query.as !== undefined) return column.expression.query.as; return shape(path, "non-field column requires as"); }
 function equal(left: unknown, right: unknown): boolean { return typeof left === "number" && typeof right === "number" ? Number.isFinite(left) && Number.isFinite(right) && left === right : left === right; }
 function compare(left: unknown, right: unknown): number { return left === right ? 0 : left === null || left === undefined ? -1 : right === null || right === undefined ? 1 : left < right ? -1 : 1; }
 function compareEnvironment(left: Environment, right: Environment, orders: readonly { readonly field: QueryFieldReference; readonly direction: "asc" | "desc" }[]): number { for (const order of orders) { const result = compare(field(left, order.field), field(right, order.field)); if (result !== 0) return order.direction === "desc" ? -result : result; } return 0; }
@@ -449,18 +456,18 @@ function bindRelation(relation: RecursiveDTQLRelation, schema: DTQLSchema, outer
     const joinPath = `${path}.joins[${index.toString()}]`;
     const future = new Set(relation.joins.slice(index + 1).map((item) => item.from.alias ?? item.from.name ?? item.from.query?.as).filter((item): item is string => item !== undefined));
     bindOne({ ...join.from, joins: [] }, `${joinPath}.from`);
-    for (const [predicateIndex, predicate] of join.on.entries()) {
-      bindJoinField(predicate.left, visible, outers, future, `${joinPath}.on[${predicateIndex.toString()}].left`);
-      bindJoinField(predicate.right, visible, outers, future, `${joinPath}.on[${predicateIndex.toString()}].right`);
-    }
     // A nested right relation may itself have joins. Its aliases remain
-    // visible to the enclosing relation after their edge has been bound.
+    // visible to the enclosing ON after their own edges have been bound.
     if (join.from.joins.length > 0) {
       const childAlias = join.from.alias ?? join.from.name ?? join.from.query?.as;
       const childReserved = new Set([...reserved, ...visible.keys()]);
       if (childAlias !== undefined) childReserved.delete(childAlias);
       const nested = bindRelation(join.from, schema, [visible, ...outers], `${joinPath}.from`, childReserved);
       for (const [alias, fields] of nested) if (!visible.has(alias)) visible.set(alias, fields);
+    }
+    for (const [predicateIndex, predicate] of join.on.entries()) {
+      bindJoinField(predicate.left, visible, outers, future, `${joinPath}.on[${predicateIndex.toString()}].left`);
+      bindJoinField(predicate.right, visible, outers, future, `${joinPath}.on[${predicateIndex.toString()}].right`);
     }
   }
   return visible;
@@ -566,7 +573,11 @@ function validateRelationProgram(relation: RecursiveDTQLRelation, ancestors: Wea
   ancestors.add(relation);
   try {
     if (relation.kind === "query") validateProgram(relation.query ?? shape(path, "query relation needs query"), ancestors, `${path}.query`);
-    relation.joins.forEach((join, index) => { validateRelationProgram(join.from, ancestors, `${path}.joins[${index.toString()}].from`); });
+    relation.joins.forEach((join, index) => {
+      const joinPath = `${path}.joins[${index.toString()}]`;
+      if (join.hints !== undefined) parseHints(join.hints, `${joinPath}.hints`);
+      validateRelationProgram(join.from, ancestors, `${joinPath}.from`);
+    });
   } finally { ancestors.delete(relation); }
 }
 
@@ -594,7 +605,7 @@ function parseQuery(value: Record<string, unknown>, schema: DTQLSchema, path: st
     ...(value.orderBy === undefined ? {} : { orderBy: list(value.orderBy, `${path}.orderBy`).map((item, index) => { const order = raw(item, `${path}.orderBy[${index.toString()}]`); keys(order, new Set(["field", "source", "desc"]), `${path}.orderBy[${index.toString()}]`); const desc = order.desc === true; delete order.desc; return { field: fieldReference(order, `${path}.orderBy[${index.toString()}]`), direction: desc ? "desc" as const : "asc" as const }; }) }),
     ...(value.limit === undefined ? {} : { limit: positive(value.limit, `${path}.limit`) }),
     ...(value.offset === undefined ? {} : { offset: offset(value.offset, `${path}.offset`) }),
-    ...(value.columns === undefined ? {} : { columns: list(value.columns, `${path}.columns`).map((item, index) => { const column = raw(item, `${path}.columns[${index.toString()}]`); const as = column.as === undefined ? undefined : text(column.as, `${path}.columns[${index.toString()}].as`); delete column.as; const expression = parseExpression(column, schema, `${path}.columns[${index.toString()}]`); return { expression, ...(as === undefined ? expression.kind === "query" && expression.query.as !== undefined ? { as: expression.query.as } : {} : { as }) }; }) }),
+    ...(value.columns === undefined ? {} : { columns: list(value.columns, `${path}.columns`).map((item, index) => { const column = raw(item, `${path}.columns[${index.toString()}]`); const as = column.as === undefined ? undefined : text(column.as, `${path}.columns[${index.toString()}].as`); delete column.as; const expression = parseExpression(column, schema, `${path}.columns[${index.toString()}]`); if (expression.kind === "query" && as !== undefined) shape(`${path}.columns[${index.toString()}]`, "scalar query alias belongs in query.as"); return { expression, ...(as === undefined ? {} : { as }) }; }) }),
     ...(value.groupBy === undefined ? {} : { groupBy: list(value.groupBy, `${path}.groupBy`).map((item, index) => parseExpression(item, schema, `${path}.groupBy[${index.toString()}]`) as DTQLExpression) }),
     ...(value.having === undefined ? {} : { having: parseCondition(raw(value.having, `${path}.having`), schema, `${path}.having`) }),
   };
@@ -625,12 +636,25 @@ function parseJoin(value: Record<string, unknown>, schema: DTQLSchema, path: str
   return { type, from: parseRelation(requireValue(value, "from", path), schema, `${path}.from`), on: predicates, ...(hints === undefined ? {} : { hints }) };
 }
 
-function parseHints(value: Record<string, unknown>, path: string) {
-  keys(value, new Set(["algorithms"]), path);
-  const algorithms = list(requireValue(value, "algorithms", path), `${path}.algorithms`);
-  const supported = new Set(["hash", "merge", "lookup", "batchedLookup", "nestedLoop"]);
-  if (algorithms.length === 0 || !algorithms.every((item) => typeof item === "string" && supported.has(item))) shape(`${path}.algorithms`, "invalid algorithms");
-  return { algorithms: algorithms as ("hash" | "merge" | "lookup" | "batchedLookup" | "nestedLoop")[] };
+function parseHints(value: unknown, path: string): { readonly algorithms: readonly QueryJoinAlgorithm[] } {
+  const hints = raw(value, path);
+  keys(hints, new Set(["algorithms"]), path);
+  const algorithms = hints.algorithms;
+  if (!Array.isArray(algorithms) || algorithms.length === 0) shape(`${path}.algorithms`, "must be a non-empty array");
+  const supported = new Set<QueryJoinAlgorithm>(["hash", "merge", "lookup", "batchedLookup", "nestedLoop"]);
+  const seen = new Set<QueryJoinAlgorithm>();
+  const snapshot: QueryJoinAlgorithm[] = [];
+  for (let index = 0; index < algorithms.length; index += 1) {
+    const entryPath = `${path}.algorithms[${index.toString()}]`;
+    if (!Object.prototype.hasOwnProperty.call(algorithms, index)) shape(entryPath, "algorithm entry is required");
+    const algorithm = algorithms[index] as unknown;
+    if (typeof algorithm !== "string" || !supported.has(algorithm as QueryJoinAlgorithm)) shape(entryPath, `unsupported algorithm ${String(algorithm)}`);
+    const typed = algorithm as QueryJoinAlgorithm;
+    if (seen.has(typed)) shape(entryPath, `duplicate algorithm ${typed}`);
+    seen.add(typed);
+    snapshot.push(typed);
+  }
+  return { algorithms: snapshot };
 }
 
 function parseCondition(value: Record<string, unknown>, schema: DTQLSchema, path: string): RecursiveDTQLCondition {
@@ -647,7 +671,7 @@ function parseExpression(value: unknown, schema: DTQLSchema, path: string): Recu
   if (expression.field !== undefined) return { kind: "field", field: fieldReference(expression, path) };
   if (Object.prototype.hasOwnProperty.call(expression, "value")) { keys(expression, new Set(["value"]), path); return { kind: "literal", value: expression.value as string | number | boolean | null }; }
   if (expression.values !== undefined) { keys(expression, new Set(["values"]), path); return { kind: "values", values: list(expression.values, `${path}.values`) as (string | number | boolean | null)[] }; }
-  if (expression.star === true) return { kind: "star" };
+  if (expression.star === true) { keys(expression, new Set(["star"]), path); return { kind: "star" }; }
   if (expression.aggregate !== undefined) { keys(expression, new Set(["aggregate"]), path); const aggregate = raw(expression.aggregate, `${path}.aggregate`); keys(aggregate, new Set(["function", "args", "distinct"]), `${path}.aggregate`); const functionName = text(requireValue(aggregate, "function", `${path}.aggregate`), `${path}.aggregate.function`); if (!aggregateFunctions.has(functionName)) shape(`${path}.aggregate.function`, `unsupported aggregate ${functionName}`); if (aggregate.distinct !== undefined && aggregate.distinct !== true && aggregate.distinct !== false) shape(`${path}.aggregate.distinct`, "must be boolean"); return { kind: "aggregate", function: functionName as never, args: list(requireValue(aggregate, "args", `${path}.aggregate`), `${path}.aggregate.args`).map((item, index) => parseExpression(item, schema, `${path}.aggregate.args[${index.toString()}]`) as DTQLExpression), ...(aggregate.distinct === true ? { distinct: true } : {}) }; }
   shape(path, "unknown expression");
 }
