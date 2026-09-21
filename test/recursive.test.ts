@@ -9,6 +9,7 @@ const manifest = JSON.parse(readFileSync(new URL("manifest.json", root), "utf8")
 const schemaDocument = JSON.parse(readFileSync(new URL("schema.json", root), "utf8")) as { readonly tables: Readonly<Record<string, readonly string[]>> };
 const data = JSON.parse(readFileSync(new URL("dataset.json", root), "utf8")) as { readonly tables: Readonly<Record<string, readonly Record<string, unknown>[]>> };
 const schema: DTQLSchema = { tables: Object.entries(schemaDocument.tables).map(([name, fields]) => ({ name, fields })) };
+const suite = JSON.parse(readFileSync(new URL("suite.json", root), "utf8")) as { readonly cases: readonly { readonly name: string; readonly input?: string; readonly rows?: string; readonly error?: string; readonly expectation?: string }[] };
 
 class MemoryExecutor implements QueryExecutor {
   public readonly calls: string[] = [];
@@ -30,13 +31,25 @@ describe("recursive DTQL fixtures", () => {
     }
   });
 
-  it("executes scalar correlation, derived relations, and NULL-aware membership through leaf scans", async () => {
-    for (const name of ["scalar-values", "derived-from-join", "membership-in", "membership-not-in", "pipeline-order-limit", "pipeline-order-offset", "customer-invoice-composition"] as const) {
-      const query = parseRecursiveDTQL(fixture(`${name}.dtql.yaml`), schema);
+  it("executes every positive fixture and rejects every negative fixture", async () => {
+    for (const entry of suite.cases) {
+      const input = entry.input;
+      if (input === undefined) continue;
+      if (entry.error !== undefined) {
+        const expected = JSON.parse(fixture(entry.error)) as { readonly category: string; readonly path: string; readonly message: string };
+        if (expected.category === "cardinality") {
+          await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), parseRecursiveDTQL(fixture(input), schema))).rejects.toThrow(expected.message);
+        } else {
+          expect(() => parseRecursiveDTQL(fixture(input), schema)).toThrow(`${expected.category} at ${expected.path}`);
+          expect(() => parseRecursiveDTQL(fixture(input), schema)).toThrow(expected.message);
+        }
+        continue;
+      }
+      const query = parseRecursiveDTQL(fixture(input), schema);
       expect(serializeRecursiveDTQL(query)).toEqual(serializeRecursiveDTQL(parseRecursiveDTQL(JSON.stringify(serializeRecursiveDTQL(query)), schema)));
       const actual = (await executeRecursiveDTQLQuery(new MemoryExecutor(), query)).records.map((record) => record.data);
-      const expected = JSON.parse(fixture(`${name}.rows.json`)) as unknown;
-      expect(actual).toEqual(expected);
+      if (entry.rows === undefined) throw new Error(`positive fixture ${entry.name} has no rows`);
+      expect(actual).toEqual(JSON.parse(fixture(entry.rows)) as unknown);
     }
   });
 
@@ -54,5 +67,60 @@ describe("recursive DTQL fixtures", () => {
     await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), scalar, { maxRetainedBytes: 1 })).rejects.toThrow("retained_bytes");
     const derived = parseRecursiveDTQL(fixture("derived-from-join.dtql.yaml"), schema);
     await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), derived, { maxCandidateEvaluations: 1 })).rejects.toThrow("candidate_evaluations");
+  });
+
+  it("short-circuits EXISTS after its first qualifying row", async () => {
+    const query = parseRecursiveDTQL(fixture("exists-short-circuit.dtql.yaml"), schema);
+    const executor = new MemoryExecutor();
+    await executeRecursiveDTQLQuery(executor, query);
+    // The fixture has three outer customers. Each correlated EXISTS needs one
+    // Invoice scan only; it must not evaluate a projected nested result.
+    expect(executor.calls.filter((name) => name === "Invoice")).toHaveLength(3);
+  });
+
+  it("does not evaluate a later EXISTS candidate once an earlier candidate is TRUE", async () => {
+    const query = parseRecursiveDTQL(fixture("exists-short-circuit.dtql.yaml"), schema);
+    const explosive = new Proxy({ InvoiceId: 99, CustomerId: 1, Total: 1, InvoiceDate: "2099-01-01" }, {
+      get: (_target, property) => {
+        if (property === "toJSON") return () => ({});
+        throw new Error("later EXISTS candidate was evaluated");
+      },
+    });
+    const executor: QueryExecutor = {
+      async query<T>(leaf: StructuredQuery<T>) {
+        const rows = leaf.source.name === "Customer"
+          ? [{ key: key("Customer", "1"), exists: true as const, data: { CustomerId: 1, FirstName: "Ada", Country: "IE" } }]
+          : [{ key: key("Invoice", "1"), exists: true as const, data: { InvoiceId: 10, CustomerId: 1, Total: 1, InvoiceDate: "2024-01-01" } }, { key: key("Invoice", "2"), exists: true as const, data: explosive }];
+        return { records: rows as never };
+      },
+    };
+    await expect(executeRecursiveDTQLQuery(executor, query)).resolves.toMatchObject({ records: [{ data: { CustomerId: 1 } }] });
+  });
+
+  it("checks the vendored membership truth-table sidecar", async () => {
+    const table = JSON.parse(fixture("membership-null-table.expect.json")) as { readonly cases: readonly { readonly name: string; readonly whereIn: boolean; readonly whereNotIn: boolean }[] };
+    const run = async (name: string): Promise<Set<string>> => new Set((await executeRecursiveDTQLQuery(new MemoryExecutor(), parseRecursiveDTQL(fixture(name), schema))).records.map((record) => String(record.data.Name)));
+    const [inRows, notInRows] = await Promise.all([run("membership-in.dtql.yaml"), run("membership-not-in.dtql.yaml")]);
+    const fixtureName = (name: string): string => name.replace(/^in-/, "");
+    expect([...inRows].sort()).toEqual(table.cases.filter((item) => item.whereIn).map((item) => fixtureName(item.name)).sort());
+    expect([...notInRows].sort()).toEqual(table.cases.filter((item) => item.whereNotIn).map((item) => fixtureName(item.name)).sort());
+  });
+
+  it("binds unqualified local fields without changing their serialized form", async () => {
+    const query = parseRecursiveDTQL("from: {name: Customer, alias: c}\nlimit: 1\ncolumns: [{field: CustomerId}]\n", schema);
+    expect(serializeRecursiveDTQL(query)).toMatchObject({ columns: [{ field: "CustomerId" }] });
+    await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), query)).resolves.toMatchObject({ records: [{ data: { CustomerId: 1 } }] });
+  });
+
+  it("rejects an unbound caller-constructed AST before its executor is called", async () => {
+    const executor = new MemoryExecutor();
+    await expect(executeRecursiveDTQLQuery(executor, { kind: "recursive-dtql", from: { kind: "table", name: "Customer", alias: "c", joins: [] } }))
+      .rejects.toThrow("caller-constructed recursive query requires schema validation");
+    await expect(executeRecursiveDTQLQuery(executor, {
+      kind: "recursive-dtql",
+      from: { kind: "table", name: "Customer", alias: "c", joins: [] },
+      columns: [{ expression: { kind: "field", field: { source: "c", field: "Missing" } } }],
+    }, { schema })).rejects.toThrow("unknown field Missing");
+    expect(executor.calls).toEqual([]);
   });
 });
