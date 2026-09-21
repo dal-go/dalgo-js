@@ -85,6 +85,7 @@ export async function executeRecursiveDTQLQuery(
   for (const key of ["maxFetchedRows", "maxResultRows", "maxCandidateEvaluations", "maxRetainedBytes"] as const) {
     if (!Number.isSafeInteger(budget[key]) || budget[key] <= 0) throw new TypeError(`query_limit at root: ${key} must be a positive safe integer`);
   }
+  validateProgram(query, new WeakSet(), "root");
   const rows = await evaluateQuery(executor, query, new Map(), budget, options, "root");
   cancelled(budget, "root");
   return { records: rows.map((row, index) => ({ key: new Key("__dtql__", index.toString()), exists: true as const, data: row })) };
@@ -257,6 +258,21 @@ function chargeBytes(budget: Budget, value: unknown, path: string): void { budge
 function cancelled(budget: Budget, path: string): void { if (budget.signal?.aborted === true) throw budget.signal.reason ?? new DOMException(`query cancelled at ${path}`, "AbortError"); }
 function shape(path: string, reason: string): never { throw new TypeError(`query_shape at ${path}: ${reason}`); }
 function limit(path: string, counter: string): never { throw new RangeError(`query_limit at ${path}: ${counter}`); }
+
+function validateProgram(query: RecursiveDTQLQuery, ancestors: WeakSet<object>, path: string): void {
+  if (ancestors.has(query)) shape(path, "recursive query cycle");
+  ancestors.add(query);
+  try { validateRelationProgram(query.from, ancestors, `${path}.from`); } finally { ancestors.delete(query); }
+}
+
+function validateRelationProgram(relation: RecursiveDTQLRelation, ancestors: WeakSet<object>, path: string): void {
+  if (ancestors.has(relation)) shape(path, "recursive relation cycle");
+  ancestors.add(relation);
+  try {
+    if (relation.kind === "query") validateProgram(relation.query ?? shape(path, "query relation needs query"), ancestors, `${path}.query`);
+    relation.joins.forEach((join, index) => { validateRelationProgram(join.from, ancestors, `${path}.joins[${index.toString()}].from`); });
+  } finally { ancestors.delete(relation); }
+}
 
 function parseQuery(value: Record<string, unknown>, schema: DTQLSchema, path: string): RecursiveDTQLQuery {
   keys(value, new Set(["as", "from", "where", "groupBy", "having", "orderBy", "limit", "offset", "columns"]), path);

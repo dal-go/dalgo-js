@@ -46,4 +46,13 @@ describe("recursive DTQL fixtures", () => {
     await expect(executeRecursiveDTQLQuery(executor, parseRecursiveDTQL(fixture("scalar-values.dtql.yaml"), schema), { signal: controller.signal })).rejects.toThrow("stopped");
     expect(executor.calls).toEqual([]);
   });
+
+  it("reports every root-wide generic execution budget", async () => {
+    const scalar = parseRecursiveDTQL(fixture("scalar-values.dtql.yaml"), schema);
+    await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), scalar, { maxFetchedRows: 1 })).rejects.toThrow("fetched_rows");
+    await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), scalar, { maxResultRows: 1 })).rejects.toThrow("result_rows");
+    await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), scalar, { maxRetainedBytes: 1 })).rejects.toThrow("retained_bytes");
+    const derived = parseRecursiveDTQL(fixture("derived-from-join.dtql.yaml"), schema);
+    await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), derived, { maxCandidateEvaluations: 1 })).rejects.toThrow("candidate_evaluations");
+  });
 });
