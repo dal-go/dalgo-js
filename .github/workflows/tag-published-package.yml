@@ -1,0 +1,68 @@
+name: Tag published package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published @dalgo/core version, without v
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: tag-core-${{ inputs.version }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify npm release and source commit
+        id: release
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo 'version must be a SemVer release without a leading v' >&2
+            exit 1
+          fi
+          metadata=$(npm view "@dalgo/core@$VERSION" name version gitHead --json)
+          [[ "$(jq -r '.name' <<< "$metadata")" == '@dalgo/core' ]]
+          [[ "$(jq -r '.version' <<< "$metadata")" == "$VERSION" ]]
+          source_sha=$(jq -r '.gitHead' <<< "$metadata")
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          git fetch origin main
+          git cat-file -e "$source_sha^{commit}"
+          git merge-base --is-ancestor "$source_sha" origin/main
+          manifest=$(git show "$source_sha:package.json")
+          [[ "$(jq -r '.name' <<< "$manifest")" == '@dalgo/core' ]]
+          [[ "$(jq -r '.version' <<< "$manifest")" == "$VERSION" ]]
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "tag=core@v$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Create package tag without overwriting an existing tag
+        env:
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch origin tag "$TAG" 2>/dev/null || true
+          if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null; then
+            [[ "$(git rev-list -n 1 "$TAG")" == "$SOURCE_SHA" ]]
+            echo "$TAG already points to $SOURCE_SHA"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" "$SOURCE_SHA" -m "@dalgo/core $TAG"
+          git push origin "refs/tags/$TAG"

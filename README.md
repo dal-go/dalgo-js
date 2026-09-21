@@ -13,7 +13,7 @@ The adapters are being migrated to the `@dalgo/*` scope separately; the
 
 ## Install
 
-Once the first npm release is available:
+Install the published core package:
 
 ```sh
 pnpm add @dalgo/core
@@ -80,6 +80,12 @@ The initial API covers point reads, hierarchical collections, collection-group
 queries, filters, ordering, deterministic cursor pagination, and read-write
 transactions. Adapters must reject unsupported capabilities explicitly rather
 than silently changing query semantics.
+
+After a version is published to npm, manually run the
+[tagging workflow](.github/workflows/tag-published-package.yml) on `main` with
+that version. It checks npm's published `gitHead` and the matching source
+manifest, then tags that exact commit as `core@v<version>` (for example,
+`core@v0.1.0`). Publishing alone does not trigger the tagging workflow yet.
 
 ## License
 
