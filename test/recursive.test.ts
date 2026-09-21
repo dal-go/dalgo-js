@@ -29,7 +29,7 @@ describe("recursive DTQL fixtures", () => {
   });
 
   it("pins every vendored byte to the Go manifest and source commit", () => {
-    expect(manifest.sourceCommit).toBe("da4e671be46e9c2c4906cb645d9e16c0fd90d590");
+    expect(manifest.sourceCommit).toBe("9b3b9b7c0dc9322f7916cf987e9ff22cad547c79");
     expect(readdirSync(root).sort()).toContain("suite.json");
     for (const [name, digest] of Object.entries(manifest.files)) {
       expect(createHash("sha256").update(fixture(name)).digest("hex")).toBe(digest);
