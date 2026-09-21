@@ -31,7 +31,7 @@ describe("recursive DTQL fixtures", () => {
   });
 
   it("executes scalar correlation, derived relations, and NULL-aware membership through leaf scans", async () => {
-    for (const name of ["scalar-values", "derived-from-join", "membership-in", "membership-not-in", "customer-invoice-composition"] as const) {
+    for (const name of ["scalar-values", "derived-from-join", "membership-in", "membership-not-in", "pipeline-order-limit", "pipeline-order-offset", "customer-invoice-composition"] as const) {
       const query = parseRecursiveDTQL(fixture(`${name}.dtql.yaml`), schema);
       expect(serializeRecursiveDTQL(query)).toEqual(serializeRecursiveDTQL(parseRecursiveDTQL(JSON.stringify(serializeRecursiveDTQL(query)), schema)));
       const actual = (await executeRecursiveDTQLQuery(new MemoryExecutor(), query)).records.map((record) => record.data);

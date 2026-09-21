@@ -98,9 +98,8 @@ async function evaluateQuery(executor: QueryExecutor, query: RecursiveDTQLQuery,
     for (const row of rows) if ((await condition(executor, query.where, row, budget, options, `${path}.where`)) === true) filtered.push(row);
     rows = filtered;
   }
-  const projected = projectRows(executor, query, rows, budget, options, path);
-  const output = await projected;
-  if (query.orderBy !== undefined) output.sort((a, b) => compareOrder(a, b, query.orderBy ?? []));
+  if (query.orderBy !== undefined) rows = [...rows].sort((a, b) => compareEnvironment(a, b, query.orderBy ?? []));
+  const output = await projectRows(executor, query, rows, budget, options, path);
   const start = query.offset ?? 0;
   const sliced = output.slice(start, query.limit === undefined ? undefined : start + query.limit);
   chargeResults(budget, sliced.length, path);
@@ -252,7 +251,7 @@ function merge(row: Environment): Data { const value: Data = {}; for (const reco
 function fieldOutput(column: RecursiveDTQLColumn, path: string): string { if (column.expression.kind === "field") return column.expression.field.field; if (column.expression.kind === "aggregate") return column.expression.function; return shape(path, "non-field column requires as"); }
 function equal(left: unknown, right: unknown): boolean { return typeof left === "number" && typeof right === "number" ? Number.isFinite(left) && Number.isFinite(right) && left === right : left === right; }
 function compare(left: unknown, right: unknown): number { return left === right ? 0 : left === null || left === undefined ? -1 : right === null || right === undefined ? 1 : left < right ? -1 : 1; }
-function compareOrder(left: Data, right: Data, orders: readonly { readonly field: QueryFieldReference; readonly direction: "asc" | "desc" }[]): number { for (const order of orders) { const result = compare(left[order.field.field], right[order.field.field]); if (result !== 0) return order.direction === "desc" ? -result : result; } return 0; }
+function compareEnvironment(left: Environment, right: Environment, orders: readonly { readonly field: QueryFieldReference; readonly direction: "asc" | "desc" }[]): number { for (const order of orders) { const result = compare(field(left, order.field), field(right, order.field)); if (result !== 0) return order.direction === "desc" ? -result : result; } return 0; }
 function chargeResults(budget: Budget, count: number, path: string): void { budget.results += count; if (budget.results > budget.maxResultRows) limit(path, "result_rows"); }
 function chargeBytes(budget: Budget, value: unknown, path: string): void { budget.retained += new TextEncoder().encode(JSON.stringify(value)).byteLength; if (budget.retained > budget.maxRetainedBytes) limit(path, "retained_bytes"); }
 function cancelled(budget: Budget, path: string): void { if (budget.signal?.aborted === true) throw budget.signal.reason ?? new DOMException(`query cancelled at ${path}`, "AbortError"); }
@@ -265,11 +264,12 @@ function parseQuery(value: Record<string, unknown>, schema: DTQLSchema, path: st
     kind: "recursive-dtql", from: parseRelation(requireValue(value, "from", path), schema, `${path}.from`),
     ...(value.as === undefined ? {} : { as: text(value.as, `${path}.as`) }),
     ...(value.where === undefined ? {} : { where: parseCondition(raw(value.where, `${path}.where`), schema, `${path}.where`) }),
-    ...(value.orderBy === undefined ? {} : { orderBy: list(value.orderBy, `${path}.orderBy`).map((item, index) => { const order = raw(item, `${path}.orderBy[${index.toString()}]`); keys(order, new Set(["field", "source", "desc"]), `${path}.orderBy[${index.toString()}]`); return { field: fieldReference(order, `${path}.orderBy[${index.toString()}]`), direction: order.desc === true ? "desc" as const : "asc" as const }; }) }),
+    ...(value.orderBy === undefined ? {} : { orderBy: list(value.orderBy, `${path}.orderBy`).map((item, index) => { const order = raw(item, `${path}.orderBy[${index.toString()}]`); keys(order, new Set(["field", "source", "desc"]), `${path}.orderBy[${index.toString()}]`); const desc = order.desc === true; delete order.desc; return { field: fieldReference(order, `${path}.orderBy[${index.toString()}]`), direction: desc ? "desc" as const : "asc" as const }; }) }),
     ...(value.limit === undefined ? {} : { limit: positive(value.limit, `${path}.limit`) }),
     ...(value.offset === undefined ? {} : { offset: offset(value.offset, `${path}.offset`) }),
     ...(value.columns === undefined ? {} : { columns: list(value.columns, `${path}.columns`).map((item, index) => { const column = raw(item, `${path}.columns[${index.toString()}]`); const as = column.as === undefined ? undefined : text(column.as, `${path}.columns[${index.toString()}].as`); delete column.as; const expression = parseExpression(column, schema, `${path}.columns[${index.toString()}]`); return { expression, ...(as === undefined ? expression.kind === "query" && expression.query.as !== undefined ? { as: expression.query.as } : {} : { as }) }; }) }),
     ...(value.groupBy === undefined ? {} : { groupBy: list(value.groupBy, `${path}.groupBy`).map((item, index) => parseExpression(item, schema, `${path}.groupBy[${index.toString()}]`) as DTQLExpression) }),
+    ...(value.having === undefined ? {} : { having: parseCondition(raw(value.having, `${path}.having`), schema, `${path}.having`) }),
   };
   return result;
 }
@@ -294,7 +294,16 @@ function parseJoin(value: Record<string, unknown>, schema: DTQLSchema, path: str
   if (type !== "inner" && type !== "left") shape(`${path}.type`, "must be inner or left");
   const predicates = list(requireValue(value, "on", path), `${path}.on`).map((item, index) => { const predicate = raw(item, `${path}.on[${index.toString()}]`); keys(predicate, new Set(["left", "op", "right"]), `${path}.on[${index.toString()}]`); if (predicate.op !== "==" && predicate.op !== "eq") shape(`${path}.on[${index.toString()}].op`, "must be =="); return { left: fieldReference(raw(requireValue(predicate, "left", path), `${path}.on[${index.toString()}].left`), `${path}.on[${index.toString()}].left`), operator: "==" as const, right: fieldReference(raw(requireValue(predicate, "right", path), `${path}.on[${index.toString()}].right`), `${path}.on[${index.toString()}].right`) }; });
   if (predicates.length === 0) shape(`${path}.on`, "must not be empty");
-  return { type, from: parseRelation(requireValue(value, "from", path), schema, `${path}.from`), on: predicates };
+  const hints = value.hints === undefined ? undefined : parseHints(raw(value.hints, `${path}.hints`), `${path}.hints`);
+  return { type, from: parseRelation(requireValue(value, "from", path), schema, `${path}.from`), on: predicates, ...(hints === undefined ? {} : { hints }) };
+}
+
+function parseHints(value: Record<string, unknown>, path: string) {
+  keys(value, new Set(["algorithms"]), path);
+  const algorithms = list(requireValue(value, "algorithms", path), `${path}.algorithms`);
+  const supported = new Set(["hash", "merge", "lookup", "batchedLookup", "nestedLoop"]);
+  if (algorithms.length === 0 || !algorithms.every((item) => typeof item === "string" && supported.has(item))) shape(`${path}.algorithms`, "invalid algorithms");
+  return { algorithms: algorithms as ("hash" | "merge" | "lookup" | "batchedLookup" | "nestedLoop")[] };
 }
 
 function parseCondition(value: Record<string, unknown>, schema: DTQLSchema, path: string): RecursiveDTQLCondition {
@@ -315,7 +324,7 @@ function parseExpression(value: unknown, schema: DTQLSchema, path: string): Recu
   shape(path, "unknown expression");
 }
 
-function writeRelation(value: RecursiveDTQLRelation): Record<string, unknown> { return value.kind === "table" ? { ...(value.schema === undefined ? {} : { schema: value.schema }), name: value.name, ...(value.alias === undefined ? {} : { alias: value.alias }), ...(value.joins.length === 0 ? {} : { joins: value.joins.map((join) => ({ ...(join.type === "inner" ? {} : { type: join.type }), from: writeRelation(join.from), on: join.on.map((item) => ({ left: item.left, op: "==", right: item.right })) })) }) } : { query: serializeRecursiveDTQL(value.query ?? shape("relation", "query relation needs query")) }; }
+function writeRelation(value: RecursiveDTQLRelation): Record<string, unknown> { const joins = value.joins.length === 0 ? {} : { joins: value.joins.map((join) => ({ ...(join.type === "inner" ? {} : { type: join.type }), from: writeRelation(join.from), on: join.on.map((item) => ({ left: item.left, op: "==", right: item.right })), ...(join.hints === undefined ? {} : { hints: { algorithms: [...join.hints.algorithms] } }) })) }; return value.kind === "table" ? { ...(value.schema === undefined ? {} : { schema: value.schema }), name: value.name, ...(value.alias === undefined ? {} : { alias: value.alias }), ...joins } : { query: serializeRecursiveDTQL(value.query ?? shape("relation", "query relation needs query")), ...joins }; }
 function writeCondition(value: RecursiveDTQLCondition): Record<string, unknown> { if (value.kind === "exists") return { exists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "not-exists") return { notExists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "and" || value.kind === "or") return { [value.kind]: value.conditions.map(writeCondition) }; const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>; return { left: writeExpression(comparison.left), op: comparison.operator === "in" ? "In" : comparison.operator === "not-in" ? "NotIn" : comparison.operator, right: writeExpression(comparison.right) }; }
 function writeExpression(value: RecursiveDTQLExpression): Record<string, unknown> { if (value.kind === "query") return { query: serializeRecursiveDTQL(value.query) }; if (value.kind === "field") return { field: value.field.field, source: value.field.source }; if (value.kind === "literal") return { value: value.value }; if (value.kind === "values") return { values: value.values }; if (value.kind === "star") return { star: true }; if (value.kind === "aggregate") return { aggregate: { function: value.function, args: value.args.map(writeExpression), ...(value.distinct === true ? { distinct: true } : {}) } }; shape("expression", `cannot serialize ${value.kind}`); }
 function raw(value: unknown, path: string): Record<string, unknown> { if (typeof value === "string") { const parsed = parseYamlDocument(value, { prettyErrors: false, strict: true, uniqueKeys: true }); if (parsed.errors.length > 0) shape(path, "invalid YAML"); return raw(parsed.toJS(), path); } if (value === null || Array.isArray(value) || typeof value !== "object") shape(path, "must be object"); return { ...(value as Record<string, unknown>) }; }
