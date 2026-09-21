@@ -98,6 +98,14 @@ await executeJoinedDTQLQuery(adapter, parsed, {
 });
 ```
 
+Each JOIN may carry an ordered `hints.algorithms` list. The case-sensitive
+identifiers are `hash`, `merge`, `lookup`, `batchedLookup`, and `nestedLoop`.
+The generic executor honors `hash` when its equality index applies and
+`nestedLoop` when explicitly preferred; it skips the other three until they
+are implemented. Hints never affect logical results or ordering. `nestedLoop`
+deliberately evaluates bounded candidate pairs and can fail with `join_plan` at
+the configured candidate limit.
+
 `@dalgo/core` currently ships no `QueryExecutor` adapter. Its in-repository
 memory executor is tested with generic unqualified scans and with the explicit
 schema mapping above. The local adapter inventory is:

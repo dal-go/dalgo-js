@@ -109,6 +109,17 @@ describe("parseDTQL", () => {
     }
   });
 
+  it("parses and round-trips the canonical hinted Chinook query", () => {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in canonical YAML fixture at runtime.
+    const fixture: string = readFileSync(new URL("./testdata/joins/chinook-hinted.dtql.yaml", import.meta.url), "utf8");
+    const query = parseDTQL(fixture, schema);
+    expect(isJoinedDTQLQuery(query)).toBe(true);
+    if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+    expect(query.from.joins.map((join) => join.hints?.algorithms)).toEqual([["merge", "hash"], ["lookup", "hash"]]);
+    expect(query.from.joins[0]?.from.joins[0]?.hints?.algorithms).toEqual(["nestedLoop", "hash"]);
+    expect(parseDTQL(JSON.stringify(serializeJoinedDTQL(query)), schema)).toEqual(query);
+  });
+
   it("validates ordered nested scopes and canonicalizes aliases and equality", () => {
     const query = parseDTQL({
       from: {
@@ -124,6 +135,40 @@ describe("parseDTQL", () => {
     expect(query.from.alias).toBe("a");
     expect(query.from.joins[0]?.type).toBe("inner");
     expect(query.from.joins[0]?.on[0]?.operator).toBe("==");
+  });
+
+  it("round-trips independent ordered algorithm hints and rejects invalid hint documents", () => {
+    const query = parseDTQL({
+      from: {
+        name: "A", alias: "a", joins: [
+          {
+            hints: { algorithms: ["merge", "hash"] },
+            from: { name: "B", alias: "b", joins: [{ hints: { algorithms: ["nestedLoop"] }, from: { name: "C", alias: "c" }, on: [{ left: { field: "id", source: "b" }, op: "==", right: { field: "bId", source: "c" } }] }] },
+            on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "b" } }],
+          },
+          { hints: { algorithms: ["lookup", "hash"] }, from: { name: "D", alias: "d" }, on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "d" } }] },
+        ],
+      },
+    }, schema);
+    expect(isJoinedDTQLQuery(query)).toBe(true);
+    if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+    expect(query.from.joins.map((join) => join.hints?.algorithms)).toEqual([["merge", "hash"], ["lookup", "hash"]]);
+    expect(query.from.joins[0]?.from.joins[0]?.hints?.algorithms).toEqual(["nestedLoop"]);
+    const serialized = serializeJoinedDTQL(query);
+    expect(serialized).toMatchObject({ from: { joins: [{ hints: { algorithms: ["merge", "hash"] } }, { hints: { algorithms: ["lookup", "hash"] } }] } });
+    expect(parseDTQL(JSON.stringify(serialized), schema)).toEqual(query);
+
+    const base = { from: { name: "A", alias: "a", joins: [{ from: { name: "B", alias: "b" }, on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "b" } }] }] } };
+    expect(() => parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: { algorithms: [] } }] } }, schema)).toThrow("join_algorithm at from.joins[0].hints.algorithms");
+    expect(() => parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: { algorithms: ["hash", "hash"] } }] } }, schema)).toThrow("join_algorithm at from.joins[0].hints.algorithms[1]");
+    expect(() => parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: { algorithms: ["Hash"] } }] } }, schema)).toThrow("join_algorithm at from.joins[0].hints.algorithms[0]");
+    expect(() => parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: [] }] } }, schema)).toThrow("join_algorithm at from.joins[0].hints.algorithms");
+    expect(() => parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: { algorithm: "hash" } }] } }, schema)).toThrow("join_algorithm at from.joins[0].hints.algorithms");
+
+    const algorithms = ["hash"];
+    const copied = parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: { algorithms } }] } }, schema);
+    algorithms[0] = "nestedLoop";
+    expect(isJoinedDTQLQuery(copied) && copied.from.joins[0]?.hints?.algorithms).toEqual(["hash"]);
   });
 
   it("accepts same-scope ON predicates for bounded generic evaluation", () => {

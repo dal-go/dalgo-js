@@ -43,6 +43,14 @@ export interface QueryFieldReference {
 /** The currently supported backend-independent relation join kinds. */
 export type QueryJoinType = "inner" | "left";
 
+/** Case-sensitive physical JOIN preferences retained on one relation edge. */
+export type QueryJoinAlgorithm = "hash" | "merge" | "lookup" | "batchedLookup" | "nestedLoop";
+
+/** Ordered physical JOIN preferences. Each edge owns an independent list. */
+export interface QueryJoinHints {
+  readonly algorithms: readonly QueryJoinAlgorithm[];
+}
+
 /** A structured equality predicate between fields in two visible relations. */
 export interface QueryJoinPredicate {
   readonly left: QueryFieldReference;
@@ -65,6 +73,7 @@ export interface QueryJoin {
   readonly type: QueryJoinType;
   readonly from: QueryRelation;
   readonly on: readonly QueryJoinPredicate[];
+  readonly hints?: QueryJoinHints;
 }
 
 /** A structured expression reserved for join-aware DTQL pipeline clauses. */

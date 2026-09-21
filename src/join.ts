@@ -8,6 +8,7 @@ import type {
   JoinedDTQLQuery,
   QueryFieldReference,
   QueryJoinPredicate,
+  QueryJoinAlgorithm,
   QueryColumn,
   QueryRelation,
   QueryPage,
@@ -26,6 +27,8 @@ interface MaterializedRow {
   readonly row: JoinedRow;
   readonly group: readonly JoinedRow[];
 }
+
+export type SelectedJoinAlgorithm = "hash" | "nestedLoop";
 
 export interface JoinedQueryExecutionOptions {
   readonly maxFetchedRows?: number;
@@ -105,6 +108,7 @@ function validateRelationShape(value: unknown, ancestors: WeakSet<object>, path:
       const joinPath = `${path}.joins[${index.toString()}]`;
       const join = shapeObject(joinValue, joinPath);
       if (join.type !== undefined && join.type !== "inner" && join.type !== "left") typeError(`${joinPath}.type`, "unsupported join type");
+      validateJoinHints(join.hints, `${joinPath}.hints`);
       const on = join.on;
       if (!Array.isArray(on) || on.length === 0) shapeError(`${joinPath}.on`, "ON must be a non-empty array");
       on.forEach((predicateValue, predicateIndex) => {
@@ -119,6 +123,40 @@ function validateRelationShape(value: unknown, ancestors: WeakSet<object>, path:
   } finally {
     ancestors.delete(relation);
   }
+}
+
+const joinAlgorithms = new Set<QueryJoinAlgorithm>(["hash", "merge", "lookup", "batchedLookup", "nestedLoop"]);
+
+function validateJoinHints(value: unknown, path: string): void {
+  if (value === undefined) return;
+  if (value === null || Array.isArray(value) || typeof value !== "object") algorithmError(`${path}.algorithms`, "hints must be an object");
+  const hints = value as Record<string, unknown>;
+  for (const key of Object.keys(hints)) if (key !== "algorithms") algorithmError(`${path}.algorithms`, `unsupported hints key ${key}`);
+  const algorithms = hints.algorithms;
+  if (!Array.isArray(algorithms) || algorithms.length === 0) algorithmError(`${path}.algorithms`, "must be a non-empty array");
+  const seen = new Set<QueryJoinAlgorithm>();
+  algorithms.forEach((algorithm, index) => {
+    const entryPath = `${path}.algorithms[${index.toString()}]`;
+    if (typeof algorithm !== "string" || !joinAlgorithms.has(algorithm as QueryJoinAlgorithm)) algorithmError(entryPath, `unsupported algorithm ${String(algorithm)}`);
+    const typed = algorithm as QueryJoinAlgorithm;
+    if (seen.has(typed)) algorithmError(entryPath, `duplicate algorithm ${typed}`);
+    seen.add(typed);
+  });
+}
+
+/**
+ * Picks the executable generic strategy for one JOIN edge. Unavailable
+ * preferences are skipped; `nestedLoop` deliberately bypasses a hash index.
+ */
+export function selectJoinAlgorithm(
+  hints: readonly QueryJoinAlgorithm[] | undefined,
+  hashAvailable: boolean,
+): SelectedJoinAlgorithm {
+  for (const algorithm of hints ?? []) {
+    if (algorithm === "nestedLoop") return "nestedLoop";
+    if (algorithm === "hash" && hashAvailable) return "hash";
+  }
+  return hashAvailable ? "hash" : "nestedLoop";
 }
 
 function shapeObject(value: unknown, path: string): Record<string, unknown> {
@@ -276,11 +314,15 @@ async function evaluateRelation(
     const childAliases = aliasesFor(join.from);
     const uncorrelated = !hasExternalReference(join.from, new Set(childAliases));
     const childRows = uncorrelated ? await evaluateRelation(join.from, new Map(), cached, limits, counter) : undefined;
-    const candidateLookup = childRows === undefined ? undefined : candidateIndex(childRows, join, new Set(childAliases), `joins[${index.toString()}]`);
+    const hashAvailable = childRows !== undefined && crossSidePredicate(join, new Set(childAliases)) !== undefined;
+    const algorithm = selectJoinAlgorithm(join.hints?.algorithms, hashAvailable);
+    const candidateLookup = childRows === undefined || algorithm !== "hash" ? undefined : candidateIndex(childRows, join, new Set(childAliases), `joins[${index.toString()}]`);
     for (const left of rows) {
       const candidates = childRows === undefined
         ? await evaluateRelation(join.from, left.aliases, cached, limits, counter, left.root)
-        : indexedCandidates(left, childRows, candidateLookup, join, new Set(childAliases), `joins[${index.toString()}]`).map((candidate) => mergeCandidate(left, candidate));
+        : (algorithm === "hash"
+          ? indexedCandidates(left, childRows, candidateLookup, join, new Set(childAliases), `joins[${index.toString()}]`)
+          : childRows).map((candidate) => mergeCandidate(left, candidate));
       counter.candidates += candidates.length;
       if (counter.candidates > limits.maxCandidateEvaluations) planError(`${aliasOf(relation)}.joins[${index.toString()}]`, "candidate-evaluation bound exceeded");
       const matches = candidates.filter((candidate) => join.on.every((predicate) => matchesJoin(candidate, predicate, `joins[${index.toString()}]`)));
@@ -308,7 +350,7 @@ function candidateIndex(
   childAliases: ReadonlySet<string>,
   path: string,
 ): ReadonlyMap<string, readonly JoinedRow[]> | undefined {
-  const predicate = join.on.find((item) => childAliases.has(item.left.source) !== childAliases.has(item.right.source));
+  const predicate = crossSidePredicate(join, childAliases);
   if (predicate === undefined) return undefined;
   const child = childAliases.has(predicate.left.source) ? predicate.left : predicate.right;
   const index = new Map<string, JoinedRow[]>();
@@ -322,6 +364,13 @@ function candidateIndex(
   return index;
 }
 
+function crossSidePredicate(
+  join: QueryRelation["joins"][number],
+  childAliases: ReadonlySet<string>,
+): QueryJoinPredicate | undefined {
+  return join.on.find((item) => childAliases.has(item.left.source) !== childAliases.has(item.right.source));
+}
+
 function indexedCandidates(
   left: JoinedRow,
   candidates: readonly JoinedRow[],
@@ -331,7 +380,7 @@ function indexedCandidates(
   path: string,
 ): readonly JoinedRow[] {
   if (index === undefined) return candidates;
-  const predicate = join.on.find((item) => childAliases.has(item.left.source) !== childAliases.has(item.right.source));
+  const predicate = crossSidePredicate(join, childAliases);
   if (predicate === undefined) return candidates;
   const parent = childAliases.has(predicate.left.source) ? predicate.right : predicate.left;
   const key = joinKey(fieldValue(left, parent), `${path}.index`);
@@ -610,6 +659,10 @@ function typeError(path: string, reason: string): never {
 
 function operatorError(path: string, reason: string): never {
   throw new TypeError(`join_operator at ${path}: ${reason}`);
+}
+
+function algorithmError(path: string, reason: string): never {
+  throw new TypeError(`join_algorithm at ${path}: ${reason}`);
 }
 
 function shapeError(path: string, reason: string): never {

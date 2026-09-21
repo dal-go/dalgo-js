@@ -7,6 +7,7 @@ import type {
   DTQLHaving,
   QueryFilter,
   QueryJoin,
+  QueryJoinAlgorithm,
   QueryJoinPredicate,
   QueryJoinType,
   QueryOperator,
@@ -32,7 +33,9 @@ type ObjectValue = Record<string, unknown>;
 const defaultMaxLimit = 1000;
 const rootKeys = new Set(["from", "where", "orderBy", "limit", "offset", "columns", "groupBy", "having"]);
 const fromKeys = new Set(["schema", "name", "alias", "as", "joins"]);
-const joinKeys = new Set(["type", "from", "on"]);
+const joinKeys = new Set(["type", "from", "on", "hints"]);
+const hintKeys = new Set(["algorithms"]);
+const joinAlgorithms = new Set<QueryJoinAlgorithm>(["hash", "merge", "lookup", "batchedLookup", "nestedLoop"]);
 const joinPredicateKeys = new Set(["left", "op", "right"]);
 const whereKeys = new Set(["op", "left", "right"]);
 const fieldKeys = new Set(["field"]);
@@ -130,6 +133,7 @@ function serializeRelation(relation: QueryRelation): ObjectValue {
         ...(join.type === "inner" ? {} : { type: join.type }),
         from: serializeRelation(join.from),
         on: join.on.map((predicate) => ({ left: predicate.left, op: "==", right: predicate.right })),
+        ...(join.hints === undefined ? {} : { hints: { algorithms: [...join.hints.algorithms] } }),
       })),
     }),
   };
@@ -231,7 +235,26 @@ function parseJoin(value: ObjectValue, schema: DTQLSchema, path: string, ancesto
   if (!Array.isArray(value.on) || value.on.length === 0) fail(`join_shape at ${path}.on: must be a non-empty array`);
   const from = parseRelation(object(value.from, `${path}.from`), schema, `${path}.from`, ancestors);
   const on = value.on.map((entry, index) => parseJoinPredicate(object(entry, `${path}.on[${index.toString()}]`), `${path}.on[${index.toString()}]`));
-  return { type, from, on };
+  const hints = parseJoinHints(value.hints, `${path}.hints`);
+  return { type, from, on, ...(hints === undefined ? {} : { hints }) };
+}
+
+function parseJoinHints(value: unknown, path: string): { readonly algorithms: readonly QueryJoinAlgorithm[] } | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || Array.isArray(value) || typeof value !== "object") fail(`join_algorithm at ${path}.algorithms: hints must be an object`);
+  const hints = value as ObjectValue;
+  for (const key of Object.keys(hints)) if (!hintKeys.has(key)) fail(`join_algorithm at ${path}.algorithms: unsupported hints key ${key}`);
+  if (!Array.isArray(hints.algorithms) || hints.algorithms.length === 0) fail(`join_algorithm at ${path}.algorithms: must be a non-empty array`);
+  const seen = new Set<QueryJoinAlgorithm>();
+  const algorithms = hints.algorithms.map((algorithm, index) => {
+    const entryPath = `${path}.algorithms[${index.toString()}]`;
+    if (typeof algorithm !== "string" || !joinAlgorithms.has(algorithm as QueryJoinAlgorithm)) fail(`join_algorithm at ${entryPath}: unsupported algorithm ${String(algorithm)}`);
+    const typed = algorithm as QueryJoinAlgorithm;
+    if (seen.has(typed)) fail(`join_algorithm at ${entryPath}: duplicate algorithm ${typed}`);
+    seen.add(typed);
+    return typed;
+  });
+  return { algorithms: [...algorithms] };
 }
 
 function parseJoinType(value: unknown, path: string): QueryJoinType {

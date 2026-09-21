@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { executeJoinedDTQLQuery, isJoinedDTQLQuery, key, parseDTQL, type DTQLSchema, type ExistingRecord, type JoinedDTQLQuery, type QueryExecutor, type StructuredQuery } from "../src/index.js";
+import { executeJoinedDTQLQuery, isJoinedDTQLQuery, key, parseDTQL, selectJoinAlgorithm, type DTQLSchema, type ExistingRecord, type JoinedDTQLQuery, type QueryExecutor, type StructuredQuery } from "../src/index.js";
 
 type Data = Record<string, unknown>;
 
@@ -42,6 +42,50 @@ function schemaSource(relation: { readonly name: string; readonly schema?: strin
 }
 
 describe("executeJoinedDTQLQuery", () => {
+  it("selects executable algorithm preferences in order", () => {
+    expect(selectJoinAlgorithm(["nestedLoop", "hash"], true)).toBe("nestedLoop");
+    expect(selectJoinAlgorithm(["hash", "nestedLoop"], true)).toBe("hash");
+    expect(selectJoinAlgorithm(["merge", "lookup", "batchedLookup", "hash"], true)).toBe("hash");
+    expect(selectJoinAlgorithm(["hash", "merge"], false)).toBe("nestedLoop");
+    expect(selectJoinAlgorithm(undefined, true)).toBe("hash");
+  });
+
+  it("honors nestedLoop without retrying hash and keeps hinted output identical", async () => {
+    const document = (algorithms: readonly string[] | undefined) => ({
+      from: { name: "A", alias: "a", joins: [{ ...(algorithms === undefined ? {} : { hints: { algorithms } }), from: { name: "B", alias: "b" }, on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "b" } }] }] },
+      columns: [{ field: "id", source: "a", as: "a" }, { field: "id", source: "b", as: "b" }],
+    });
+    const executor = new MemoryExecutor({
+      A: [record("A", "a", { id: 1 })],
+      B: [record("B", "match", { id: 10, aId: 1 }), record("B", "other", { id: 20, aId: 2 })],
+    });
+    const normal = await executeJoinedDTQLQuery(executor, joined(document(undefined)));
+    const hashed = await executeJoinedDTQLQuery(executor, joined(document(["merge", "hash"])));
+    const nested = await executeJoinedDTQLQuery(executor, joined(document(["nestedLoop", "hash"])));
+    expect(hashed.records).toEqual(normal.records);
+    expect(nested.records).toEqual(normal.records);
+    await expect(executeJoinedDTQLQuery(executor, joined(document(["nestedLoop", "hash"])), { maxCandidateEvaluations: 1 })).rejects.toThrow("join_plan at a.joins[0]: candidate-evaluation bound exceeded");
+    await expect(executeJoinedDTQLQuery(executor, joined(document(["hash", "nestedLoop"])), { maxCandidateEvaluations: 1 })).resolves.toMatchObject({ records: [{ data: { a: 1, b: 10 } }] });
+  });
+
+  it("rejects malformed direct-model algorithm hints before provider reads", async () => {
+    const base: JoinedDTQLQuery = { kind: "joined-dtql", from: { name: "A", alias: "a", joins: [] }, filters: [], orders: [] };
+    const malformed = (hints: unknown): JoinedDTQLQuery => ({
+      ...base,
+      from: { name: "A", alias: "a", joins: [{ type: "inner", hints: hints as never, from: { name: "B", alias: "b", joins: [] }, on: [{ left: { source: "a", field: "id" }, operator: "==", right: { source: "b", field: "aId" } }] }] },
+    });
+    for (const [hints, diagnostic] of [
+      [{ algorithms: [] }, "join_algorithm at from.joins[0].hints.algorithms"],
+      [{ algorithms: ["hash", "hash"] }, "join_algorithm at from.joins[0].hints.algorithms[1]"],
+      [{ algorithms: ["HASH"] }, "join_algorithm at from.joins[0].hints.algorithms[0]"],
+      [[], "join_algorithm at from.joins[0].hints.algorithms"],
+    ] as const) {
+      const executor = new MemoryExecutor({});
+      await expect(executeJoinedDTQLQuery(executor, malformed(hints))).rejects.toThrow(diagnostic);
+      expect(executor.calls).toHaveLength(0);
+    }
+  });
+
   it("scans each relation once and preserves nested INNER/LEFT multiplicity and the root key", async () => {
     const query = joined({
       from: {
@@ -281,6 +325,29 @@ describe("executeJoinedDTQLQuery", () => {
       { invoice_id: 3, FirstName: "Bea", employee: null },
       { invoice_id: 2, FirstName: "Ada", employee: "Evan" },
       { invoice_id: 1, FirstName: "Ada", employee: "Evan" },
+    ]);
+  });
+
+  it("executes the canonical hinted Chinook journey with the original ordered rows", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in canonical YAML fixture at runtime.
+    const fixture = readFileSync(new URL("./testdata/joins/chinook-hinted.dtql.yaml", import.meta.url), "utf8");
+    const query = joined(fixture);
+    const result = await executeJoinedDTQLQuery(new MemoryExecutor({
+      "main.Invoice": [
+        record("Invoice", "1", { InvoiceId: 1, CustomerId: 10 }),
+        record("Invoice", "2", { InvoiceId: 2, CustomerId: 10 }),
+        record("Invoice", "3", { InvoiceId: 3, CustomerId: 11 }),
+      ],
+      "main.Customer": [
+        record("Customer", "10", { CustomerId: 10, FirstName: "Ada", SupportRepId: 50 }),
+        record("Customer", "11", { CustomerId: 11, FirstName: "Bea", SupportRepId: null }),
+      ],
+      "main.Employee": [record("Employee", "50", { EmployeeId: 50, FirstName: "Evan" })],
+    }), query, { resolveSource: schemaSource });
+    expect(result.records.map((row) => row.data)).toEqual([
+      { invoice_id: 3, customer: "Bea", employee: null },
+      { invoice_id: 2, customer: "Ada", employee: "Evan" },
+      { invoice_id: 1, customer: "Ada", employee: "Evan" },
     ]);
   });
 });
