@@ -144,6 +144,21 @@ describe("recursive DTQL fixtures", () => {
     expect(rows).toEqual([{ id: 1, matched: 1 }, { id: 2, matched: null }]);
   });
 
+  it("keeps an outer unqualified field bound when an inner source reuses its alias", async () => {
+    const scopedSchema: DTQLSchema = { tables: [{ name: "Outer", fields: ["id", "needle"] }, { name: "Inner", fields: ["value"] }] };
+    const query = parseRecursiveDTQL("from: {name: Outer, alias: x}\norderBy: [{field: id, source: x}]\ncolumns:\n  - {field: id, source: x}\n  - query:\n      as: matched\n      from: {name: Inner, alias: x}\n      where: {left: {field: value, source: x}, op: '==', right: {field: needle}}\n      columns: [{field: value, source: x}]\n", scopedSchema);
+    const executor: QueryExecutor = {
+      async query<T>(leaf: StructuredQuery<T>) {
+        const records = leaf.source.name === "Outer"
+          ? [{ key: key("Outer", "1"), exists: true as const, data: { id: 1, needle: 7 } }, { key: key("Outer", "2"), exists: true as const, data: { id: 2, needle: 8 } }]
+          : [{ key: key("Inner", "1"), exists: true as const, data: { value: 7 } }];
+        return { records: records as never };
+      },
+    };
+    expect((await executeRecursiveDTQLQuery(executor, query)).records.map((record) => record.data))
+      .toEqual([{ id: 1, matched: 7 }, { id: 2, matched: null }]);
+  });
+
   it("keeps a derived base correlated when a later JOIN reuses its outer alias", async () => {
     const scopedSchema: DTQLSchema = { tables: [{ name: "Outer", fields: ["id"] }, { name: "Inner", fields: ["value"] }, { name: "Side", fields: ["id"] }] };
     const query = parseRecursiveDTQL("from: {name: Outer, alias: x}\norderBy: [{field: id, source: x}]\ncolumns:\n  - {field: id, source: x}\n  - query:\n      as: matched\n      from:\n        query:\n          as: d\n          from: {name: Inner, alias: i}\n          where: {left: {field: value, source: i}, op: '==', right: {field: id, source: x}}\n          columns: [{field: value, source: i}]\n        joins:\n          - from: {name: Side, alias: x}\n            on: [{left: {field: value, source: d}, op: '==', right: {field: id, source: x}}]\n      columns: [{field: value, source: d}]\n", scopedSchema);

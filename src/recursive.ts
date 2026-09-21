@@ -113,7 +113,7 @@ export async function executeRecursiveDTQLQuery(
 
 async function evaluateQuery(executor: QueryExecutor, query: RecursiveDTQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Data[]> {
   cancelled(budget, path);
-  let rows = await evaluateRelation(executor, query.from, outer, budget, options, `${path}.from`);
+  let rows = await evaluateRelation(executor, query.from, outer, budget, options, `${path}.from`, query);
   if (query.where !== undefined) {
     const filtered: Environment[] = [];
     for (const row of rows) if ((await condition(executor, query.where, row, budget, options, `${path}.where`)) === true) filtered.push(row);
@@ -138,7 +138,7 @@ async function evaluateQuery(executor: QueryExecutor, query: RecursiveDTQLQuery,
   return output;
 }
 
-async function evaluateRelation(executor: QueryExecutor, relation: RecursiveDTQLRelation, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Environment[]> {
+async function evaluateRelation(executor: QueryExecutor, relation: RecursiveDTQLRelation, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string, owner: RecursiveDTQLQuery): Promise<Environment[]> {
   cancelled(budget, path);
   const alias = relation.alias ?? relation.name ?? relation.query?.as;
   if (alias === undefined || alias.length === 0) shape(path, "relation needs a name or query.as alias");
@@ -160,11 +160,11 @@ async function evaluateRelation(executor: QueryExecutor, relation: RecursiveDTQL
     const data = await evaluateQuery(executor, relation.query, outer, budget, options, `${path}.query`);
     records = data.map((value, index) => ({ key: new Key("__dtql_derived__", index.toString()), exists: true, data: value }));
   }
-  let rows: Environment[] = records.map((record) => new Map([...outer, [alias, record]]));
+  let rows: Environment[] = records.map((record) => new Map([...outer, [sourceKey(owner, alias), record]]));
   for (const [index, join] of relation.joins.entries()) {
     const joined: Environment[] = [];
     for (const left of rows) {
-      const right = await evaluateRelation(executor, join.from, left, budget, options, `${path}.joins[${index.toString()}].from`);
+      const right = await evaluateRelation(executor, join.from, left, budget, options, `${path}.joins[${index.toString()}].from`, owner);
       let matched = false;
       for (const candidate of right) {
         budget.candidates += 1;
@@ -175,7 +175,7 @@ async function evaluateRelation(executor: QueryExecutor, relation: RecursiveDTQL
       }
       if (!matched && join.type === "left") {
         const empty = new Map(left);
-        empty.set(join.from.alias ?? join.from.name ?? join.from.query?.as ?? "", undefined);
+        empty.set(sourceKey(owner, join.from.alias ?? join.from.name ?? join.from.query?.as ?? ""), undefined);
         joined.push(empty);
       }
     }
@@ -188,11 +188,12 @@ async function evaluateRelation(executor: QueryExecutor, relation: RecursiveDTQL
 // pipeline.  Keep the fast path before projection so scalar expressions in an
 // EXISTS body never run, and so a qualifying WHERE row stops evaluation.
 async function queryExists(executor: QueryExecutor, query: RecursiveDTQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<boolean> {
-  let rows = await evaluateRelation(executor, query.from, outer, budget, options, `${path}.from`);
+  let rows = await evaluateRelation(executor, query.from, outer, budget, options, `${path}.from`, query);
   const needsGroups = query.groupBy !== undefined || query.having !== undefined || (query.columns?.some((column) => containsAggregate(column.expression)) ?? false);
   // With no grouping/HAVING and offset zero, ordering cannot change whether a
   // row exists; limit only caps a non-empty result.
   if (!needsGroups && (query.offset ?? 0) === 0) {
+    if (query.limit === 0) return false;
     for (const row of rows) {
       if (query.where === undefined || (await condition(executor, query.where, row, budget, options, `${path}.where`)) === true) return true;
     }
@@ -379,6 +380,17 @@ function limit(path: string, counter: string): never { throw new RangeError(`que
 
 type BoundSource = ReadonlySet<string>;
 const resolvedSources = new WeakMap<QueryFieldReference, string>();
+const boundSourceKeys = new WeakMap<BoundSource, string>();
+const querySourceKeys = new WeakMap<RecursiveDTQLQuery, Map<string, string>>();
+let nextQuerySourceID = 0;
+
+function sourceKey(query: RecursiveDTQLQuery, alias: string): string {
+  let aliases = querySourceKeys.get(query);
+  if (aliases === undefined) { aliases = new Map(); querySourceKeys.set(query, aliases); }
+  let key = aliases.get(alias);
+  if (key === undefined) { nextQuerySourceID += 1; key = `${nextQuerySourceID.toString()}:${alias}`; aliases.set(alias, key); }
+  return key;
+}
 
 function at(path: string, suffix: string): string { return path === "" ? suffix : `${path}.${suffix}`; }
 
@@ -426,6 +438,9 @@ function bindRelation(relation: RecursiveDTQLRelation, schema: DTQLSchema, outer
       fields = bindQuery(value.query, schema, [visible, ...outers], `${sourcePath}.query`);
     }
     if (visible.has(alias)) shape(sourcePath, `duplicate source alias ${alias}`);
+    const owner = bindingStack.at(-1);
+    if (owner === undefined) shape(sourcePath, "relation has no query scope");
+    boundSourceKeys.set(fields, sourceKey(owner, alias));
     visible.set(alias, fields);
   };
   bindOne({ ...relation, joins: [] }, path);
@@ -457,11 +472,11 @@ function bindField(reference: QueryFieldReference, local: ReadonlyMap<string, Bo
   if (reference.source === "") {
     const candidates = [...local.entries()].filter(([, fields]) => fields.has(reference.field));
     if (candidates.length > 1) throw new TypeError(`${category} at ${path}: ambiguous unqualified field ${reference.field}`);
-    if (candidates.length === 1) { const [alias] = candidates[0] ?? []; if (alias !== undefined) resolvedSources.set(reference, alias); return; }
+    if (candidates.length === 1) { const fields = candidates[0]?.[1]; const key = fields === undefined ? undefined : boundSourceKeys.get(fields); if (key !== undefined) resolvedSources.set(reference, key); return; }
     for (const [index, scope] of outers.entries()) {
       const outerCandidates = [...scope.entries()].filter(([, fields]) => fields.has(reference.field));
       if (outerCandidates.length > 1) throw new TypeError(`${category} at ${path}: ambiguous unqualified field ${reference.field}`);
-      if (outerCandidates.length === 1) { const [alias] = outerCandidates[0] ?? []; if (alias !== undefined) resolvedSources.set(reference, alias); markOuterBinding(index); return; }
+      if (outerCandidates.length === 1) { const fields = outerCandidates[0]?.[1]; const key = fields === undefined ? undefined : boundSourceKeys.get(fields); if (key !== undefined) resolvedSources.set(reference, key); markOuterBinding(index); return; }
     }
     throw new TypeError(`${category} at ${path}: unknown field ${reference.field}`);
   }
@@ -469,6 +484,8 @@ function bindField(reference: QueryFieldReference, local: ReadonlyMap<string, Bo
   if (fields === undefined) for (const [index, scope] of outers.entries()) { fields = scope.get(reference.source); if (fields !== undefined) { markOuterBinding(index); break; } }
   if (fields === undefined) throw new TypeError(`${category} at ${path}.source: unknown source alias ${reference.source}`);
   if (!fields.has(reference.field)) throw new TypeError(`${category} at ${path}: unknown field ${reference.field}`);
+  const key = boundSourceKeys.get(fields);
+  if (key !== undefined) resolvedSources.set(reference, key);
 }
 
 // This is lexical provenance, not an alias-name check. Scope zero belongs to
