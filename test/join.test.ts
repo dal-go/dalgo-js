@@ -124,10 +124,22 @@ describe("executeJoinedDTQLQuery", () => {
       ...base,
       from: { name: "A", alias: "a", joins: [{ type: "inner", from: { name: "B", alias: "b", joins: [] } }] },
     } as unknown as JoinedDTQLQuery;
+    const missingRootName = { ...base, from: { alias: "a", joins: [] } } as unknown as JoinedDTQLQuery;
+    const missingChildName = {
+      ...base,
+      from: { name: "A", alias: "a", joins: [{ type: "inner", from: { alias: "b", joins: [] }, on: [{ left: { source: "a", field: "id" }, operator: "==", right: { source: "b", field: "aId" } }] }] },
+    } as unknown as JoinedDTQLQuery;
+    const emptyChildAlias = {
+      ...base,
+      from: { name: "A", alias: "a", joins: [{ type: "inner", from: { name: "B", alias: "", joins: [] }, on: [{ left: { source: "a", field: "id" }, operator: "==", right: { source: "b", field: "aId" } }] }] },
+    } as unknown as JoinedDTQLQuery;
     await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), malformedType)).rejects.toThrow("join_type at from.joins[0].type");
     await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), malformedOn)).rejects.toThrow("join_shape at from.joins[0].on");
     await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), missingFrom)).rejects.toThrow("join_shape at from.joins[0].from");
     await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), missingOn)).rejects.toThrow("join_shape at from.joins[0].on");
+    await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), missingRootName)).rejects.toThrow("join_shape at from.name");
+    await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), missingChildName)).rejects.toThrow("join_shape at from.joins[0].from.name");
+    await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), emptyChildAlias)).rejects.toThrow("join_shape at from.joins[0].from.alias");
   });
 
   it("keeps the full nested right subtree absent for LEFT/INNER and preserves B for LEFT/LEFT", async () => {

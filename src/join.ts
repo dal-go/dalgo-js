@@ -94,6 +94,8 @@ export async function executeJoinedDTQLQuery(
 
 function validateRelationShape(value: unknown, ancestors: WeakSet<object>, path: string): void {
   const relation = shapeObject(value, path);
+  if (typeof relation.name !== "string" || relation.name.length === 0) shapeError(`${path}.name`, "relation name is required");
+  if (relation.alias !== undefined && (typeof relation.alias !== "string" || relation.alias.length === 0)) shapeError(`${path}.alias`, "alias must be a non-empty string");
   if (ancestors.has(relation)) cycleError(path);
   ancestors.add(relation);
   try {

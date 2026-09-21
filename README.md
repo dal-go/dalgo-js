@@ -100,10 +100,24 @@ await executeJoinedDTQLQuery(adapter, parsed, {
 
 `@dalgo/core` currently ships no `QueryExecutor` adapter. Its in-repository
 memory executor is tested with generic unqualified scans and with the explicit
-schema mapping above. The external Firestore adapter has not been exercised
-for recursive DTQL joins; it needs its own resolver and integration test before
-claiming this capability. Without `resolveSource`, a schema-qualified query
-fails with `join_plan` before any output is returned.
+schema mapping above. The local adapter inventory is:
+
+| Adapter checkout or package | Imports current `@dalgo/core` and exposes `QueryExecutor.query` | Recursive JOIN coverage |
+| --- | --- | --- |
+| This package's memory test executor | Yes | Generic executor tests cover it. |
+| `dalgo-http-adapters/packages/firestore` | Yes | No JOIN integration test or resolver. |
+| `dalgo-http-adapters/packages/indexeddb` | Yes | No JOIN integration test or resolver. |
+| Sibling `dalgo2firestore-js` and `dalgo2indexeddb-js` | No, both import legacy `@dal-go/dalgo` | No current-core JOIN support. |
+| Sibling `dalgo2firebase-rtdb-js` | No package source is present in the local checkout | No current-core JOIN support. |
+| `dalgo-http-adapters/packages/firebase-rtdb` and the remaining HTTP packages | No, they import legacy `@dal-go/dalgo` | No current-core JOIN support. |
+
+The current-core Firestore and IndexedDB packages need adapter-owned resolver
+and integration tests before they can claim generic JOIN support. Legacy and
+untested adapters do not gain native or generic JOIN support from this package.
+Their separate dependency pins make an adapter integration test inappropriate
+in this repository; each adapter migration needs its own test. Without
+`resolveSource`, a schema-qualified query fails with `join_plan` before any
+output is returned.
 
 ## Security boundary
 
