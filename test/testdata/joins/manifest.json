@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "d393914bf9f9fe4a09fbba3188219e24f86ea284",
+  "sourceCommit": "c999c7372fd944c57e89dad7e75f9f42c8afaae1",
   "files": {
     "chinook-nested.dtql.yaml": "2eeef93ffb02a4272f06f6ab909b2db4cbbb9a2a1df280ae4c47851534f583b3",
     "chinook-nested.rows.json": "9f5b32d506541afd8f651d5474f87b44d2e8646d1410e3a03d03c70fccf4a757",

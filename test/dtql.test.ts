@@ -100,7 +100,7 @@ describe("parseDTQL", () => {
       readonly sourceCommit: string;
       readonly files: Readonly<Record<string, string>>;
     };
-    expect(manifest.sourceCommit).toBe("d393914bf9f9fe4a09fbba3188219e24f86ea284");
+    expect(manifest.sourceCommit).toBe("c999c7372fd944c57e89dad7e75f9f42c8afaae1");
     for (const [name, expected] of Object.entries(manifest.files)) {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in canonical fixture at runtime.
       const fixture = readFileSync(new URL(`./testdata/joins/${name}`, import.meta.url), "utf8");
