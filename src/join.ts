@@ -71,11 +71,13 @@ export async function executeJoinedDTQLQuery(
     maxRetainedBytes: options.maxRetainedBytes ?? defaults.maxRetainedBytes,
   };
   validateLimits(limits);
+  validateRelationShape(query.from, new WeakSet(), "from");
   const aliases = new Map<string, QueryRelation>();
   const nodes: QueryRelation[] = [];
   collectRelations(query.from, aliases, nodes, new WeakSet(), "from");
   validateExecutionScopes(query.from, new Set(), "from");
   const effectiveQuery = { ...query, ...(query.columns === undefined ? {} : { columns: expandColumns(query.columns, aliases, options.schema) }) };
+  validateClauseSources(effectiveQuery, aliases);
   const keyReferences = collectKeyReferences(query.from, aliases);
   const cached = await scanRelations(executor, nodes, keyReferences, limits, options.resolveSource);
   const relationAliases = aliasesFor(query.from);
@@ -88,6 +90,69 @@ export async function executeJoinedDTQLQuery(
   const end = effectiveQuery.limit === undefined ? undefined : start + effectiveQuery.limit;
   const page = ordered.slice(start, end).map((item) => ({ key: item.row.root.key, exists: true as const, data: project(item, effectiveQuery, relationAliases) }));
   return { records: page };
+}
+
+function validateRelationShape(value: unknown, ancestors: WeakSet<object>, path: string): void {
+  const relation = shapeObject(value, path);
+  if (ancestors.has(relation)) cycleError(path);
+  ancestors.add(relation);
+  try {
+    const joins = relation.joins;
+    if (!Array.isArray(joins)) shapeError(`${path}.joins`, "joins must be an array");
+    joins.forEach((joinValue, index) => {
+      const joinPath = `${path}.joins[${index.toString()}]`;
+      const join = shapeObject(joinValue, joinPath);
+      if (join.type !== undefined && join.type !== "inner" && join.type !== "left") typeError(`${joinPath}.type`, "unsupported join type");
+      const on = join.on;
+      if (!Array.isArray(on) || on.length === 0) shapeError(`${joinPath}.on`, "ON must be a non-empty array");
+      on.forEach((predicateValue, predicateIndex) => {
+        const predicatePath = `${joinPath}.on[${predicateIndex.toString()}]`;
+        const predicate = shapeObject(predicateValue, predicatePath);
+        if (predicate.operator !== "==") operatorError(`${predicatePath}.op`, `unsupported join operator ${String(predicate.operator)}`);
+        validateJoinReferenceShape(predicate.left, `${predicatePath}.left`);
+        validateJoinReferenceShape(predicate.right, `${predicatePath}.right`);
+      });
+      validateRelationShape(join.from, ancestors, `${joinPath}.from`);
+    });
+  } finally {
+    ancestors.delete(relation);
+  }
+}
+
+function shapeObject(value: unknown, path: string): Record<string, unknown> {
+  if (value === null || Array.isArray(value) || typeof value !== "object") shapeError(path, "must be an object");
+  return value as Record<string, unknown>;
+}
+
+function validateJoinReferenceShape(value: unknown, path: string): void {
+  const reference = shapeObject(value, path);
+  if (typeof reference.field !== "string" || reference.field.length === 0 || typeof reference.source !== "string" || reference.source.length === 0) {
+    shapeError(path, "ON operands must be qualified fields");
+  }
+}
+
+function validateClauseSources(query: JoinedDTQLQuery, aliases: ReadonlyMap<string, QueryRelation>): void {
+  const field = (reference: QueryFieldReference, path: string): void => {
+    if (!aliases.has(reference.source)) scopeError(`${path}.source`, `unknown alias ${reference.source}`);
+  };
+  const expression = (value: DTQLExpression, path: string): void => {
+    switch (value.kind) {
+      case "field": field(value.field, path); return;
+      case "aggregate": value.args.forEach((argument, index) => { expression(argument, `${path}.aggregate.args[${index.toString()}]`); }); return;
+      case "binary": expression(value.left, `${path}.binary.left`); expression(value.right, `${path}.binary.right`); return;
+      default: return;
+    }
+  };
+  query.filters.forEach((filter, index) => { field(filter.field, `where[${index.toString()}].left`); });
+  query.orders.forEach((order, index) => { field(order.field, `orderBy[${index.toString()}]`); });
+  query.columns?.forEach((column, index) => {
+    if (column.expression !== undefined) expression(column.expression, `columns[${index.toString()}]`);
+  });
+  query.groupBy?.forEach((group, index) => { expression(group, `groupBy[${index.toString()}]`); });
+  if (query.having !== undefined) {
+    expression(query.having.left, "having.left");
+    expression(query.having.right, "having.right");
+  }
 }
 
 function expandColumns(
@@ -531,6 +596,26 @@ function bytes(value: unknown): number {
 
 function keyTypeError(path: string): never {
   throw new TypeError(`join_key_type at ${path}: expected string, boolean, or finite number`);
+}
+
+function scopeError(path: string, reason: string): never {
+  throw new TypeError(`join_scope at ${path}: ${reason}`);
+}
+
+function typeError(path: string, reason: string): never {
+  throw new TypeError(`join_type at ${path}: ${reason}`);
+}
+
+function operatorError(path: string, reason: string): never {
+  throw new TypeError(`join_operator at ${path}: ${reason}`);
+}
+
+function shapeError(path: string, reason: string): never {
+  throw new TypeError(`join_shape at ${path}: ${reason}`);
+}
+
+function cycleError(path: string): never {
+  throw new TypeError(`join_cycle at ${path}: recursive relation tree`);
 }
 
 function planError(path: string, reason: string): never {

@@ -11,6 +11,7 @@ const schema: DTQLSchema = {
     { schema: "main", name: "Employee", fields: ["EmployeeId", "FirstName"] },
     { name: "A", fields: ["id"] },
     { name: "B", fields: ["id", "aId"] },
+    { name: "C", fields: ["id", "bId"] },
   ],
 };
 
@@ -90,6 +91,80 @@ describe("executeJoinedDTQLQuery", () => {
     expect((await executeJoinedDTQLQuery(executor, sameScope)).records.map((row) => row.data)).toEqual([{ a: 1, b: 1 }, { a: 2, b: 1 }]);
     await expect(executeJoinedDTQLQuery(executor, sameScope, { maxResultRows: 1 })).rejects.toThrow("result-row bound exceeded");
     await expect(executeJoinedDTQLQuery(executor, sameScope, { maxCandidateEvaluations: 1 })).rejects.toThrow("candidate-evaluation bound exceeded");
+  });
+
+  it("validates direct-model clause aliases and malformed JOINs before scans", async () => {
+    const base: JoinedDTQLQuery = { kind: "joined-dtql", from: { name: "A", alias: "a", joins: [] }, filters: [], orders: [] };
+    const invalids: readonly [JoinedDTQLQuery, string][] = [
+      [{ ...base, filters: [{ field: { source: "missing", field: "id" }, operator: "!=", value: 1 }] }, "join_scope at where[0].left.source"],
+      [{ ...base, orders: [{ field: { source: "missing", field: "id" }, direction: "asc" }] }, "join_scope at orderBy[0].source"],
+      [{ ...base, columns: [{ expression: { kind: "field", field: { source: "missing", field: "id" } }, as: "id" }] }, "join_scope at columns[0].source"],
+      [{ ...base, groupBy: [{ kind: "field", field: { source: "missing", field: "id" } }] }, "join_scope at groupBy[0].source"],
+      [{ ...base, having: { left: { kind: "field", field: { source: "missing", field: "id" } }, operator: "==", right: { kind: "literal", value: 1 } } }, "join_scope at having.left.source"],
+    ];
+    for (const [query, diagnostic] of invalids) {
+      const executor = new MemoryExecutor({ A: [record("A", "a", { id: 1 })] });
+      await expect(executeJoinedDTQLQuery(executor, query)).rejects.toThrow(diagnostic);
+      expect(executor.calls).toHaveLength(0);
+    }
+
+    const malformedType: JoinedDTQLQuery = {
+      ...base,
+      from: { name: "A", alias: "a", joins: [{ type: "right" as never, from: { name: "B", alias: "b", joins: [] }, on: [{ left: { source: "a", field: "id" }, operator: "==", right: { source: "b", field: "aId" } }] }] },
+    };
+    const malformedOn: JoinedDTQLQuery = {
+      ...base,
+      from: { name: "A", alias: "a", joins: [{ type: "inner", from: { name: "B", alias: "b", joins: [] }, on: [] }] },
+    };
+    const missingFrom = {
+      ...base,
+      from: { name: "A", alias: "a", joins: [{ type: "inner", on: [{ left: { source: "a", field: "id" }, operator: "==", right: { source: "b", field: "aId" } }] }] },
+    } as unknown as JoinedDTQLQuery;
+    const missingOn = {
+      ...base,
+      from: { name: "A", alias: "a", joins: [{ type: "inner", from: { name: "B", alias: "b", joins: [] } }] },
+    } as unknown as JoinedDTQLQuery;
+    await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), malformedType)).rejects.toThrow("join_type at from.joins[0].type");
+    await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), malformedOn)).rejects.toThrow("join_shape at from.joins[0].on");
+    await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), missingFrom)).rejects.toThrow("join_shape at from.joins[0].from");
+    await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), missingOn)).rejects.toThrow("join_shape at from.joins[0].on");
+  });
+
+  it("keeps the full nested right subtree absent for LEFT/INNER and preserves B for LEFT/LEFT", async () => {
+    const nested = (type: "inner" | "left") => joined({
+      from: {
+        name: "A", alias: "a", joins: [{
+          type: "left",
+          from: {
+            name: "B", alias: "b", joins: [{
+              type,
+              from: { name: "C", alias: "c" },
+              on: [{ left: { field: "id", source: "b" }, op: "==", right: { field: "bId", source: "c" } }],
+            }],
+          },
+          on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "b" } }],
+        }],
+      },
+      orderBy: [{ field: "id", source: "a" }],
+      columns: [
+        { field: "id", source: "a", as: "a" },
+        { field: "id", source: "b", as: "b" },
+        { field: "id", source: "c", as: "c" },
+      ],
+    });
+    const executor = new MemoryExecutor({
+      A: [record("A", "a1", { id: 1 }), record("A", "a2", { id: 2 })],
+      B: [record("B", "b1", { id: 10, aId: 1 })],
+      C: [],
+    });
+    expect((await executeJoinedDTQLQuery(executor, nested("inner"))).records.map((row) => row.data)).toEqual([
+      { a: 1, b: null, c: null },
+      { a: 2, b: null, c: null },
+    ]);
+    expect((await executeJoinedDTQLQuery(executor, nested("left"))).records.map((row) => row.data)).toEqual([
+      { a: 1, b: 10, c: null },
+      { a: 2, b: null, c: null },
+    ]);
   });
 
   it("prevalidates malformed join keys and rejects partial paginated scans", async () => {
