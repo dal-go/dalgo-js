@@ -96,7 +96,11 @@ describe("parseDTQL", () => {
   it("pins every copied canonical JOIN fixture to the committed SHA-256 manifest", () => {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in manifest at runtime.
     const manifestText: string = readFileSync(new URL("./testdata/joins/manifest.json", import.meta.url), "utf8");
-    const manifest = JSON.parse(manifestText) as { readonly files: Readonly<Record<string, string>> };
+    const manifest = JSON.parse(manifestText) as {
+      readonly sourceCommit: string;
+      readonly files: Readonly<Record<string, string>>;
+    };
+    expect(manifest.sourceCommit).toBe("d393914bf9f9fe4a09fbba3188219e24f86ea284");
     for (const [name, expected] of Object.entries(manifest.files)) {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in canonical fixture at runtime.
       const fixture = readFileSync(new URL(`./testdata/joins/${name}`, import.meta.url), "utf8");
