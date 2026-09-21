@@ -29,7 +29,10 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
-          registry-url: https://registry.npmjs.org
+          # The default npm registry is npmjs.org. Setting registry-url here
+          # makes setup-node v5 inject a dummy NODE_AUTH_TOKEN that can mask
+          # npm's trusted-publisher OIDC exchange.
+          package-manager-cache: false
       - name: Verify release identity
         env:
           VERSION: ${{ inputs.version }}
@@ -46,4 +49,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: npm run check
       - run: npm run build
-      - run: npm publish --provenance
+      - run: npm publish --provenance --registry=https://registry.npmjs.org
