@@ -47,14 +47,15 @@ interface Budget {
 }
 
 const defaults = { maxFetchedRows: 10_000, maxResultRows: 10_000, maxCandidateEvaluations: 100_000, maxRetainedBytes: 16 * 1024 * 1024 };
-const boundQueries = new WeakSet<RecursiveDTQLQuery>();
+const boundSchemas = new WeakMap<RecursiveDTQLQuery, DTQLSchema>();
+const aggregateFunctions = new Set(["count", "sum", "avg", "min", "max", "first", "last"]);
 
 /** Parses the additive recursive wire model. Legacy parseDTQL stays unchanged. */
 export function parseRecursiveDTQL(input: unknown, schema: DTQLSchema): RecursiveDTQLQuery {
   const root = raw(input, "root");
   const query = parseQuery(root, schema, "root");
   bindQuery(query, schema, [], "");
-  boundQueries.add(query);
+  boundSchemas.set(query, schema);
   return query;
 }
 
@@ -84,11 +85,11 @@ export async function executeRecursiveDTQLQuery(
   options: RecursiveQueryExecutionOptions = {},
 ): Promise<QueryPage<Data>> {
   validateProgram(query, new WeakSet(), "root");
-  if (!boundQueries.has(query)) {
-    if (options.schema === undefined) shape("root", "caller-constructed recursive query requires schema validation");
-    bindQuery(query, options.schema, [], "");
-    boundQueries.add(query);
-  }
+  const schema = options.schema ?? boundSchemas.get(query);
+  if (schema === undefined) shape("root", "caller-constructed recursive query requires schema validation");
+  // Public AST fields are structurally readonly only. Rebind on every call so
+  // a caller cannot mutate a previously parsed query past validation.
+  bindQuery(query, schema, [], "");
   const budget: Budget = {
     fetched: 0, results: 0, candidates: 0, retained: 0,
     maxFetchedRows: options.maxFetchedRows ?? defaults.maxFetchedRows,
@@ -206,12 +207,10 @@ async function queryExists(executor: QueryExecutor, query: RecursiveDTQLQuery, o
   return groups.slice(start, query.limit === undefined ? undefined : start + query.limit).length > 0;
 }
 
-// Cache nested scalar/set evaluations by the actual outer-row binding. Queries
-// that do not mention any current outer alias share the same key and therefore
-// run once for the whole root execution. A false positive merely skips caching;
-// it can never reuse a result for the wrong binding.
+// Cache nested scalar/set evaluations by the actual outer-row binding. This is
+// conservative for uncertain recursive shapes: no result crosses bindings.
 async function evaluateNested(executor: QueryExecutor, query: RecursiveDTQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Data[]> {
-  const key = referencesOuter(query, new Set(outer.keys())) ? bindingKey(outer, budget) : "uncorrelated";
+  const key = outer.size === 0 ? "root" : bindingKey(outer, budget);
   let entries = budget.memo.get(query);
   if (entries === undefined) { entries = new Map(); budget.memo.set(query, entries); }
   let result = entries.get(key);
@@ -229,18 +228,6 @@ function bindingKey(outer: Environment, budget: Budget): string {
     if (id === undefined) { budget.nextRowID += 1; id = budget.nextRowID; budget.rowIDs.set(row, id); }
     return `${alias}:${id.toString()}`;
   }).join("|");
-}
-
-function referencesOuter(query: RecursiveDTQLQuery, outer: ReadonlySet<string>): boolean {
-  const mentions = (expression: RecursiveDTQLExpression): boolean => expression.kind === "field" ? outer.has(expression.field.source) : expression.kind === "query" ? referencesOuter(expression.query, outer) : expression.kind === "aggregate" ? expression.args.some((item) => mentions(item)) : expression.kind === "binary" ? mentions(expression.left) || mentions(expression.right) : false;
-  const conditionMentions = (condition: RecursiveDTQLCondition | undefined): boolean => {
-    if (condition === undefined) return false;
-    if (condition.kind === "exists" || condition.kind === "not-exists") return referencesOuter(condition.query, outer);
-    if (condition.kind === "and" || condition.kind === "or") return condition.conditions.some(conditionMentions);
-    const comparison = condition as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>;
-    return mentions(comparison.left) || mentions(comparison.right);
-  };
-  return conditionMentions(query.where) || conditionMentions(query.having) || (query.groupBy?.some(mentions) ?? false) || (query.columns?.some((column) => mentions(column.expression)) ?? false) || query.from.joins.some((join) => join.on.some((predicate) => outer.has(predicate.left.source) || outer.has(predicate.right.source)) || (join.from.kind === "query" && referencesOuter(join.from.query ?? shape("from", "query relation needs query"), outer)));
 }
 
 function groupsFor(query: RecursiveDTQLQuery, rows: readonly Environment[]): Environment[][] {
@@ -329,7 +316,8 @@ function legacyExpression(value: DTQLExpression, row: Environment, group: readon
     case "aggregate": {
       const arg = value.args[0];
       if (arg === undefined) return null;
-      const values = arg.kind === "star" ? group.map(() => 1) : group.map((item) => legacyExpression(arg, item, [item])).filter((item) => item !== null && item !== undefined);
+      const rawValues = arg.kind === "star" ? group.map(() => 1) : group.map((item) => legacyExpression(arg, item, [item])).filter((item) => item !== null && item !== undefined);
+      const values = value.distinct === true ? rawValues.filter((item, index) => rawValues.findIndex((candidate) => equal(candidate, item)) === index) : rawValues;
       if (value.function === "count") return values.length;
       if (value.function === "sum") return values.reduce<number>((sum, item) => sum + (typeof item === "number" ? item : 0), 0);
       if (value.function === "avg") return values.length === 0 ? null : values.reduce<number>((sum, item) => sum + (typeof item === "number" ? item : 0), 0) / values.length;
@@ -436,6 +424,7 @@ function bindJoinField(reference: QueryFieldReference, local: ReadonlyMap<string
 }
 
 function bindField(reference: QueryFieldReference, local: ReadonlyMap<string, BoundSource>, outers: readonly ReadonlyMap<string, BoundSource>[], path: string, category = "scope"): void {
+  resolvedSources.delete(reference);
   if (reference.source === "") {
     const candidates = [...local.entries()].filter(([, fields]) => fields.has(reference.field));
     if (candidates.length > 1) throw new TypeError(`${category} at ${path}: ambiguous unqualified field ${reference.field}`);
@@ -601,7 +590,7 @@ function parseExpression(value: unknown, schema: DTQLSchema, path: string): Recu
   if (Object.prototype.hasOwnProperty.call(expression, "value")) { keys(expression, new Set(["value"]), path); return { kind: "literal", value: expression.value as string | number | boolean | null }; }
   if (expression.values !== undefined) { keys(expression, new Set(["values"]), path); return { kind: "values", values: list(expression.values, `${path}.values`) as (string | number | boolean | null)[] }; }
   if (expression.star === true) return { kind: "star" };
-  if (expression.aggregate !== undefined) { keys(expression, new Set(["aggregate"]), path); const aggregate = raw(expression.aggregate, `${path}.aggregate`); keys(aggregate, new Set(["function", "args", "distinct"]), `${path}.aggregate`); return { kind: "aggregate", function: text(requireValue(aggregate, "function", `${path}.aggregate`), `${path}.aggregate.function`) as never, args: list(requireValue(aggregate, "args", `${path}.aggregate`), `${path}.aggregate.args`).map((item, index) => parseExpression(item, schema, `${path}.aggregate.args[${index.toString()}]`) as DTQLExpression), ...(aggregate.distinct === true ? { distinct: true } : {}) }; }
+  if (expression.aggregate !== undefined) { keys(expression, new Set(["aggregate"]), path); const aggregate = raw(expression.aggregate, `${path}.aggregate`); keys(aggregate, new Set(["function", "args", "distinct"]), `${path}.aggregate`); const functionName = text(requireValue(aggregate, "function", `${path}.aggregate`), `${path}.aggregate.function`); if (!aggregateFunctions.has(functionName)) shape(`${path}.aggregate.function`, `unsupported aggregate ${functionName}`); if (aggregate.distinct !== undefined && aggregate.distinct !== true && aggregate.distinct !== false) shape(`${path}.aggregate.distinct`, "must be boolean"); return { kind: "aggregate", function: functionName as never, args: list(requireValue(aggregate, "args", `${path}.aggregate`), `${path}.aggregate.args`).map((item, index) => parseExpression(item, schema, `${path}.aggregate.args[${index.toString()}]`) as DTQLExpression), ...(aggregate.distinct === true ? { distinct: true } : {}) }; }
   shape(path, "unknown expression");
 }
 

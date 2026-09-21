@@ -123,4 +123,27 @@ describe("recursive DTQL fixtures", () => {
     }, { schema })).rejects.toThrow("unknown field Missing");
     expect(executor.calls).toEqual([]);
   });
+
+  it("memoizes scalar queries per distinct outer binding, including unqualified outer fields", async () => {
+    const scopedSchema: DTQLSchema = { tables: [{ name: "Outer", fields: ["id", "needle"] }, { name: "Inner", fields: ["value"] }] };
+    const query = parseRecursiveDTQL("from: {name: Outer, alias: o}\norderBy: [{field: id, source: o}]\ncolumns:\n  - {field: id, source: o}\n  - query:\n      as: matched\n      from: {name: Inner, alias: i}\n      where:\n        op: '=='\n        left: {field: value, source: i}\n        right: {field: needle}\n      columns: [{field: value, source: i}]\n", scopedSchema);
+    const executor: QueryExecutor = {
+      async query<T>(leaf: StructuredQuery<T>) {
+        const records = leaf.source.name === "Outer"
+          ? [{ key: key("Outer", "1"), exists: true as const, data: { id: 1, needle: 1 } }, { key: key("Outer", "2"), exists: true as const, data: { id: 2, needle: 2 } }]
+          : [{ key: key("Inner", "1"), exists: true as const, data: { value: 1 } }];
+        return { records: records as never };
+      },
+    };
+    const rows = (await executeRecursiveDTQLQuery(executor, query)).records.map((record) => record.data);
+    expect(rows).toEqual([{ id: 1, matched: 1 }, { id: 2, matched: null }]);
+  });
+
+  it("rebinds a parsed AST after mutation before reading a leaf", async () => {
+    const query = parseRecursiveDTQL("from: {name: Customer, alias: c}\nlimit: 1\ncolumns: [{field: CustomerId, source: c}]\n", schema);
+    (query.from as unknown as { name: string }).name = "Missing";
+    const executor = new MemoryExecutor();
+    await expect(executeRecursiveDTQLQuery(executor, query)).rejects.toThrow("unknown table Missing");
+    expect(executor.calls).toEqual([]);
+  });
 });
