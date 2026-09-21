@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { executeRecursiveDTQLQuery, key, parseRecursiveDTQL, serializeRecursiveDTQL, type DTQLSchema, type QueryExecutor, type StructuredQuery } from "../src/index.js";
+import { executeRecursiveDTQLQuery, key, parseRecursiveDTQL, serializeRecursiveDTQL, type DTQLSchema, type QueryExecutor, type RecursiveDTQLQuery, type StructuredQuery } from "../src/index.js";
 
 const root = new URL("./testdata/subqueries/", import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL("manifest.json", root), "utf8")) as { readonly sourceCommit: string; readonly files: Readonly<Record<string, string>> };
@@ -165,6 +165,20 @@ describe("recursive DTQL fixtures", () => {
     };
     expect((await executeRecursiveDTQLQuery(executor, query)).records.map((record) => record.data))
       .toEqual([{ id: 1, matched: 7 }, { id: 2, matched: null }]);
+  });
+
+  it("rejects nested JOIN aliases that collide within one query scope", async () => {
+    const scopedSchema: DTQLSchema = { tables: [{ name: "Outer", fields: ["id"] }, { name: "Inner", fields: ["id"] }] };
+    const text = "from:\n  name: Outer\n  alias: a\n  joins:\n    - from:\n        name: Inner\n        alias: b\n        joins:\n          - from: {name: Outer, alias: a}\n            on: [{left: {field: id, source: b}, op: '==', right: {field: id, source: a}}]\n      on: [{left: {field: id, source: a}, op: '==', right: {field: id, source: b}}]\ncolumns: [{field: id, source: a}]\n";
+    expect(() => parseRecursiveDTQL(text, scopedSchema)).toThrow("shape at from.joins[0].from.joins[0].from: duplicate source alias a");
+    const valid = parseRecursiveDTQL(text.replace("alias: a}\n            on", "alias: c}\n            on").replace("source: a}}]\n      on", "source: c}}]\n      on"), scopedSchema);
+    const constructed: RecursiveDTQLQuery = structuredClone(valid);
+    const nested = constructed.from.joins[0]?.from.joins[0]?.from;
+    if (nested === undefined) throw new Error("nested fixture source missing");
+    Object.assign(nested, { alias: "a" });
+    const executor = new MemoryExecutor();
+    await expect(executeRecursiveDTQLQuery(executor, constructed, { schema: scopedSchema })).rejects.toThrow("shape at from.joins[0].from.joins[0].from: duplicate source alias a");
+    expect(executor.calls).toEqual([]);
   });
 
   it("keeps a derived base correlated when a later JOIN reuses its outer alias", async () => {

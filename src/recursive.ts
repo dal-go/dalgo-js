@@ -423,11 +423,12 @@ function bindQuery(query: RecursiveDTQLQuery, schema: DTQLSchema, outers: readon
   }
 }
 
-function bindRelation(relation: RecursiveDTQLRelation, schema: DTQLSchema, outers: readonly ReadonlyMap<string, BoundSource>[], path: string): ReadonlyMap<string, BoundSource> {
+function bindRelation(relation: RecursiveDTQLRelation, schema: DTQLSchema, outers: readonly ReadonlyMap<string, BoundSource>[], path: string, reserved: ReadonlySet<string> = new Set()): ReadonlyMap<string, BoundSource> {
   const visible = new Map<string, BoundSource>();
-  const bindOne = (value: RecursiveDTQLRelation, sourcePath: string): void => {
+  const bindOne = (value: RecursiveDTQLRelation, sourcePath: string, root = false): void => {
     const alias = value.alias ?? value.name ?? value.query?.as;
     if (alias === undefined || alias.length === 0) shape(sourcePath, "relation needs a name or query.as alias");
+    if (!root && reserved.has(alias)) shape(sourcePath, `duplicate source alias ${alias}`);
     let fields: BoundSource;
     if (value.kind === "table") {
       const table = schema.tables.find((item) => item.name === value.name && (value.schema === undefined || item.schema === value.schema));
@@ -443,7 +444,7 @@ function bindRelation(relation: RecursiveDTQLRelation, schema: DTQLSchema, outer
     boundSourceKeys.set(fields, sourceKey(owner, alias));
     visible.set(alias, fields);
   };
-  bindOne({ ...relation, joins: [] }, path);
+  bindOne({ ...relation, joins: [] }, path, true);
   for (const [index, join] of relation.joins.entries()) {
     const joinPath = `${path}.joins[${index.toString()}]`;
     const future = new Set(relation.joins.slice(index + 1).map((item) => item.from.alias ?? item.from.name ?? item.from.query?.as).filter((item): item is string => item !== undefined));
@@ -455,7 +456,10 @@ function bindRelation(relation: RecursiveDTQLRelation, schema: DTQLSchema, outer
     // A nested right relation may itself have joins. Its aliases remain
     // visible to the enclosing relation after their edge has been bound.
     if (join.from.joins.length > 0) {
-      const nested = bindRelation(join.from, schema, [visible, ...outers], `${joinPath}.from`);
+      const childAlias = join.from.alias ?? join.from.name ?? join.from.query?.as;
+      const childReserved = new Set([...reserved, ...visible.keys()]);
+      if (childAlias !== undefined) childReserved.delete(childAlias);
+      const nested = bindRelation(join.from, schema, [visible, ...outers], `${joinPath}.from`, childReserved);
       for (const [alias, fields] of nested) if (!visible.has(alias)) visible.set(alias, fields);
     }
   }
