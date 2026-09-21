@@ -69,7 +69,7 @@ export function serializeRecursiveDTQL(query: RecursiveDTQLQuery): Record<string
     ...(query.where === undefined ? {} : { where: writeCondition(query.where) }),
     ...(query.groupBy === undefined ? {} : { groupBy: query.groupBy.map(writeExpression) }),
     ...(query.having === undefined ? {} : { having: writeCondition(query.having) }),
-    ...(query.orderBy === undefined ? {} : { orderBy: query.orderBy.map((order) => ({ field: order.field.field, source: order.field.source, ...(order.direction === "desc" ? { desc: true } : {}) })) }),
+    ...(query.orderBy === undefined ? {} : { orderBy: query.orderBy.map((order) => ({ field: order.field.field, ...(order.field.source === "" ? {} : { source: order.field.source }), ...(order.direction === "desc" ? { desc: true } : {}) })) }),
     ...(query.limit === undefined ? {} : { limit: query.limit }), ...(query.offset === undefined ? {} : { offset: query.offset }),
     ...(query.columns === undefined ? {} : { columns: query.columns.map((column) => ({ ...writeExpression(column.expression), ...(column.as === undefined ? {} : { as: column.as }) })) }),
   };
@@ -157,7 +157,7 @@ async function evaluateRelation(executor: QueryExecutor, relation: RecursiveDTQL
     for (const record of records) chargeBytes(budget, record.data, path);
   } else {
     if (relation.query === undefined) shape(path, "query relation needs query");
-    const data = await evaluateQuery(executor, relation.query, outer, budget, options, `${path}.query`);
+    const data = await evaluateNested(executor, relation.query, outer, budget, options, `${path}.query`);
     records = data.map((value, index) => ({ key: new Key("__dtql_derived__", index.toString()), exists: true, data: value }));
   }
   let rows: Environment[] = records.map((record) => new Map([...outer, [sourceKey(owner, alias), record]]));

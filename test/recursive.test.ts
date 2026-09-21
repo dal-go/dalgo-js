@@ -117,6 +117,14 @@ describe("recursive DTQL fixtures", () => {
     await expect(executeRecursiveDTQLQuery(new MemoryExecutor(), query)).resolves.toMatchObject({ records: [{ data: { CustomerId: 1 } }] });
   });
 
+  it("round-trips an unqualified order field without emitting an empty source", () => {
+    const query = parseRecursiveDTQL("from: {name: Customer, alias: c}\norderBy: [{field: CustomerId}]\ncolumns: [{field: CustomerId}]\n", schema);
+    const serialized = serializeRecursiveDTQL(query);
+    expect(serialized).toMatchObject({ orderBy: [{ field: "CustomerId" }] });
+    expect(JSON.stringify(serialized)).not.toContain('"source":""');
+    expect(() => parseRecursiveDTQL(JSON.stringify(serialized), schema)).not.toThrow();
+  });
+
   it("rejects an unbound caller-constructed AST before its executor is called", async () => {
     const executor = new MemoryExecutor();
     await expect(executeRecursiveDTQLQuery(executor, { kind: "recursive-dtql", from: { kind: "table", name: "Customer", alias: "c", joins: [] } }))
@@ -190,6 +198,24 @@ describe("recursive DTQL fixtures", () => {
       },
     };
     await expect(executeRecursiveDTQLQuery(executor, query)).resolves.toMatchObject({ records: [{ data: { id: 1, shared: 7 } }, { data: { id: 2, shared: 7 } }] });
+    expect(innerReads).toBe(1);
+  });
+
+  it("evaluates an uncorrelated derived JOIN source once across left rows", async () => {
+    const scopedSchema: DTQLSchema = { tables: [{ name: "Outer", fields: ["id"] }, { name: "Inner", fields: ["value"] }] };
+    const query = parseRecursiveDTQL("from:\n  name: Outer\n  alias: o\n  joins:\n    - type: left\n      from:\n        query:\n          as: d\n          from: {name: Inner, alias: i}\n          columns: [{field: value, source: i}]\n      on: [{left: {field: id, source: o}, op: '==', right: {field: value, source: d}}]\norderBy: [{field: id, source: o}]\ncolumns: [{field: id, source: o}, {field: value, source: d}]\n", scopedSchema);
+    let innerReads = 0;
+    const executor: QueryExecutor = {
+      async query<T>(leaf: StructuredQuery<T>) {
+        if (leaf.source.name === "Inner") innerReads += 1;
+        const records = leaf.source.name === "Outer"
+          ? [{ key: key("Outer", "1"), exists: true as const, data: { id: 1 } }, { key: key("Outer", "2"), exists: true as const, data: { id: 2 } }]
+          : [{ key: key("Inner", "1"), exists: true as const, data: { value: 1 } }];
+        return { records: records as never };
+      },
+    };
+    expect((await executeRecursiveDTQLQuery(executor, query)).records.map((record) => record.data))
+      .toEqual([{ id: 1, value: 1 }, { id: 2, value: null }]);
     expect(innerReads).toBe(1);
   });
 
