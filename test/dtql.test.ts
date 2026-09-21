@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { isJoinedDTQLQuery, parseDTQL, type DTQLSchema } from "../src/index.js";
+import { isJoinedDTQLQuery, parseDTQL, serializeJoinedDTQL, stringifyJoinedDTQL, type DTQLSchema } from "../src/index.js";
 
 const schema: DTQLSchema = {
   tables: [
@@ -56,6 +57,8 @@ describe("parseDTQL", () => {
   it("parses the shared nested Chinook fixture into a join-only execution model", () => {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in shared YAML fixture at runtime.
     const fixture = readFileSync(new URL("./testdata/joins/chinook-nested.dtql.yaml", import.meta.url), "utf8");
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- Vitest's Node runtime provides the checked-in fixture digest.
+    expect(createHash("sha256").update(fixture).digest("hex")).toBe("2eeef93ffb02a4272f06f6ab909b2db4cbbb9a2a1df280ae4c47851534f583b3");
     const query = parseDTQL(fixture, schema);
 
     expect(isJoinedDTQLQuery(query)).toBe(true);
@@ -82,6 +85,12 @@ describe("parseDTQL", () => {
       { expression: { kind: "field", field: { field: "FirstName", source: "c" } }, as: "customer" },
       { expression: { kind: "field", field: { field: "FirstName", source: "e" } }, as: "employee" },
     ]);
+    const serialized = serializeJoinedDTQL(query);
+    expect(serialized.from).toHaveProperty("alias", "i");
+    expect(JSON.stringify(serialized)).toContain('"op":"=="');
+    expect(JSON.stringify(serialized)).not.toContain('"type":"inner"');
+    expect(parseDTQL(JSON.stringify(serialized), schema)).toEqual(query);
+    expect(parseDTQL(stringifyJoinedDTQL(query), schema)).toEqual(query);
   });
 
   it("validates ordered nested scopes and canonicalizes aliases and equality", () => {
@@ -99,6 +108,40 @@ describe("parseDTQL", () => {
     expect(query.from.alias).toBe("a");
     expect(query.from.joins[0]?.type).toBe("inner");
     expect(query.from.joins[0]?.on[0]?.operator).toBe("==");
+  });
+
+  it("accepts same-scope ON predicates for bounded generic evaluation", () => {
+    expect(() => parseDTQL({
+      from: { name: "A", as: "a", joins: [{ from: { name: "B", as: "b" }, on: [{ left: { field: "id", source: "b" }, op: "==", right: { field: "aId", source: "b" } }] }] },
+      limit: 1,
+    }, schema)).not.toThrow();
+  });
+
+  it("matches the shared unknown and forward-alias diagnostic paths", () => {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- these checked-in fixtures are shared with Go.
+    const forward = readFileSync(new URL("./testdata/joins/forward-alias.dtql.yaml", import.meta.url), "utf8");
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- these checked-in fixtures are shared with Go.
+    const unknown = readFileSync(new URL("./testdata/joins/unknown-alias.dtql.yaml", import.meta.url), "utf8");
+    expect(() => parseDTQL(forward, schema)).toThrow("join_scope at from.joins[0].on[0].right.source");
+    expect(() => parseDTQL(unknown, schema)).toThrow("join_scope at from.joins[0].on[0].left.source");
+  });
+
+  it("round-trips Go-compatible aggregate, group, having, and offset forms", () => {
+    const query = parseDTQL({
+      from: { name: "A", alias: "a" },
+      groupBy: [{ field: "id", source: "a" }],
+      having: { op: ">", left: { aggregate: { function: "count", args: [{ star: true }] } }, right: { value: 0 } },
+      columns: [{ aggregate: { function: "count", args: [{ star: true }] }, as: "total" }],
+      offset: 2,
+      limit: 5,
+    }, schema);
+    expect(isJoinedDTQLQuery(query)).toBe(true);
+    if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+    expect(serializeJoinedDTQL(query)).toMatchObject({
+      offset: 2,
+      columns: [{ aggregate: { function: "count", args: [{ star: true }] }, as: "total" }],
+    });
+    expect(parseDTQL(JSON.stringify(serializeJoinedDTQL(query)), schema)).toEqual(query);
   });
 
   it("rejects malformed, cyclic, forward, unknown, and duplicate join references", () => {

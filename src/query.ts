@@ -71,18 +71,22 @@ export interface QueryJoin {
 export type DTQLExpression =
   | { readonly kind: "field"; readonly field: QueryFieldReference }
   | { readonly kind: "literal"; readonly value: string | number | boolean | null }
+  | { readonly kind: "values"; readonly values: readonly (string | number | boolean | null)[] }
+  | { readonly kind: "param"; readonly name: string }
+  | { readonly kind: "star" }
   | {
     readonly kind: "aggregate";
     readonly function: "count" | "sum" | "avg" | "min" | "max" | "first" | "last";
-    readonly argument?: QueryFieldReference;
+    readonly args: readonly DTQLExpression[];
     readonly distinct?: boolean;
   }
   | { readonly kind: "binary"; readonly operator: "+" | "-" | "*" | "/"; readonly left: DTQLExpression; readonly right: DTQLExpression };
 
 /** A named projection in a DTQL query. */
 export interface QueryColumn {
-  readonly expression: DTQLExpression;
-  readonly as: string;
+  readonly expression?: DTQLExpression;
+  readonly wildcard?: { readonly source?: string; readonly exclude: readonly string[] };
+  readonly as?: string;
 }
 
 /** A predicate in a join-aware DTQL query. */

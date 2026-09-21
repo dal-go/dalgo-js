@@ -3,6 +3,8 @@ import type {
   QueryColumn,
   DTQLQueryFilter,
   DTQLQueryOrder,
+  DTQLExpression,
+  DTQLHaving,
   QueryFilter,
   QueryJoin,
   QueryJoinPredicate,
@@ -11,9 +13,10 @@ import type {
   QueryOrder,
   QueryRelation,
   ParsedDTQLQuery,
+  JoinedDTQLQuery,
   StructuredQuery,
 } from "./query.js";
-import { parseDocument as parseYamlDocument } from "yaml";
+import { parseDocument as parseYamlDocument, stringify as stringifyYaml } from "yaml";
 
 /** The allowlisted tables and fields against which a DTQL action is validated. */
 export interface DTQLSchema {
@@ -27,7 +30,7 @@ export interface DTQLSchema {
 type ObjectValue = Record<string, unknown>;
 
 const defaultMaxLimit = 1000;
-const rootKeys = new Set(["from", "where", "orderBy", "limit", "columns"]);
+const rootKeys = new Set(["from", "where", "orderBy", "limit", "offset", "columns", "groupBy", "having"]);
 const fromKeys = new Set(["schema", "name", "alias", "as", "joins"]);
 const joinKeys = new Set(["type", "from", "on"]);
 const joinPredicateKeys = new Set(["left", "op", "right"]);
@@ -37,7 +40,9 @@ const qualifiedFieldKeys = new Set(["field", "source"]);
 const valueKeys = new Set(["value"]);
 const valuesKeys = new Set(["values"]);
 const orderKeys = new Set(["field", "source", "desc"]);
-const columnKeys = new Set(["field", "source", "as"]);
+const columnKeys = new Set(["field", "source", "as", "wildcard", "aggregate", "distinct"]);
+const aggregateNames = new Set(["count", "sum", "avg", "min", "max", "first", "last"]);
+const aggregateKeys = new Set(["function", "distinct", "args"]);
 const operators = new Set(["==", "!=", "<", "<=", ">", ">=", "In"]);
 
 /**
@@ -64,14 +69,20 @@ export function parseDTQL(
   const where = document.where === undefined ? undefined : parseWhere(document.where, fields, aliases, requiresQualifiedFields, schema);
   const orders = document.orderBy === undefined ? [] : parseOrders(document.orderBy, fields, aliases, requiresQualifiedFields, schema);
   const columns = document.columns === undefined ? undefined : parseColumns(document.columns, aliases, schema);
-  const limit = parseLimit(document.limit, options.maxLimit ?? defaultMaxLimit);
+  const limit = document.limit === undefined ? undefined : parseLimit(document.limit, options.maxLimit ?? defaultMaxLimit);
+  const offset = document.offset === undefined ? undefined : parseOffset(document.offset);
+  const groupBy = document.groupBy === undefined ? undefined : parseGroupBy(document.groupBy, aliases, schema);
+  const having = document.having === undefined ? undefined : parseHaving(document.having, aliases, schema);
   if (columns !== undefined && !hasRelationModel) fail("columns require an aliased or joined relation model");
+  if ((groupBy !== undefined || having !== undefined) && !hasRelationModel) fail("groupBy and having require an aliased or joined relation model");
+  if (limit === undefined && !hasRelationModel) fail("limit must be a positive safe integer");
 
   const query = {
     source: { kind: "collection", name: tableIdentity(table) },
     filters: where === undefined ? [] : [where],
     orders,
-    limit,
+    ...(limit === undefined ? {} : { limit }),
+    ...(offset === undefined ? {} : { offset }),
   };
   if (hasRelationModel) {
     return {
@@ -80,10 +91,85 @@ export function parseDTQL(
       filters: query.filters as readonly DTQLQueryFilter[],
       orders: query.orders as readonly DTQLQueryOrder[],
       ...(columns === undefined ? {} : { columns }),
-      limit,
+      ...(limit === undefined ? {} : { limit }),
+      ...(offset === undefined ? {} : { offset }),
+      ...(groupBy === undefined ? {} : { groupBy }),
+      ...(having === undefined ? {} : { having }),
     };
   }
   return query as StructuredQuery<Record<string, unknown>>;
+}
+
+/** Returns the stable JSON-compatible DTQL representation for a joined query. */
+export function serializeJoinedDTQL(query: JoinedDTQLQuery): ObjectValue {
+  if (query.filters.length > 1) throw new TypeError("join_plan at where: multiple filters need an explicit DTQL condition group");
+  return {
+    from: serializeRelation(query.from),
+    ...(query.filters.length === 0 ? {} : { where: serializeFilter(firstFilter(query.filters)) }),
+    ...(query.orders.length === 0 ? {} : { orderBy: query.orders.map((order) => ({ field: order.field.field, source: order.field.source, ...(order.direction === "desc" ? { desc: true } : {}) })) }),
+    ...(query.limit === undefined ? {} : { limit: query.limit }),
+    ...(query.offset === undefined ? {} : { offset: query.offset }),
+    ...(query.columns === undefined ? {} : { columns: query.columns.map(serializeColumn) }),
+    ...(query.groupBy === undefined ? {} : { groupBy: query.groupBy.map(serializeExpression) }),
+    ...(query.having === undefined ? {} : { having: { left: serializeExpression(query.having.left), op: query.having.operator, right: serializeExpression(query.having.right) } }),
+  };
+}
+
+/** Serializes a joined query to canonical YAML. JSON callers can stringify the object form. */
+export function stringifyJoinedDTQL(query: JoinedDTQLQuery): string {
+  return stringifyYaml(serializeJoinedDTQL(query));
+}
+
+function serializeRelation(relation: QueryRelation): ObjectValue {
+  return {
+    ...(relation.schema === undefined ? {} : { schema: relation.schema }),
+    name: relation.name,
+    ...(relation.alias === undefined ? {} : { alias: relation.alias }),
+    ...(relation.joins.length === 0 ? {} : {
+      joins: relation.joins.map((join) => ({
+        ...(join.type === "inner" ? {} : { type: join.type }),
+        from: serializeRelation(join.from),
+        on: join.on.map((predicate) => ({ left: predicate.left, op: "==", right: predicate.right })),
+      })),
+    }),
+  };
+}
+
+function serializeFilter(filter: DTQLQueryFilter): ObjectValue {
+  return {
+    op: filter.operator === "in" ? "In" : filter.operator,
+    left: { field: filter.field.field, source: filter.field.source },
+    right: filter.operator === "in" ? { values: filter.value } : { value: filter.value },
+  };
+}
+
+function serializeExpression(expression: DTQLExpression): ObjectValue {
+  switch (expression.kind) {
+    case "field": return { field: expression.field.field, source: expression.field.source };
+    case "literal": return { value: expression.value };
+    case "values": return { values: expression.values };
+    case "param": return { param: expression.name };
+    case "star": return { star: true };
+    case "aggregate": return {
+      aggregate: { function: expression.function, args: expression.args.map(serializeExpression), ...(expression.distinct === true ? { distinct: true } : {}) },
+    };
+    case "binary": return { binary: { op: expression.operator, left: serializeExpression(expression.left), right: serializeExpression(expression.right) } };
+  }
+}
+
+function serializeColumn(column: QueryColumn): ObjectValue {
+  if (column.wildcard !== undefined) {
+    if (column.expression !== undefined || column.as !== undefined) throw new TypeError("join_plan at columns: wildcard cannot have expression or alias");
+    return { wildcard: { ...(column.wildcard.source === undefined ? {} : { source: column.wildcard.source }), exclude: column.wildcard.exclude } };
+  }
+  if (column.expression === undefined) throw new TypeError("join_plan at columns: expression is required");
+  return { ...serializeExpression(column.expression), ...(column.as === undefined ? {} : { as: column.as }) };
+}
+
+function firstFilter(filters: readonly DTQLQueryFilter[]): DTQLQueryFilter {
+  const filter = filters[0];
+  if (filter === undefined) throw new TypeError("join_shape at where: missing filter");
+  return filter;
 }
 
 function parseDocument(input: unknown): ObjectValue {
@@ -201,13 +287,6 @@ function validateRelationScope(
     for (const [predicateIndex, predicate] of join.on.entries()) {
       validateJoinReference(predicate.left, `${joinPath}.on[${predicateIndex.toString()}].left`, visible, subtree, allAliases, schema);
       validateJoinReference(predicate.right, `${joinPath}.on[${predicateIndex.toString()}].right`, visible, subtree, allAliases, schema);
-      const leftInSubtree = subtree.has(predicate.left.source);
-      const rightInSubtree = subtree.has(predicate.right.source);
-      const leftInParent = visible.has(predicate.left.source);
-      const rightInParent = visible.has(predicate.right.source);
-      if (!((leftInSubtree && rightInParent) || (rightInSubtree && leftInParent))) {
-        fail(`join_scope at ${joinPath}.on[${predicateIndex.toString()}]: each predicate must connect the joined subtree to the parent scope`);
-      }
     }
     const completed = validateRelationScope(join.from, `${joinPath}.from`, visible, allAliases, schema);
     for (const [alias, child] of completed) visible.set(alias, child);
@@ -231,8 +310,8 @@ function validateJoinReference(
 ): void {
   const relation = parentVisible.get(reference.source) ?? subtree.get(reference.source);
   if (relation === undefined) {
-    const category = allAliases.has(reference.source) ? "join_scope" : "join_field";
-    fail(`${category} at ${path}: ${allAliases.has(reference.source) ? `forward alias ${reference.source}` : `unknown alias ${reference.source}`}`);
+    const reason = allAliases.has(reference.source) ? "forward alias" : "unknown alias";
+    fail(`join_scope at ${path}.source: ${reason} ${reference.source}`);
   }
   const table = resolveTable(relation.name, relation.schema, schema, path);
   if (!table.fields.includes(reference.field)) fail(`join_field at ${path}: unknown field ${reference.source}.${reference.field}`);
@@ -319,12 +398,92 @@ function parseColumns(value: unknown, aliases: ReadonlyMap<string, QueryRelation
     const path = `columns[${index.toString()}]`;
     const column = object(entry, path);
     assertOnlyKeys(column, columnKeys, path);
-    const field = parseKnownQualifiedField(column, path, aliases, schema);
-    const as = requiredString(column, "as");
-    if (names.has(as)) fail(`join_shape at ${path}.as: duplicate output key ${as}`);
-    names.add(as);
-    return { expression: { kind: "field", field }, as };
+    const as = optionalString(column, "as");
+    if (as !== undefined && names.has(as)) fail(`join_shape at ${path}.as: duplicate output key ${as}`);
+    if (as !== undefined) names.add(as);
+    if (column.wildcard !== undefined) {
+      if (as !== undefined) fail(`join_shape at ${path}.as: wildcard cannot have alias`);
+      const wildcard = object(column.wildcard, `${path}.wildcard`);
+      assertOnlyKeys(wildcard, new Set(["source", "exclude"]), `${path}.wildcard`);
+      const source = optionalString(wildcard, "source");
+      if (!Array.isArray(wildcard.exclude) || wildcard.exclude.length === 0 || !wildcard.exclude.every((field) => typeof field === "string" && field.length > 0)) fail(`join_shape at ${path}.wildcard.exclude: must be a non-empty string array`);
+      return { wildcard: { ...(source === undefined ? {} : { source }), exclude: wildcard.exclude as string[] } };
+    }
+    return { expression: parseColumnExpression(column, path, aliases, schema), ...(as === undefined ? {} : { as }) };
   });
+}
+
+function parseColumnExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLExpression {
+  const aggregate = value.aggregate;
+  if (aggregate === undefined) return parseExpression(value, path, aliases, schema);
+  const encoded = object(aggregate, `${path}.aggregate`);
+  assertOnlyKeys(encoded, aggregateKeys, `${path}.aggregate`);
+  const functionName = requiredString(encoded, "function");
+  if (!aggregateNames.has(functionName)) fail(`join_shape at ${path}.aggregate.function: unsupported aggregate`);
+  if (encoded.distinct !== undefined && typeof encoded.distinct !== "boolean") fail(`join_shape at ${path}.aggregate.distinct: must be boolean`);
+  if (!Array.isArray(encoded.args) || encoded.args.length === 0) fail(`join_shape at ${path}.aggregate.args: must be a non-empty array`);
+  return {
+    kind: "aggregate",
+    function: functionName as "count" | "sum" | "avg" | "min" | "max" | "first" | "last",
+    args: encoded.args.map((argument, index) => parseExpression(object(argument, `${path}.aggregate.args[${index.toString()}]`), `${path}.aggregate.args[${index.toString()}]`, aliases, schema)),
+    ...(encoded.distinct === true ? { distinct: true } : {}),
+  };
+}
+
+function parseExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLExpression {
+  const forms = ["field", "value", "values", "param", "star", "aggregate", "binary"].filter((key) => Object.hasOwn(value, key));
+  if (forms.length !== 1) fail(`join_shape at ${path}: expression must set exactly one form`);
+  if (value.star === true) return { kind: "star" };
+  if (value.value !== undefined || Object.hasOwn(value, "value")) {
+    if (!isPortableScalar(value.value)) fail(`${path}.value must be a portable scalar`);
+    return { kind: "literal", value: value.value };
+  }
+  if (value.values !== undefined) {
+    if (!Array.isArray(value.values) || !value.values.every(isPortableScalar)) fail(`${path}.values must be an array of portable scalars`);
+    return { kind: "values", values: value.values };
+  }
+  if (value.param !== undefined) return { kind: "param", name: requiredString(value, "param") };
+  if (value.aggregate !== undefined) return parseColumnExpression({ ...value, as: "_" }, path, aliases, schema);
+  if (value.binary !== undefined) {
+    const binary = object(value.binary, `${path}.binary`);
+    assertOnlyKeys(binary, new Set(["op", "left", "right"]), `${path}.binary`);
+    const operator = requiredString(binary, "op");
+    if (operator !== "+" && operator !== "-" && operator !== "*" && operator !== "/") fail(`join_shape at ${path}.binary.op: unsupported operator`);
+    return {
+      kind: "binary",
+      operator,
+      left: parseExpression(requiredObject(binary, "left"), `${path}.binary.left`, aliases, schema),
+      right: parseExpression(requiredObject(binary, "right"), `${path}.binary.right`, aliases, schema),
+    };
+  }
+  return { kind: "field", field: parseKnownQualifiedField(value, path, aliases, schema) };
+}
+
+function parseGroupBy(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): readonly DTQLExpression[] {
+  if (!Array.isArray(value) || value.length === 0) fail("groupBy must be a non-empty array");
+  return value.map((entry, index) => ({ kind: "field", field: parseKnownQualifiedField(object(entry, `groupBy[${index.toString()}]`), `groupBy[${index.toString()}]`, aliases, schema) }));
+}
+
+function parseHaving(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLHaving {
+  const having = object(value, "having");
+  assertOnlyKeys(having, whereKeys, "having");
+  const operator = requiredString(having, "op");
+  if (!operators.has(operator) || operator === "In") fail(`unsupported having operator ${operator}`);
+  return {
+    left: parseHavingExpression(requiredObject(having, "left"), "having.left", aliases, schema),
+    operator: toQueryOperator(operator),
+    right: parseHavingExpression(requiredObject(having, "right"), "having.right", aliases, schema),
+  };
+}
+
+function parseHavingExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLExpression {
+  if ("value" in value) {
+    assertOnlyKeys(value, valueKeys, path);
+    if (!isPortableScalar(value.value)) fail(`${path}.value must be a portable scalar`);
+    return { kind: "literal", value: value.value };
+  }
+  if ("aggregate" in value) return parseColumnExpression({ ...value, as: "_" }, path, aliases, schema);
+  return { kind: "field", field: parseKnownQualifiedField(value, path, aliases, schema) };
 }
 
 function parseScopedField(
@@ -372,6 +531,11 @@ function parseLimit(value: unknown, maxLimit: number): number {
   const limit = value as number;
   if (limit > maxLimit) fail(`limit must not exceed ${maxLimit.toString()}`);
   return limit;
+}
+
+function parseOffset(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) fail("offset must be a non-negative safe integer");
+  return value as number;
 }
 
 function tableIdentity(table: DTQLSchema["tables"][number]): string {
