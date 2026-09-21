@@ -164,8 +164,60 @@ export interface JoinedDTQLQuery {
 
 export type ParsedDTQLQuery<T> = StructuredQuery<T> | JoinedDTQLQuery;
 
+/**
+ * Recursive DTQL is intentionally a separate query model.  It is executed by
+ * `executeRecursiveDTQLQuery`, which only gives leaf StructuredQuery objects
+ * to a provider's legacy QueryExecutor.
+ */
+export interface RecursiveDTQLQuery {
+  readonly kind: "recursive-dtql";
+  readonly as?: string;
+  readonly from: RecursiveDTQLRelation;
+  readonly where?: RecursiveDTQLCondition;
+  readonly orderBy?: readonly DTQLQueryOrder[];
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly columns?: readonly RecursiveDTQLColumn[];
+  readonly groupBy?: readonly DTQLExpression[];
+  readonly having?: RecursiveDTQLCondition;
+}
+
+export interface RecursiveDTQLRelation {
+  readonly kind: "table" | "query";
+  readonly name?: string;
+  readonly schema?: string;
+  readonly alias?: string;
+  readonly query?: RecursiveDTQLQuery;
+  readonly joins: readonly RecursiveDTQLJoin[];
+}
+
+export interface RecursiveDTQLJoin {
+  readonly type: QueryJoinType;
+  readonly from: RecursiveDTQLRelation;
+  readonly on: readonly QueryJoinPredicate[];
+  readonly hints?: QueryJoinHints;
+}
+
+export type RecursiveDTQLExpression = DTQLExpression | { readonly kind: "query"; readonly query: RecursiveDTQLQuery };
+
+export interface RecursiveDTQLColumn {
+  readonly expression: RecursiveDTQLExpression;
+  readonly as?: string;
+}
+
+export type RecursiveDTQLCondition =
+  | { readonly kind: "comparison"; readonly left: RecursiveDTQLExpression; readonly operator: QueryOperator; readonly right: RecursiveDTQLExpression }
+  | { readonly kind: "and" | "or"; readonly conditions: readonly RecursiveDTQLCondition[] }
+  | { readonly kind: "exists" | "not-exists"; readonly query: RecursiveDTQLQuery };
+
+export type AnyParsedDTQLQuery<T> = ParsedDTQLQuery<T> | RecursiveDTQLQuery;
+
 export function isJoinedDTQLQuery<T>(query: ParsedDTQLQuery<T>): query is JoinedDTQLQuery {
   return "kind" in query;
+}
+
+export function isRecursiveDTQLQuery<T>(query: AnyParsedDTQLQuery<T>): query is RecursiveDTQLQuery {
+  return "kind" in query && query.kind === "recursive-dtql";
 }
 
 export interface QueryPage<T> {
