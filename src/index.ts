@@ -6,3 +6,4 @@ export * from "./key.js";
 export * from "./join.js";
 export * from "./query.js";
 export * from "./record.js";
+export * from "./recursive.js";
