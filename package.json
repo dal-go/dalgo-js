@@ -1,5 +1,5 @@
 {
-  "name": "@dal-go/dalgo",
+  "name": "@dalgo/core",
   "version": "0.1.0",
   "description": "Database abstraction layer for TypeScript and browser applications",
   "type": "module",
@@ -16,6 +16,9 @@
     "LICENSE",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "eslint . && vitest run && tsc -p tsconfig.build.json",

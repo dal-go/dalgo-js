@@ -1,30 +1,33 @@
 # DALgo for TypeScript
 
-`@dal-go/dalgo` is the browser-neutral TypeScript implementation of
+`@dalgo/core` is the browser-neutral TypeScript implementation of
 [DALgo](https://dalgo.io/). It provides hierarchical keys, typed collections,
 structured queries, records, database sessions, and transaction-only mutation
 contracts without coupling application code to a database SDK.
 
-The first adapter is
-[`@dal-go/dalgo2firestore`](https://github.com/dal-go/dalgo2firestore-js), which
-uses Firebase's modular Web SDK and therefore works directly in browsers.
+The first adapter is the
+[Firestore adapter](https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/firestore),
+which uses Firebase's modular Web SDK and therefore works directly in browsers.
+The adapters are being migrated to the `@dalgo/*` scope separately; the
+`@dalgo/core` package does not connect to a database by itself.
 
 ## Install
 
+Once the first npm release is available:
+
 ```sh
-pnpm add github:dal-go/dalgo-js github:dal-go/dalgo2firestore-js firebase
+pnpm add @dalgo/core
 ```
 
-The repositories currently build as `@dal-go/dalgo` and
-`@dal-go/dalgo2firestore`; the first npm publication has not been performed.
+For source development before or after publication, use the
+[`dalgo-js` repository](https://github.com/dal-go/dalgo-js). Do not mix this
+package with an adapter still importing `@dal-go/dalgo`: that would install
+two different DALgo core module identities.
 
-## Query from a browser
+## Build a browser query
 
 ```ts
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
-import { collection, key } from "@dal-go/dalgo";
-import { FirestoreDatabase } from "@dal-go/dalgo2firestore";
+import { collection, key } from "@dalgo/core";
 
 interface Item {
   title: string;
@@ -32,28 +35,22 @@ interface Item {
   rank: number;
 }
 
-const app = initializeApp(firebaseConfig);
-const db = new FirestoreDatabase(getFirestore(app));
 const spaceKey = key("spaces", spaceId);
 const items = collection<Item>("items").in(spaceKey);
 
-const page = await db.query(
-  items.query()
-    .where("done", "==", false)
-    .orderBy("rank")
-    .limit(25)
-    .build(),
-);
+const query = items.query()
+  .where("done", "==", false)
+  .orderBy("rank")
+  .limit(25)
+  .build();
 
-for (const record of page.records) {
-  console.log(record.key.id, record.data.title);
-}
+// Pass query to an adapter updated for @dalgo/core.
 ```
 
 Subcollections use DALgo's ordinary parent-key model:
 
 ```ts
-import { collection, key } from "@dal-go/dalgo";
+import { collection, key } from "@dalgo/core";
 
 const spaceKey = key("spaces", spaceId);
 const items = collection<Item>("items").in(spaceKey);
@@ -62,7 +59,7 @@ const items = collection<Item>("items").in(spaceKey);
 Collection-group queries are explicit:
 
 ```ts
-import { collectionGroup } from "@dal-go/dalgo";
+import { collectionGroup } from "@dalgo/core";
 
 const query = collectionGroup<Item>("items")
   .where("done", "==", false)
