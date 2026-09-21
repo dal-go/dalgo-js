@@ -127,6 +127,48 @@ in this repository; each adapter migration needs its own test. Without
 `resolveSource`, a schema-qualified query fails with `join_plan` before any
 output is returned.
 
+## Recursive DTQL subqueries
+
+`parseRecursiveDTQL` accepts one query shape at every nesting level. Use its
+dedicated executor with the same schema used to bind fields; the executor sends
+only ordinary table scans to `QueryExecutor.query`.
+
+```ts
+import { executeRecursiveDTQLQuery, parseRecursiveDTQL } from "@dalgo/core";
+
+const parsed = parseRecursiveDTQL(savedDtqlText, schema);
+const page = await executeRecursiveDTQLQuery(adapter, parsed, {
+  signal: abortController.signal,
+});
+```
+
+These checked-in documents show each placement and a full composition:
+
+| Placement | Example |
+| --- | --- |
+| Scalar projection, including zero rows and NULL | [scalar values](test/testdata/subqueries/scalar-values.dtql.yaml) |
+| Derived `from.query` | [derived FROM and JOIN](test/testdata/subqueries/derived-from-join.dtql.yaml) |
+| Derived `joins[].from.query` | [derived FROM and JOIN](test/testdata/subqueries/derived-from-join.dtql.yaml) |
+| `In` with `right.query` | [IN](test/testdata/subqueries/membership-in.dtql.yaml) |
+| `NotIn` with `right.query` | [NOT IN](test/testdata/subqueries/membership-not-in.dtql.yaml) |
+| `exists.query` | [EXISTS](test/testdata/subqueries/exists-short-circuit.dtql.yaml) |
+| `notExists.query` | [NOT EXISTS](test/testdata/subqueries/not-exists.dtql.yaml) |
+| Derived JOIN, EXISTS, IN, and scalar count together | [customer and invoice composition](test/testdata/subqueries/customer-invoice-composition.dtql.yaml) |
+
+An uncorrelated nested result is reused within one root execution. Correlated
+results are evaluated for each distinct outer row binding, so a query with many
+different bindings can perform many leaf reads. The generic executor has one
+root-wide limit of 10,000 fetched rows, 10,000 result rows, 100,000 JOIN
+candidate evaluations, and 16 MiB retained data; each limit can be lowered
+through execution options. A provider must return a complete, unpaginated leaf
+page for a relation scan. EXISTS stops testing candidate rows after the first
+match, but a legacy provider may already have materialized its whole
+`QueryPage`; cancellation cannot interrupt that in-flight provider call.
+
+The current package has no shipped `@dalgo/core` adapter. Browser adapter
+checkouts still importing `@dal-go/dalgo` cannot be passed to this executor
+without a version-aligned adapter update and integration test.
+
 ## Security boundary
 
 DALgo does not turn browser code into a trusted backend. A Firestore browser
