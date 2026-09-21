@@ -103,6 +103,19 @@ describe("executeJoinedDTQLQuery", () => {
     await expect(executeJoinedDTQLQuery(executor, query, { maxCandidateEvaluations: 1 })).rejects.toThrow("join_plan at from.joins[0].from.joins[0]: candidate-evaluation bound exceeded");
   });
 
+  it("reports nested JOIN result bounds at the full structural path", async () => {
+    const query = joined({ from: { name: "A", alias: "a", joins: [{
+      from: { name: "B", alias: "b", joins: [{ hints: { algorithms: ["nestedLoop"] }, from: { name: "C", alias: "c" }, on: [{ left: { field: "id", source: "b" }, op: "==", right: { field: "bId", source: "c" } }] }] },
+      on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "b" } }],
+    }] } });
+    const executor = new MemoryExecutor({
+      A: [record("A", "a", { id: 1 })],
+      B: [record("B", "b1", { id: 10, aId: 1 }), record("B", "b2", { id: 10, aId: 1 })],
+      C: [record("C", "c1", { id: 100, bId: 10 }), record("C", "c2", { id: 200, bId: 10 })],
+    });
+    await expect(executeJoinedDTQLQuery(executor, query, { maxResultRows: 2 })).rejects.toThrow("join_plan at from.joins[0].from.joins[0]: result-row bound exceeded");
+  });
+
   it("rejects malformed direct-model algorithm hints before provider reads", async () => {
     const base: JoinedDTQLQuery = { kind: "joined-dtql", from: { name: "A", alias: "a", joins: [] }, filters: [], orders: [] };
     const malformed = (hints: unknown): JoinedDTQLQuery => ({

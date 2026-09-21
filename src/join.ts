@@ -328,7 +328,7 @@ async function evaluateRelation(
   const records = cached.get(relation);
   if (records === undefined) planError(aliasOf(relation), "relation was not scanned");
   let rows: JoinedRow[] = records.map((record) => ({ aliases: new Map([...inherited, [aliasOf(relation), record]]), root: inheritedRoot ?? record }));
-  assertRowBound(rows, limits, aliasOf(relation));
+  assertRowBound(rows, limits, relationPath);
   for (const [index, join] of relation.joins.entries()) {
     const joinPath = `${relationPath}.joins[${index.toString()}]`;
     const next: JoinedRow[] = [];
@@ -354,7 +354,7 @@ async function evaluateRelation(
         for (const alias of childAliases) aliases.set(alias, undefined);
         next.push({ aliases, root: left.root });
       }
-      assertRowBound(next, limits, `${aliasOf(relation)}.joins[${index.toString()}]`);
+      assertRowBound(next, limits, joinPath);
     }
     rows = next;
   }
