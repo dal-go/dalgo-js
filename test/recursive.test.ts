@@ -23,6 +23,11 @@ class MemoryExecutor implements QueryExecutor {
 function fixture(name: string): string { return readFileSync(new URL(name, root), "utf8"); }
 
 describe("recursive DTQL fixtures", () => {
+  it("rejects a recursive YAML alias at its nested path", () => {
+    expect(() => parseRecursiveDTQL("from: &r\n  query:\n    as: x\n    from: *r\n", schema))
+      .toThrow("shape at root.from.query.from: recursive YAML alias or object cycle");
+  });
+
   it("pins every vendored byte to the Go manifest and source commit", () => {
     expect(manifest.sourceCommit).toBe("da4e671be46e9c2c4906cb645d9e16c0fd90d590");
     expect(readdirSync(root).sort()).toContain("suite.json");

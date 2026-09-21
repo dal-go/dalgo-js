@@ -56,6 +56,7 @@ const bindingStack: RecursiveDTQLQuery[] = [];
 /** Parses the additive recursive wire model. Legacy parseDTQL stays unchanged. */
 export function parseRecursiveDTQL(input: unknown, schema: DTQLSchema): RecursiveDTQLQuery {
   const root = raw(input, "root");
+  rejectObjectCycles(root, "root", new WeakSet());
   const query = parseQuery(root, schema, "root");
   bindQuery(query, schema, [], "");
   boundSchemas.set(query, schema);
@@ -634,6 +635,15 @@ function writeRelation(value: RecursiveDTQLRelation): Record<string, unknown> { 
 function writeCondition(value: RecursiveDTQLCondition): Record<string, unknown> { if (value.kind === "exists") return { exists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "not-exists") return { notExists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "and" || value.kind === "or") return { [value.kind]: value.conditions.map(writeCondition) }; const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>; return { left: writeExpression(comparison.left), op: comparison.operator === "in" ? "In" : comparison.operator === "not-in" ? "NotIn" : comparison.operator, right: writeExpression(comparison.right) }; }
 function writeExpression(value: RecursiveDTQLExpression): Record<string, unknown> { if (value.kind === "query") return { query: serializeRecursiveDTQL(value.query) }; if (value.kind === "field") return { field: value.field.field, ...(value.field.source === "" ? {} : { source: value.field.source }) }; if (value.kind === "literal") return { value: value.value }; if (value.kind === "values") return { values: value.values }; if (value.kind === "star") return { star: true }; if (value.kind === "aggregate") return { aggregate: { function: value.function, args: value.args.map(writeExpression), ...(value.distinct === true ? { distinct: true } : {}) } }; shape("expression", `cannot serialize ${value.kind}`); }
 function raw(value: unknown, path: string): Record<string, unknown> { if (typeof value === "string") { const parsed = parseYamlDocument(value, { prettyErrors: false, strict: true, uniqueKeys: true }); if (parsed.errors.length > 0) shape(path, "invalid YAML"); return raw(parsed.toJS(), path); } if (value === null || Array.isArray(value) || typeof value !== "object") shape(path, "must be object"); return { ...(value as Record<string, unknown>) }; }
+function rejectObjectCycles(value: unknown, path: string, ancestors: WeakSet<object>): void {
+  if (value === null || typeof value !== "object") return;
+  if (ancestors.has(value)) shape(path, "recursive YAML alias or object cycle");
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) value.forEach((child, index) => { rejectObjectCycles(child, `${path}[${index.toString()}]`, ancestors); });
+    else for (const [key, child] of Object.entries(value)) rejectObjectCycles(child, `${path}.${key}`, ancestors);
+  } finally { ancestors.delete(value); }
+}
 function list(value: unknown, path: string): unknown[] { if (!Array.isArray(value)) shape(path, "must be array"); return value; }
 function requireValue(value: Record<string, unknown>, key: string, path: string): unknown { if (!(key in value)) shape(path, `${key} is required`); return value[key]; }
 function text(value: unknown, path: string): string { if (typeof value !== "string" || value.length === 0) shape(path, "must be non-empty string"); return value; }
