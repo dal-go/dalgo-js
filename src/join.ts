@@ -75,16 +75,17 @@ export async function executeJoinedDTQLQuery(
   };
   validateLimits(limits);
   validateRelationShape(query.from, new WeakSet(), "from");
+  const from = snapshotRelationHints(query.from);
   const aliases = new Map<string, QueryRelation>();
   const nodes: QueryRelation[] = [];
-  collectRelations(query.from, aliases, nodes, new WeakSet(), "from");
-  validateExecutionScopes(query.from, new Set(), "from");
+  collectRelations(from, aliases, nodes, new WeakSet(), "from");
+  validateExecutionScopes(from, new Set(), "from");
   const effectiveQuery = { ...query, ...(query.columns === undefined ? {} : { columns: expandColumns(query.columns, aliases, options.schema) }) };
   validateClauseSources(effectiveQuery, aliases);
-  const keyReferences = collectKeyReferences(query.from, aliases);
+  const keyReferences = collectKeyReferences(from, aliases);
   const cached = await scanRelations(executor, nodes, keyReferences, limits, options.resolveSource);
-  const relationAliases = aliasesFor(query.from);
-  let rows = await evaluateRelation(query.from, new Map(), cached, limits, { candidates: 0 });
+  const relationAliases = aliasesFor(from);
+  let rows = await evaluateRelation(from, new Map(), cached, limits, { candidates: 0 }, undefined, "from");
   rows = rows.filter((row) => effectiveQuery.filters.every((filter) => matchesFilter(row, filter)));
 
   const materialized = materialize(rows, effectiveQuery, limits);
@@ -134,6 +135,7 @@ function validateJoinHints(value: unknown, path: string): void {
   for (const key of Object.keys(hints)) if (key !== "algorithms") algorithmError(`${path}.algorithms`, `unsupported hints key ${key}`);
   const algorithms = hints.algorithms;
   if (!Array.isArray(algorithms) || algorithms.length === 0) algorithmError(`${path}.algorithms`, "must be a non-empty array");
+  assertDenseAlgorithms(algorithms, `${path}.algorithms`);
   const seen = new Set<QueryJoinAlgorithm>();
   algorithms.forEach((algorithm, index) => {
     const entryPath = `${path}.algorithms[${index.toString()}]`;
@@ -142,6 +144,23 @@ function validateJoinHints(value: unknown, path: string): void {
     if (seen.has(typed)) algorithmError(entryPath, `duplicate algorithm ${typed}`);
     seen.add(typed);
   });
+}
+
+function assertDenseAlgorithms(algorithms: readonly unknown[], path: string): void {
+  for (let index = 0; index < algorithms.length; index += 1) {
+    if (!Object.prototype.hasOwnProperty.call(algorithms, index)) algorithmError(`${path}[${index.toString()}]`, "algorithm entry is required");
+  }
+}
+
+function snapshotRelationHints(relation: QueryRelation): QueryRelation {
+  return {
+    ...relation,
+    joins: relation.joins.map((join) => ({
+      ...join,
+      from: snapshotRelationHints(join.from),
+      ...(join.hints === undefined ? {} : { hints: { algorithms: [...join.hints.algorithms] } }),
+    })),
+  };
 }
 
 /**
@@ -304,28 +323,30 @@ async function evaluateRelation(
   limits: ExecutionLimits,
   counter: { candidates: number },
   inheritedRoot?: StoredRow,
+  relationPath = "from",
 ): Promise<JoinedRow[]> {
   const records = cached.get(relation);
   if (records === undefined) planError(aliasOf(relation), "relation was not scanned");
   let rows: JoinedRow[] = records.map((record) => ({ aliases: new Map([...inherited, [aliasOf(relation), record]]), root: inheritedRoot ?? record }));
   assertRowBound(rows, limits, aliasOf(relation));
   for (const [index, join] of relation.joins.entries()) {
+    const joinPath = `${relationPath}.joins[${index.toString()}]`;
     const next: JoinedRow[] = [];
     const childAliases = aliasesFor(join.from);
     const uncorrelated = !hasExternalReference(join.from, new Set(childAliases));
-    const childRows = uncorrelated ? await evaluateRelation(join.from, new Map(), cached, limits, counter) : undefined;
+    const childRows = uncorrelated ? await evaluateRelation(join.from, new Map(), cached, limits, counter, undefined, `${joinPath}.from`) : undefined;
     const hashAvailable = childRows !== undefined && crossSidePredicate(join, new Set(childAliases)) !== undefined;
     const algorithm = selectJoinAlgorithm(join.hints?.algorithms, hashAvailable);
-    const candidateLookup = childRows === undefined || algorithm !== "hash" ? undefined : candidateIndex(childRows, join, new Set(childAliases), `joins[${index.toString()}]`);
+    const candidateLookup = childRows === undefined || algorithm !== "hash" ? undefined : candidateIndex(childRows, join, new Set(childAliases), joinPath);
     for (const left of rows) {
       const candidates = childRows === undefined
-        ? await evaluateRelation(join.from, left.aliases, cached, limits, counter, left.root)
+        ? await evaluateRelation(join.from, left.aliases, cached, limits, counter, left.root, `${joinPath}.from`)
         : (algorithm === "hash"
-          ? indexedCandidates(left, childRows, candidateLookup, join, new Set(childAliases), `joins[${index.toString()}]`)
+          ? indexedCandidates(left, childRows, candidateLookup, join, new Set(childAliases), joinPath)
           : childRows).map((candidate) => mergeCandidate(left, candidate));
       counter.candidates += candidates.length;
-      if (counter.candidates > limits.maxCandidateEvaluations) planError(`${aliasOf(relation)}.joins[${index.toString()}]`, "candidate-evaluation bound exceeded");
-      const matches = candidates.filter((candidate) => join.on.every((predicate) => matchesJoin(candidate, predicate, `joins[${index.toString()}]`)));
+      if (counter.candidates > limits.maxCandidateEvaluations) planError(joinPath, "candidate-evaluation bound exceeded");
+      const matches = candidates.filter((candidate) => join.on.every((predicate) => matchesJoin(candidate, predicate, joinPath)));
       if (matches.length > 0) {
         next.push(...matches);
       } else if (join.type === "left") {

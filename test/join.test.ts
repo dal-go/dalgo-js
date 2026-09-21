@@ -64,8 +64,43 @@ describe("executeJoinedDTQLQuery", () => {
     const nested = await executeJoinedDTQLQuery(executor, joined(document(["nestedLoop", "hash"])));
     expect(hashed.records).toEqual(normal.records);
     expect(nested.records).toEqual(normal.records);
-    await expect(executeJoinedDTQLQuery(executor, joined(document(["nestedLoop", "hash"])), { maxCandidateEvaluations: 1 })).rejects.toThrow("join_plan at a.joins[0]: candidate-evaluation bound exceeded");
+    await expect(executeJoinedDTQLQuery(executor, joined(document(["nestedLoop", "hash"])), { maxCandidateEvaluations: 1 })).rejects.toThrow("join_plan at from.joins[0]: candidate-evaluation bound exceeded");
     await expect(executeJoinedDTQLQuery(executor, joined(document(["hash", "nestedLoop"])), { maxCandidateEvaluations: 1 })).resolves.toMatchObject({ records: [{ data: { a: 1, b: 10 } }] });
+  });
+
+  it("snapshots validated hints before provider scans", async () => {
+    const query = joined({
+      from: { name: "A", alias: "a", joins: [{ hints: { algorithms: ["nestedLoop", "hash"] }, from: { name: "B", alias: "b" }, on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "b" } }] }] },
+    });
+    const algorithms = query.from.joins[0]?.hints?.algorithms as unknown as string[];
+    class MutatingExecutor extends MemoryExecutor {
+      public override query<T>(source: StructuredQuery<T>) {
+        algorithms.splice(0, algorithms.length, "hash");
+        return super.query(source);
+      }
+    }
+    const executor = new MutatingExecutor({
+      A: [record("A", "a", { id: 1 })],
+      B: [record("B", "match", { id: 10, aId: 1 }), record("B", "other", { id: 20, aId: 2 })],
+    });
+    await expect(executeJoinedDTQLQuery(executor, query, { maxCandidateEvaluations: 1 })).rejects.toThrow("join_plan at from.joins[0]: candidate-evaluation bound exceeded");
+  });
+
+  it("reports nested-loop candidate bounds at the full structural JOIN path", async () => {
+    const query = joined({
+      from: {
+        name: "A", alias: "a", joins: [{
+          from: { name: "B", alias: "b", joins: [{ hints: { algorithms: ["nestedLoop"] }, from: { name: "C", alias: "c" }, on: [{ left: { field: "id", source: "b" }, op: "==", right: { field: "bId", source: "c" } }] }] },
+          on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "b" } }],
+        }],
+      },
+    });
+    const executor = new MemoryExecutor({
+      A: [record("A", "a", { id: 1 })],
+      B: [record("B", "b", { id: 10, aId: 1 })],
+      C: [record("C", "c1", { id: 100, bId: 10 }), record("C", "c2", { id: 200, bId: 11 })],
+    });
+    await expect(executeJoinedDTQLQuery(executor, query, { maxCandidateEvaluations: 1 })).rejects.toThrow("join_plan at from.joins[0].from.joins[0]: candidate-evaluation bound exceeded");
   });
 
   it("rejects malformed direct-model algorithm hints before provider reads", async () => {
@@ -84,6 +119,12 @@ describe("executeJoinedDTQLQuery", () => {
       await expect(executeJoinedDTQLQuery(executor, malformed(hints))).rejects.toThrow(diagnostic);
       expect(executor.calls).toHaveLength(0);
     }
+    const sparse = new Array<string>(3);
+    sparse[0] = "hash";
+    sparse[2] = "nestedLoop";
+    const executor = new MemoryExecutor({});
+    await expect(executeJoinedDTQLQuery(executor, malformed({ algorithms: sparse }))).rejects.toThrow("join_algorithm at from.joins[0].hints.algorithms[1]");
+    expect(executor.calls).toHaveLength(0);
   });
 
   it("scans each relation once and preserves nested INNER/LEFT multiplicity and the root key", async () => {

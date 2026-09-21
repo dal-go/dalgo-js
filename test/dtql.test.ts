@@ -164,6 +164,10 @@ describe("parseDTQL", () => {
     expect(() => parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: { algorithms: ["Hash"] } }] } }, schema)).toThrow("join_algorithm at from.joins[0].hints.algorithms[0]");
     expect(() => parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: [] }] } }, schema)).toThrow("join_algorithm at from.joins[0].hints.algorithms");
     expect(() => parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: { algorithm: "hash" } }] } }, schema)).toThrow("join_algorithm at from.joins[0].hints.algorithms");
+    const sparseAlgorithms = new Array<string>(3);
+    sparseAlgorithms[0] = "hash";
+    sparseAlgorithms[2] = "nestedLoop";
+    expect(() => parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: { algorithms: sparseAlgorithms } }] } }, schema)).toThrow("join_algorithm at from.joins[0].hints.algorithms[1]");
 
     const algorithms = ["hash"];
     const copied = parseDTQL({ ...base, from: { ...base.from, joins: [{ ...base.from.joins[0], hints: { algorithms } }] } }, schema);

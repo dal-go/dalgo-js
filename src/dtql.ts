@@ -245,6 +245,9 @@ function parseJoinHints(value: unknown, path: string): { readonly algorithms: re
   const hints = value as ObjectValue;
   for (const key of Object.keys(hints)) if (!hintKeys.has(key)) fail(`join_algorithm at ${path}.algorithms: unsupported hints key ${key}`);
   if (!Array.isArray(hints.algorithms) || hints.algorithms.length === 0) fail(`join_algorithm at ${path}.algorithms: must be a non-empty array`);
+  for (let index = 0; index < hints.algorithms.length; index += 1) {
+    if (!Object.prototype.hasOwnProperty.call(hints.algorithms, index)) fail(`join_algorithm at ${path}.algorithms[${index.toString()}]: algorithm entry is required`);
+  }
   const seen = new Set<QueryJoinAlgorithm>();
   const algorithms = hints.algorithms.map((algorithm, index) => {
     const entryPath = `${path}.algorithms[${index.toString()}]`;
