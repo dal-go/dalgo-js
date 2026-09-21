@@ -67,6 +67,44 @@ const query = collectionGroup<Item>("items")
   .build();
 ```
 
+## Recursive DTQL joins
+
+`parseDTQL` returns a distinct `JoinedDTQLQuery` for an aliased relation or a
+relation tree. Execute it through `executeJoinedDTQLQuery`, passing the same
+`DTQLSchema` used to parse the text when columns contain a source-qualified
+wildcard. The executor expands wildcard fields in that schema's declared
+order.
+
+```ts
+const parsed = parseDTQL(dtqlText, schema);
+if (isJoinedDTQLQuery(parsed)) {
+  const page = await executeJoinedDTQLQuery(adapter, parsed, { schema });
+}
+```
+
+The generic executor scans each relation through `QueryExecutor.query` once;
+it does not pass a joined query into an existing adapter. A relation with no
+`schema` scans its collection name directly. A schema-qualified relation needs
+an explicit `resolveSource` callback, which must preserve the complete
+`schema` and `name` identity understood by that adapter:
+
+```ts
+await executeJoinedDTQLQuery(adapter, parsed, {
+  schema,
+  resolveSource: (relation) => ({
+    kind: "collection",
+    name: `${relation.schema}.${relation.name}`,
+  }),
+});
+```
+
+`@dalgo/core` currently ships no `QueryExecutor` adapter. Its in-repository
+memory executor is tested with generic unqualified scans and with the explicit
+schema mapping above. The external Firestore adapter has not been exercised
+for recursive DTQL joins; it needs its own resolver and integration test before
+claiming this capability. Without `resolveSource`, a schema-qualified query
+fails with `join_plan` before any output is returned.
+
 ## Security boundary
 
 DALgo does not turn browser code into a trusted backend. A Firestore browser

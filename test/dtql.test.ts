@@ -93,6 +93,18 @@ describe("parseDTQL", () => {
     expect(parseDTQL(stringifyJoinedDTQL(query), schema)).toEqual(query);
   });
 
+  it("pins every copied canonical JOIN fixture to the committed SHA-256 manifest", () => {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in manifest at runtime.
+    const manifestText: string = readFileSync(new URL("./testdata/joins/manifest.json", import.meta.url), "utf8");
+    const manifest = JSON.parse(manifestText) as { readonly files: Readonly<Record<string, string>> };
+    for (const [name, expected] of Object.entries(manifest.files)) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in canonical fixture at runtime.
+      const fixture = readFileSync(new URL(`./testdata/joins/${name}`, import.meta.url), "utf8");
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- Vitest's Node runtime provides the checked-in fixture digest.
+      expect(createHash("sha256").update(fixture).digest("hex")).toBe(expected);
+    }
+  });
+
   it("validates ordered nested scopes and canonicalizes aliases and equality", () => {
     const query = parseDTQL({
       from: {
@@ -115,6 +127,24 @@ describe("parseDTQL", () => {
       from: { name: "A", as: "a", joins: [{ from: { name: "B", as: "b" }, on: [{ left: { field: "id", source: "b" }, op: "==", right: { field: "aId", source: "b" } }] }] },
       limit: 1,
     }, schema)).not.toThrow();
+  });
+
+  it("resolves an unqualified joined field only when schema proves one owner", () => {
+    const query = parseDTQL({
+      from: { name: "A", alias: "a", joins: [{ from: { name: "B", alias: "b" }, on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "b" } }] }] },
+      where: { op: "==", left: { field: "aId" }, right: { value: 1 } },
+      columns: [{ field: "aId", as: "only_b" }],
+      limit: 1,
+    }, schema);
+    expect(isJoinedDTQLQuery(query)).toBe(true);
+    if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+    expect(query.filters[0]?.field).toEqual({ field: "aId", source: "b" });
+    expect(query.columns?.[0]).toEqual({ expression: { kind: "field", field: { field: "aId", source: "b" } }, as: "only_b" });
+    expect(() => parseDTQL({
+      from: { name: "A", alias: "a", joins: [{ from: { name: "B", alias: "b" }, on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "b" } }] }] },
+      columns: [{ field: "id", as: "ambiguous" }],
+      limit: 1,
+    }, schema)).toThrow("ambiguous field id");
   });
 
   it("matches the shared unknown and forward-alias diagnostic paths", () => {

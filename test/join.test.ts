@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { executeJoinedDTQLQuery, isJoinedDTQLQuery, key, parseDTQL, type DTQLSchema, type ExistingRecord, type JoinedDTQLQuery, type QueryExecutor, type StructuredQuery } from "../src/index.js";
 
 type Data = Record<string, unknown>;
@@ -35,6 +36,10 @@ function joined(input: unknown) {
   return query;
 }
 
+function schemaSource(relation: { readonly name: string; readonly schema?: string }) {
+  return { kind: "collection" as const, name: relation.schema === undefined ? relation.name : `${relation.schema}.${relation.name}` };
+}
+
 describe("executeJoinedDTQLQuery", () => {
   it("scans each relation once and preserves nested INNER/LEFT multiplicity and the root key", async () => {
     const query = joined({
@@ -63,7 +68,7 @@ describe("executeJoinedDTQLQuery", () => {
       "main.Employee": [record("Employee", "50", { EmployeeId: 50, FirstName: "Evan" })],
     });
 
-    const result = await executeJoinedDTQLQuery(executor, query);
+    const result = await executeJoinedDTQLQuery(executor, query, { resolveSource: schemaSource });
     expect(executor.calls).toEqual(["main.Invoice", "main.Customer", "main.Employee"]);
     expect(result.records.map((row) => row.key.id)).toEqual(["3", "2", "1"]);
     expect(result.records.map((row) => row.data)).toEqual([
@@ -119,7 +124,7 @@ describe("executeJoinedDTQLQuery", () => {
       columns: [{ aggregate: { function: "count", args: [{ star: true }] }, as: "total" }],
       limit: 1,
     });
-    const result = await executeJoinedDTQLQuery(new MemoryExecutor({ "main.Invoice": [] }), query);
+    const result = await executeJoinedDTQLQuery(new MemoryExecutor({ "main.Invoice": [] }), query, { resolveSource: schemaSource });
     expect(result.records.map((row) => row.data)).toEqual([{ total: 0 }]);
   });
 
@@ -139,5 +144,56 @@ describe("executeJoinedDTQLQuery", () => {
       B: [record("B", "b1", { id: 10, aId: 1 }), record("B", "b2", { id: 10, aId: 1 }), record("B", "b3", { id: 20, aId: 1 })],
     }), query);
     expect(result.records.map((row) => row.data)).toEqual([{ a: 1, distinct_b: 2 }, { a: 2, distinct_b: 0 }]);
+  });
+
+  it("expands source-qualified wildcard exclusions in schema order and rejects unavailable metadata or collisions", async () => {
+    const query = joined({
+      from: { name: "A", alias: "a", joins: [{ type: "left", from: { name: "B", alias: "b" }, on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "aId", source: "b" } }] }] },
+      columns: [{ wildcard: { source: "b", exclude: ["aId", "missing"] } }],
+      limit: 10,
+    });
+    const executor = new MemoryExecutor({
+      A: [record("A", "a1", { id: 1 }), record("A", "a2", { id: 2 })],
+      B: [record("B", "b1", { id: 10, aId: 1 })],
+    });
+    expect((await executeJoinedDTQLQuery(executor, query, { schema })).records.map((row) => row.data)).toEqual([{ id: 10 }, { id: null }]);
+    await expect(executeJoinedDTQLQuery(executor, query)).rejects.toThrow("wildcard expansion requires ordered schema metadata");
+
+    const collision: JoinedDTQLQuery = {
+      ...query,
+      columns: [
+        { wildcard: { source: "b", exclude: ["aId"] } },
+        { expression: { kind: "field", field: { source: "a", field: "id" } } },
+      ],
+    };
+    await expect(executeJoinedDTQLQuery(executor, collision, { schema })).rejects.toThrow("duplicate output key id");
+  });
+
+  it("executes the shared schema-qualified Chinook wildcard fixture through an explicit adapter source mapping", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in canonical YAML fixture at runtime.
+    const fixture = readFileSync(new URL("./testdata/joins/chinook-wildcard.dtql.yaml", import.meta.url), "utf8");
+    const query = joined(fixture);
+    const executor = new MemoryExecutor({
+      "main.Invoice": [
+        record("Invoice", "1", { InvoiceId: 1, CustomerId: 10 }),
+        record("Invoice", "2", { InvoiceId: 2, CustomerId: 10 }),
+        record("Invoice", "3", { InvoiceId: 3, CustomerId: 11 }),
+      ],
+      "main.Customer": [
+        record("Customer", "10", { CustomerId: 10, FirstName: "Ada", SupportRepId: 50 }),
+        record("Customer", "11", { CustomerId: 11, FirstName: "Bea", SupportRepId: null }),
+      ],
+      "main.Employee": [record("Employee", "50", { EmployeeId: 50, FirstName: "Evan" })],
+    });
+    await expect(executeJoinedDTQLQuery(executor, query, { schema })).rejects.toThrow("schema-qualified relation requires resolveSource");
+    const result = await executeJoinedDTQLQuery(executor, query, {
+      schema,
+      resolveSource: schemaSource,
+    });
+    expect(result.records.map((row) => row.data)).toEqual([
+      { invoice_id: 3, FirstName: "Bea", employee: null },
+      { invoice_id: 2, FirstName: "Ada", employee: "Evan" },
+      { invoice_id: 1, FirstName: "Ada", employee: "Evan" },
+    ]);
   });
 });

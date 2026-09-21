@@ -1,4 +1,5 @@
 import type { QueryExecutor } from "./database.js";
+import type { DTQLSchema } from "./dtql.js";
 import { Key } from "./key.js";
 import type { ExistingRecord } from "./record.js";
 import type {
@@ -7,6 +8,7 @@ import type {
   JoinedDTQLQuery,
   QueryFieldReference,
   QueryJoinPredicate,
+  QueryColumn,
   QueryRelation,
   QueryPage,
   StructuredQuery,
@@ -30,9 +32,18 @@ export interface JoinedQueryExecutionOptions {
   readonly maxResultRows?: number;
   readonly maxCandidateEvaluations?: number;
   readonly maxRetainedBytes?: number;
+  /** The parse-time schema used for source-qualified wildcard expansion. */
+  readonly schema?: DTQLSchema;
+  /**
+   * Maps a DTQL relation to an adapter source. Required when a relation names
+   * a schema because the legacy QueryExecutor has no schema namespace.
+   */
+  readonly resolveSource?: (relation: QueryRelation) => StructuredQuery<Data>["source"];
 }
 
-const defaults: Required<JoinedQueryExecutionOptions> = {
+type ExecutionLimits = Required<Omit<JoinedQueryExecutionOptions, "schema" | "resolveSource">>;
+
+const defaults: ExecutionLimits = {
   maxFetchedRows: 10_000,
   maxResultRows: 10_000,
   maxCandidateEvaluations: 100_000,
@@ -43,33 +54,78 @@ const defaults: Required<JoinedQueryExecutionOptions> = {
  * Executes a parsed relation tree by scanning each relation once through the
  * existing single-source executor. This deliberately remains a separate entry
  * point: legacy `QueryExecutor.query(StructuredQuery)` never receives joins.
+ *
+ * Pass the same schema used by `parseDTQL` when the query has wildcard
+ * projections. For schema-qualified relations, pass `resolveSource` so the
+ * adapter, rather than this generic executor, defines its source namespace.
  */
 export async function executeJoinedDTQLQuery(
   executor: QueryExecutor,
   query: JoinedDTQLQuery,
   options: JoinedQueryExecutionOptions = {},
 ): Promise<QueryPage<Data>> {
-  const limits = { ...defaults, ...options };
+  const limits: ExecutionLimits = {
+    maxFetchedRows: options.maxFetchedRows ?? defaults.maxFetchedRows,
+    maxResultRows: options.maxResultRows ?? defaults.maxResultRows,
+    maxCandidateEvaluations: options.maxCandidateEvaluations ?? defaults.maxCandidateEvaluations,
+    maxRetainedBytes: options.maxRetainedBytes ?? defaults.maxRetainedBytes,
+  };
   validateLimits(limits);
   const aliases = new Map<string, QueryRelation>();
   const nodes: QueryRelation[] = [];
   collectRelations(query.from, aliases, nodes, new WeakSet(), "from");
   validateExecutionScopes(query.from, new Set(), "from");
+  const effectiveQuery = { ...query, ...(query.columns === undefined ? {} : { columns: expandColumns(query.columns, aliases, options.schema) }) };
   const keyReferences = collectKeyReferences(query.from, aliases);
-  const cached = await scanRelations(executor, nodes, keyReferences, limits);
+  const cached = await scanRelations(executor, nodes, keyReferences, limits, options.resolveSource);
   const relationAliases = aliasesFor(query.from);
   let rows = await evaluateRelation(query.from, new Map(), cached, limits, { candidates: 0 });
-  rows = rows.filter((row) => query.filters.every((filter) => matchesFilter(row, filter)));
+  rows = rows.filter((row) => effectiveQuery.filters.every((filter) => matchesFilter(row, filter)));
 
-  const materialized = materialize(rows, query, limits);
-  const ordered = stableOrder(materialized, query);
-  const start = query.offset ?? 0;
-  const end = query.limit === undefined ? undefined : start + query.limit;
-  const page = ordered.slice(start, end).map((item) => ({ key: item.row.root.key, exists: true as const, data: project(item, query, relationAliases) }));
+  const materialized = materialize(rows, effectiveQuery, limits);
+  const ordered = stableOrder(materialized, effectiveQuery);
+  const start = effectiveQuery.offset ?? 0;
+  const end = effectiveQuery.limit === undefined ? undefined : start + effectiveQuery.limit;
+  const page = ordered.slice(start, end).map((item) => ({ key: item.row.root.key, exists: true as const, data: project(item, effectiveQuery, relationAliases) }));
   return { records: page };
 }
 
-function validateLimits(limits: Required<JoinedQueryExecutionOptions>): void {
+function expandColumns(
+  columns: readonly QueryColumn[],
+  aliases: ReadonlyMap<string, QueryRelation>,
+  schema: DTQLSchema | undefined,
+): readonly QueryColumn[] {
+  const expanded: QueryColumn[] = [];
+  const names = new Set<string>();
+  columns.forEach((column, index) => {
+    if (column.wildcard === undefined) {
+      const name = columnOutput(column, `columns[${index.toString()}]`);
+      if (names.has(name)) planError(`columns[${index.toString()}]`, `duplicate output key ${name}`);
+      names.add(name);
+      expanded.push(column);
+      return;
+    }
+    const source = column.wildcard.source;
+    if (source === undefined) planError(`columns[${index.toString()}].wildcard.source`, "joined wildcard must name a source");
+    const relation = aliases.get(source);
+    if (relation === undefined) planError(`columns[${index.toString()}].wildcard.source`, `unknown alias ${source}`);
+    const tables = schema?.tables.filter((table) => table.name === relation.name && (relation.schema === undefined || table.schema === relation.schema));
+    if (tables?.length !== 1) planError(`columns[${index.toString()}].wildcard`, "wildcard expansion requires ordered schema metadata");
+    const table = tables[0];
+    if (table === undefined) planError(`columns[${index.toString()}].wildcard`, "wildcard expansion requires ordered schema metadata");
+    const ordered = table.fields;
+    const excluded = new Set(column.wildcard.exclude);
+    for (const field of ordered) {
+      if (excluded.has(field)) continue;
+      if (names.has(field)) planError(`columns[${index.toString()}]`, `duplicate output key ${field}`);
+      names.add(field);
+      expanded.push({ expression: { kind: "field", field: { source, field } } });
+    }
+  });
+  return expanded;
+}
+
+function validateLimits(limits: ExecutionLimits): void {
   for (const [name, value] of Object.entries(limits)) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive safe integer`);
   }
@@ -101,14 +157,15 @@ async function scanRelations(
   executor: QueryExecutor,
   relations: readonly QueryRelation[],
   keyReferences: ReadonlyMap<QueryRelation, readonly { readonly field: string; readonly path: string }[]>,
-  limits: Required<JoinedQueryExecutionOptions>,
+  limits: ExecutionLimits,
+  resolveSource: JoinedQueryExecutionOptions["resolveSource"],
 ): Promise<ReadonlyMap<QueryRelation, readonly StoredRow[]>> {
   const result = new Map<QueryRelation, readonly StoredRow[]>();
   let fetched = 0;
   let retained = 0;
   for (const relation of relations) {
     const source: StructuredQuery<Data> = {
-      source: { kind: "collection", name: relation.schema === undefined ? relation.name : `${relation.schema}.${relation.name}` },
+      source: relationSource(relation, resolveSource),
       filters: [],
       orders: [],
       limit: limits.maxFetchedRows + 1,
@@ -126,11 +183,20 @@ async function scanRelations(
   return result;
 }
 
+function relationSource(
+  relation: QueryRelation,
+  resolveSource: JoinedQueryExecutionOptions["resolveSource"],
+): StructuredQuery<Data>["source"] {
+  if (resolveSource !== undefined) return resolveSource(relation);
+  if (relation.schema !== undefined) planError(aliasOf(relation), "schema-qualified relation requires resolveSource");
+  return { kind: "collection", name: relation.name };
+}
+
 async function evaluateRelation(
   relation: QueryRelation,
   inherited: ReadonlyMap<string, StoredRow | undefined>,
   cached: ReadonlyMap<QueryRelation, readonly StoredRow[]>,
-  limits: Required<JoinedQueryExecutionOptions>,
+  limits: ExecutionLimits,
   counter: { candidates: number },
   inheritedRoot?: StoredRow,
 ): Promise<JoinedRow[]> {
@@ -266,7 +332,7 @@ function matchesFilter(row: JoinedRow, filter: DTQLQueryFilter): boolean {
   }
 }
 
-function materialize(rows: readonly JoinedRow[], query: JoinedDTQLQuery, limits: Required<JoinedQueryExecutionOptions>): MaterializedRow[] {
+function materialize(rows: readonly JoinedRow[], query: JoinedDTQLQuery, limits: ExecutionLimits): MaterializedRow[] {
   const aggregate = (query.columns ?? []).some((column) => column.expression !== undefined && containsAggregate(column.expression)) || (query.having !== undefined && (containsAggregate(query.having.left) || containsAggregate(query.having.right)));
   if (query.groupBy === undefined && !aggregate) return rows.map((row) => ({ row, group: [row] }));
   const groups = new Map<string, JoinedRow[]>();
@@ -339,14 +405,18 @@ function project(value: MaterializedRow, query: JoinedDTQLQuery, aliases: readon
   }
   const result: Data = {};
   for (const column of query.columns) {
-    if (column.wildcard !== undefined) planError("columns", "wildcard projection needs schema expansion");
     const expression = column.expression;
     if (expression === undefined) planError("columns", "column expression is required");
-    const output = column.as;
-    if (output === undefined) planError("columns", "column alias is required for joined projection");
+    const output = columnOutput(column, "columns");
     result[output] = expressionValue(value.row, value.group, expression) ?? null;
   }
   return result;
+}
+
+function columnOutput(column: QueryColumn, path: string): string {
+  if (column.as !== undefined) return column.as;
+  if (column.expression?.kind === "field") return column.expression.field.field;
+  planError(path, "non-field joined column requires an alias");
 }
 
 function expressionValue(row: JoinedRow, group: readonly JoinedRow[], expression: DTQLExpression): unknown {
@@ -445,7 +515,7 @@ function expressionKey(values: readonly unknown[]): string {
   });
 }
 
-function assertRowBound(rows: readonly JoinedRow[], limits: Required<JoinedQueryExecutionOptions>, path: string): void {
+function assertRowBound(rows: readonly JoinedRow[], limits: ExecutionLimits, path: string): void {
   if (rows.length > limits.maxResultRows) planError(path, "result-row bound exceeded");
   const retained = rows.reduce((total, row) => total + bytes([...row.aliases.entries()].map(([alias, record]) => [alias, record?.data])), 0);
   if (retained > limits.maxRetainedBytes) planError(path, "retained-byte bound exceeded");

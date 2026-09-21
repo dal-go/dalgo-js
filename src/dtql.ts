@@ -498,7 +498,7 @@ function parseScopedField(
   const source = optionalString(value, "source");
   if (source === undefined) {
     assertOnlyKeys(value, fieldKeys, path);
-    if (joined) fail(`join_field at ${path}: source is required for joined fields`);
+    if (joined) return resolveUniqueField(field, aliases, schema, path);
     if (!baseFields.has(field)) fail(`unknown field ${field}`);
     return field;
   }
@@ -517,12 +517,31 @@ function parseKnownQualifiedField(
   schema: DTQLSchema,
 ): QueryFieldReference {
   assertOnlyKeys(value, columnKeys, path);
-  const reference = { field: requiredString(value, "field"), source: requiredString(value, "source") };
+  const field = requiredString(value, "field");
+  const source = optionalString(value, "source");
+  if (source === undefined) return resolveUniqueField(field, aliases, schema, path);
+  const reference = { field, source };
   const relation = aliases.get(reference.source);
   if (relation === undefined) fail(`join_field at ${path}.source: unknown alias ${reference.source}`);
   const table = resolveTable(relation.name, relation.schema, schema, path);
   if (!table.fields.includes(reference.field)) fail(`join_field at ${path}: unknown field ${reference.source}.${reference.field}`);
   return reference;
+}
+
+function resolveUniqueField(
+  field: string,
+  aliases: ReadonlyMap<string, QueryRelation>,
+  schema: DTQLSchema,
+  path: string,
+): QueryFieldReference {
+  const matches = [...aliases.entries()].filter(([, relation]) =>
+    resolveTable(relation.name, relation.schema, schema, path).fields.includes(field),
+  );
+  if (matches.length === 0) fail(`join_field at ${path}: unknown field ${field}`);
+  if (matches.length !== 1) fail(`join_field at ${path}: ambiguous field ${field}; specify source`);
+  const [source] = matches[0] ?? [];
+  if (source === undefined) fail(`join_field at ${path}: unknown field ${field}`);
+  return { field, source };
 }
 
 function parseLimit(value: unknown, maxLimit: number): number {
