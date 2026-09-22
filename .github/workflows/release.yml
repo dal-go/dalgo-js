@@ -61,7 +61,7 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          echo 'eligible=false' >> "$GITHUB_OUTPUT"
+          printf 'eligible=false\n' > "$GITHUB_OUTPUT"
 
           version=$(node -p "require('./package.json').version")
           marker=".changeset/releases/core@v${version}.json"
@@ -92,9 +92,11 @@ jobs:
             ($files | index($marker)) != null
           ' <<< "$files" >/dev/null
 
-          echo "eligible=true" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=core@v$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "eligible=true"
+            echo "version=$version"
+            echo "tag=core@v$version"
+          } >> "$GITHUB_OUTPUT"
 
   publish:
     name: Publish reviewed version
