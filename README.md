@@ -183,11 +183,30 @@ queries, filters, ordering, deterministic cursor pagination, and read-write
 transactions. Adapters must reject unsupported capabilities explicitly rather
 than silently changing query semantics.
 
-After a version is published to npm, manually run the
-[tagging workflow](.github/workflows/tag-published-package.yml) on `main` with
-that version. It checks npm's published `gitHead` and the matching source
-manifest, then tags that exact commit as `core@v<version>` (for example,
-`core@v0.1.0`). Publishing alone does not trigger the tagging workflow yet.
+## Releases
+
+Releases use Changesets and a reviewed version pull request:
+
+1. Add `pnpm changeset` to each pull request that should release the package.
+2. After that pull request reaches `main`, the release workflow creates or
+   updates `changeset-release/main` with the package version, `CHANGELOG.md`,
+   and a generated release marker.
+3. Review and merge the `chore: version @dalgo/core` pull request. Only that
+   merge is eligible for npm trusted publishing. The workflow runs install,
+   lint, tests, type-check/build, verifies the merged pull request and marker,
+   publishes with npm OIDC, verifies npm's `gitHead`, and creates the
+   `core@v<version>` tag.
+
+The npm trusted publisher must be configured for this repository, the
+`Release @dalgo/core` workflow, and the `npm` GitHub environment. Repository
+Actions settings must also allow GitHub Actions to create pull requests.
+
+The source manifest is currently `0.2.0`, while the last independently
+verified npm release and repository tag are `@dalgo/core@0.1.0` and
+`core@v0.1.0`. This setup deliberately does not publish that source-only
+`0.2.0` baseline: only a later Changesets-generated version pull request gets
+a release marker and can authorize publication. Do not hand-create or edit a
+marker under `.changeset/releases/`.
 
 ## License
 

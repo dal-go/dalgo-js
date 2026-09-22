@@ -22,10 +22,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "eslint . && vitest run && tsc -p tsconfig.build.json",
+    "changeset": "changeset",
     "lint": "eslint .",
     "prepare": "npm run build",
+    "release:publish": "changeset publish --no-git-tag",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "version-packages": "node scripts/version-packages.mjs"
   },
   "repository": {
     "type": "git",
@@ -40,6 +43,7 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "@changesets/cli": "3.0.3",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "typescript": "6.0.3",
