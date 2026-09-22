@@ -28,23 +28,53 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Select Changesets mode
-        id: mode
-        uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
       - name: Create or update the reviewed version pull request
         id: version
-        if: steps.mode.outputs.mode == 'version'
-        uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
-        with:
-          script: pnpm version-packages
-          commit-message: "chore: version @dalgo/core"
-          pr-title: "chore: version @dalgo/core"
-          pr-base-branch: main
-      - name: Run CI on the version pull request head
-        if: steps.version.outputs.pr-number != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ci.yml --ref changeset-release/main
+        run: |
+          set -euo pipefail
+          changeset=$(find .changeset -maxdepth 1 -type f -name '*.md' ! -name README.md -print -quit)
+          [[ -n "$changeset" ]] || exit 0
+
+          pnpm version-packages
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B changeset-release/main
+          git add --all
+          git commit -m 'chore: version @dalgo/core'
+
+          remote_sha=$(git ls-remote --heads origin refs/heads/changeset-release/main | cut -f1)
+          if [[ -n "$remote_sha" ]]; then
+            git push \
+              --force-with-lease="refs/heads/changeset-release/main:$remote_sha" \
+              origin HEAD:refs/heads/changeset-release/main
+          else
+            git push origin HEAD:refs/heads/changeset-release/main
+          fi
+
+          pr_number=$(gh pr list \
+            --base main \
+            --head changeset-release/main \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+          if [[ -z "$pr_number" ]]; then
+            gh pr create \
+              --base main \
+              --head changeset-release/main \
+              --title 'chore: version @dalgo/core' \
+              --body 'Automated Changesets version pull request for @dalgo/core.'
+            pr_number=$(gh pr list \
+              --base main \
+              --head changeset-release/main \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty')
+          fi
+          [[ -n "$pr_number" ]]
+          echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
+          gh workflow run ci.yml --ref changeset-release/main
 
   authorize-release:
     name: Verify merged version pull request

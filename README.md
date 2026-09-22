@@ -190,9 +190,11 @@ Releases use Changesets and a reviewed version pull request:
 1. Add `pnpm changeset` to each pull request that should release the package.
 2. After that pull request reaches `main`, the release workflow creates or
    updates `changeset-release/main` with the package version, `CHANGELOG.md`,
-   and a generated release marker. GitHub does not start workflows for a pull
-   request update made by its own token, so the release workflow explicitly
-   dispatches `ci.yml` against the updated version-PR head.
+   and a generated release marker. The workflow uses the checked-in Changesets
+   CLI plus `git` and `gh`; it does not depend on the Changesets GitHub Action.
+   GitHub does not start workflows for a pull request update made by its own
+   token, so the release workflow explicitly dispatches `ci.yml` against the
+   updated version-PR head.
 3. Review and merge the `chore: version @dalgo/core` pull request. Only that
    merge is eligible for npm trusted publishing. The workflow runs install,
    lint, tests, type-check/build, verifies the merged pull request and marker,
