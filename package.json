@@ -25,7 +25,7 @@
     "changeset": "changeset",
     "lint": "eslint .",
     "prepare": "npm run build",
-    "release:publish": "changeset publish --no-git-tag",
+    "release:publish": "npm publish --access public --provenance",
     "test": "vitest run",
     "test:watch": "vitest",
     "version-packages": "node scripts/version-packages.mjs"
