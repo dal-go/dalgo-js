@@ -729,6 +729,86 @@ function canStreamJoinedAggregate(query: JoinedDTQLQuery): boolean {
     (query.groupBy !== undefined || (query.columns ?? []).some((column) => column.expression !== undefined && containsAggregate(column.expression)));
 }
 
+/** Streams a flat equality join in bounded result pages. The indexed side
+ * remains bounded; the fact side and output can exceed generic join limits. */
+export async function* executeJoinedDTQLQueryPages(
+  query: JoinedDTQLQuery,
+  options: JoinedQueryExecutionOptions,
+): AsyncIterable<QueryPage<Data>> {
+  const scanPages = options.scanPages;
+  if (scanPages === undefined) planError("from", "paged source transport is required");
+  validateRelationShape(query.from, new WeakSet(), "from");
+  const root = query.from;
+  const join = root.joins[0];
+  if (join === undefined || root.joins.length !== 1 || join.from.joins.length !== 0 ||
+      query.groupBy !== undefined || query.having !== undefined || query.orders.length !== 0 ||
+      (query.columns ?? []).some((column) => column.expression !== undefined && containsAggregate(column.expression)) ||
+      selectJoinAlgorithm(join.hints?.algorithms, true) !== "hash") {
+    planError("from", "paged output requires one flat hash equality join without global aggregation or ordering");
+  }
+  const child = join.from;
+  const rootAlias = aliasOf(root);
+  const childAlias = aliasOf(child);
+  const aliases = new Map<string, QueryRelation>();
+  collectRelations(root, aliases, [], new WeakSet(), "from");
+  validateExecutionScopes(root, new Set(), "from");
+  collectKeyReferences(root, aliases);
+  const predicate = crossSidePredicate(join, new Set([childAlias]));
+  if (predicate === undefined) planError("from.joins[0].on", "paged output requires a cross-source equality");
+  const childRef = predicate.left.source === childAlias ? predicate.left : predicate.right;
+  const rootRef = predicate.left.source === rootAlias ? predicate.left : predicate.right;
+  if (rootRef.source !== rootAlias || childRef.source !== childAlias) planError("from.joins[0].on", "paged output requires root and child aliases");
+  const columns = query.columns === undefined ? undefined : expandColumns(query.columns, aliases, options.schema);
+  const effective = { ...query, ...(columns === undefined ? {} : { columns }) };
+  validateClauseSources(effective, aliases);
+  const dimension = new Map<string, StoredRow[]>();
+  const childQuery: StructuredQuery<Data> = { source: relationSource(child, options.resolveSource), filters: [], orders: child.scan?.orderBy ?? [], ...(child.scan?.limit === undefined ? {} : { limit: child.scan.limit }) };
+  let downloaded = 0;
+  let retained = 0;
+  for await (const page of scanPages(child, childQuery)) {
+    for (const record of page.records) {
+      downloaded++;
+      retained += bytes(record.data);
+      if (downloaded > (options.maxFetchedRows ?? defaults.maxFetchedRows) || retained > (options.maxRetainedBytes ?? defaults.maxRetainedBytes)) planError(childAlias, "dimension bound exceeded");
+      const index = joinKey(record.data[childRef.field], "from.joins[0].on");
+      if (index !== undefined) dimension.set(index, [...(dimension.get(index) ?? []), record]);
+    }
+    options.onProgress?.({ phase: "download", ...(child.database === undefined ? {} : { database: child.database }), rows: downloaded });
+  }
+  const rootQuery: StructuredQuery<Data> = { source: relationSource(root, options.resolveSource), filters: [], orders: root.scan?.orderBy ?? [], ...(root.scan?.limit === undefined ? {} : { limit: root.scan.limit }) };
+  let scanned = 0;
+  let processed = 0;
+  let skipped = 0;
+  let emitted = 0;
+  let output: StoredRow[] = [];
+  for await (const page of scanPages(root, rootQuery)) {
+    scanned += page.records.length;
+    if (root.scan !== undefined && scanned > root.scan.limit) planError(rootAlias, "source exceeded its scan limit");
+    downloaded += page.records.length;
+    options.onProgress?.({ phase: "download", ...(root.database === undefined ? {} : { database: root.database }), rows: downloaded });
+    for (const fact of page.records) {
+      const index = joinKey(fact.data[rootRef.field], "from.joins[0].on");
+      const matches = index === undefined ? [] : dimension.get(index) ?? [];
+      const candidates = matches.length === 0 && join.type === "left" ? [undefined] : matches;
+      for (const candidate of candidates) {
+        const row: JoinedRow = { root: fact, aliases: new Map([[rootAlias, fact], [childAlias, candidate]]) };
+        if (candidate !== undefined && !join.on.every((condition) => matchesJoin(row, condition, "from.joins[0].on"))) continue;
+        if (!effective.filters.every((filter) => matchesFilter(row, filter))) continue;
+        processed++;
+        if (skipped < (effective.offset ?? 0)) { skipped++; continue; }
+        if (effective.limit !== undefined && emitted >= effective.limit) break;
+        output.push({ key: fact.key, exists: true, data: project({ row, group: [row] }, effective, [rootAlias, childAlias]) });
+        emitted++;
+        if (output.length === 500) { yield { records: output }; output = []; }
+      }
+      if (effective.limit !== undefined && emitted >= effective.limit) break;
+    }
+    options.onProgress?.({ phase: "process", rows: processed });
+    if (effective.limit !== undefined && emitted >= effective.limit) break;
+  }
+  if (output.length !== 0) yield { records: output };
+}
+
 interface StreamAggregateState {
   count: number;
   value: unknown;

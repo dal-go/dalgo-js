@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { executeJoinedDTQLQuery, isJoinedDTQLQuery, key, parseDTQL, type DTQLSchema, type ExistingRecord, type QueryExecutor, type StructuredQuery } from "../src/index.js";
+import { executeJoinedDTQLQuery, executeJoinedDTQLQueryPages, isJoinedDTQLQuery, key, parseDTQL, type DTQLSchema, type ExistingRecord, type QueryExecutor, type StructuredQuery } from "../src/index.js";
 
 type Row = Record<string, unknown>;
 const schema: DTQLSchema = { tables: [
@@ -20,6 +20,37 @@ class TableExecutor implements QueryExecutor {
 }
 
 describe("federated country sales", () => {
+  it("streams 120,000 joined output rows as bounded pages", async () => {
+    const parsed = parseDTQL({
+      from: { database: "orders", name: "Invoice", alias: "o", joins: [{
+        from: { database: "countries", name: "Country", alias: "c" },
+        on: [{ left: { field: "country_id", source: "o" }, op: "==", right: { field: "id", source: "c" } }],
+      }] },
+      columns: [{ field: "id", source: "o", as: "invoiceId" }, { field: "name", source: "c", as: "country" }],
+    }, schema);
+    if (!isJoinedDTQLQuery(parsed)) throw new Error("expected join query");
+    let count = 0;
+    let finalProgress = 0;
+    for await (const page of executeJoinedDTQLQueryPages(parsed, {
+      scanPages: async function* (relation) {
+        await Promise.resolve();
+        if (relation.database === "countries") {
+          yield { records: [{ key: key("Country", 1), exists: true, data: { id: 1, name: "Alpha", population: 100 } }] };
+          return;
+        }
+        for (let start = 1; start <= 120_000; start += 1000) {
+          yield { records: Array.from({ length: 1000 }, (_, index) => ({ key: key("Invoice", start + index), exists: true as const, data: { id: start + index, country_id: 1, amount: 10 } })) };
+        }
+      },
+      onProgress: (item) => { if (item.phase === "process") finalProgress = item.rows; },
+    })) {
+      expect(page.records.length).toBeLessThanOrEqual(500);
+      expect(page.records[0]?.data.country).toBe("Alpha");
+      count += page.records.length;
+    }
+    expect(count).toBe(120_000);
+    expect(finalProgress).toBe(120_000);
+  });
   it("validates same-named tables against their own database schemas", () => {
     const distinctSchemas: DTQLSchema = { tables: [
       { database: "north", name: "Country", fields: ["id", "northName"] },
