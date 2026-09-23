@@ -106,6 +106,14 @@ are implemented. Hints never affect logical results or ordering. `nestedLoop`
 deliberately evaluates bounded candidate pairs and can fail with `join_plan` at
 the configured candidate limit.
 
+A saved DTQL query may set `money: {minorUnitScale: 2, divisionScale: 4,
+rounding: halfEven}` for the streaming aggregate plan. Amount inputs are
+decimal strings or safe whole integers. `SUM` uses integer minor units, and
+`SUM`, `AVG`, and per-capita division emit decimal strings. Excess fractional
+digits, unsafe numbers, and zero divisors fail explicitly. Flat joined-row
+streams accept `pageSize: 100` in `executeJoinedDTQLQueryPages` to yield a
+visible-row page before requesting more source pages; the default is 500.
+
 `@dalgo/core` currently ships no `QueryExecutor` adapter. Its in-repository
 memory executor is tested with generic unqualified scans and with the explicit
 schema mapping above. The local adapter inventory is:

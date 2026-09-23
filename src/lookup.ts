@@ -25,26 +25,43 @@ export async function executeRecordLookups<T, V>(records: readonly ExistingRecor
   let next = 0;
   let completed = 0;
   let inFlight = 0;
+  const controller = new AbortController();
+  const abort = (): void => { controller.abort(options.signal?.reason); };
+  options.signal?.addEventListener("abort", abort, { once: true });
+  if (options.signal?.aborted === true) abort();
+  let firstError: unknown;
   const report = (): void => options.onProgress?.({ rowsLoaded: records.length, requestsCompleted: completed, requestsInFlight: inFlight, requestsPending: records.length - completed - inFlight });
   report();
-  await Promise.all(Array.from({ length: Math.min(concurrency, records.length) }, async () => {
+  const workers = Array.from({ length: Math.min(concurrency, records.length) }, async () => {
     while (next < records.length) {
-      options.signal?.throwIfAborted();
+      if (controller.signal.aborted) return;
       const index = next++;
       const row = records[index];
       if (row === undefined) throw new Error("missing lookup row");
       inFlight += 1;
       report();
       try {
-        const value = await options.fetch(options.keyOf(row), options.signal);
+        const value = await options.fetch(options.keyOf(row), controller.signal);
         output[index] = { ...row, data: options.merge(row, value) };
         completed += 1;
+      } catch (error) {
+        if (firstError === undefined) {
+          firstError = error;
+          controller.abort(error);
+        }
       } finally {
         inFlight -= 1;
         report();
       }
     }
-  }));
+  });
+  try {
+    await Promise.all(workers);
+    if (firstError !== undefined) throw firstError instanceof Error ? firstError : new Error("lookup failed");
+    controller.signal.throwIfAborted();
+  } finally {
+    options.signal?.removeEventListener("abort", abort);
+  }
   return output.map((row) => {
     if (row === undefined) throw new Error("lookup result is missing");
     return row;

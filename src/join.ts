@@ -31,6 +31,10 @@ interface MaterializedRow {
 export type SelectedJoinAlgorithm = "hash" | "nestedLoop";
 
 export interface JoinedQueryExecutionOptions {
+  /** Opt in to base-10 decimal text results for streaming SUM, AVG and arithmetic. */
+  readonly money?: { readonly minorUnitScale: number; readonly divisionScale: number; readonly rounding: "halfEven" };
+  /** Output page size for the lazy flat joined-row stream (default 500). */
+  readonly pageSize?: number;
   /** Selects a secured executor for each named database. */
   readonly resolveExecutor?: (relation: QueryRelation) => QueryExecutor;
   /** Paged source transport for the streaming aggregate plan. */
@@ -55,7 +59,7 @@ export interface JoinedQueryProgress {
   readonly rows: number;
 }
 
-type ExecutionLimits = Required<Omit<JoinedQueryExecutionOptions, "schema" | "resolveSource" | "resolveExecutor" | "scanPages" | "onProgress">>;
+type ExecutionLimits = Required<Omit<JoinedQueryExecutionOptions, "schema" | "resolveSource" | "resolveExecutor" | "scanPages" | "onProgress" | "money" | "pageSize">>;
 
 const defaults: ExecutionLimits = {
   maxFetchedRows: 10_000,
@@ -78,7 +82,12 @@ export async function executeJoinedDTQLQuery(
   query: JoinedDTQLQuery,
   options: JoinedQueryExecutionOptions = {},
 ): Promise<QueryPage<Data>> {
-  if (options.scanPages !== undefined && canStreamJoinedAggregate(query)) return executeStreamingJoinedAggregateQuery(query, options);
+  const money = options.money ?? query.money;
+  if (money !== undefined) {
+    validateMoney(money);
+    if (options.scanPages === undefined || !canStreamJoinedAggregate(query)) planError("money", "exact decimals require the streaming aggregate plan");
+  }
+  if (options.scanPages !== undefined && canStreamJoinedAggregate(query)) return executeStreamingJoinedAggregateQuery(query, { ...options, ...(money === undefined ? {} : { money }) });
   const limits: ExecutionLimits = {
     maxFetchedRows: options.maxFetchedRows ?? defaults.maxFetchedRows,
     maxResultRows: options.maxResultRows ?? defaults.maxResultRows,
@@ -657,6 +666,70 @@ function finiteNumber(value: unknown, context: string): number {
   return value;
 }
 
+interface Decimal { coefficient: bigint; scale: number }
+const decimalPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+function validateMoney(config: NonNullable<JoinedQueryExecutionOptions["money"]>): void {
+  const rounding: unknown = config.rounding;
+  if (!Number.isInteger(config.minorUnitScale) || config.minorUnitScale < 0 || config.minorUnitScale > 18 || !Number.isInteger(config.divisionScale) || config.divisionScale < 0 || config.divisionScale > 18 || rounding !== "halfEven") {
+    planError("money", "minorUnitScale and divisionScale must be 0..18; rounding must be halfEven");
+  }
+}
+
+function decimalInput(value: unknown): string {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+  if (typeof value === "string" && decimalPattern.test(value)) return value;
+  planError("money", "decimal input must be a base-10 string or safe integer");
+}
+
+function parseDecimal(value: string): Decimal {
+  if (!decimalPattern.test(value)) planError("money", "invalid decimal input");
+  const negative = value.startsWith("-");
+  const unsigned = negative ? value.slice(1) : value;
+  const [whole = "0", fraction = ""] = unsigned.split(".");
+  return { coefficient: BigInt(`${negative ? "-" : ""}${whole}${fraction}`), scale: fraction.length };
+}
+
+function formatDecimal(value: Decimal): string {
+  const negative = value.coefficient < 0n;
+  let digits = (negative ? -value.coefficient : value.coefficient).toString();
+  if (value.scale > 0) digits = digits.padStart(value.scale + 1, "0");
+  const split = value.scale === 0 ? digits : `${digits.slice(0, -value.scale)}.${digits.slice(-value.scale)}`.replace(/\.?0+$/, "");
+  return `${negative && value.coefficient !== 0n ? "-" : ""}${split}`;
+}
+
+function moneyMinor(value: unknown, scale: number): bigint {
+  const parsed = parseDecimal(decimalInput(value));
+  if (parsed.scale > scale) planError("money", "amount exceeds minorUnitScale");
+  return parsed.coefficient * 10n ** BigInt(scale - parsed.scale);
+}
+
+function moneyMinorText(value: bigint, scale: number): string {
+  return formatDecimal({ coefficient: value, scale });
+}
+
+function decimalDivide(left: string, right: string, scale: number): string {
+  const a = parseDecimal(left);
+  const b = parseDecimal(right);
+  if (b.coefficient === 0n) planError("money", "division by zero");
+  const numerator = a.coefficient * 10n ** BigInt(b.scale + scale);
+  const denominator = b.coefficient * 10n ** BigInt(a.scale);
+  let quotient = numerator / denominator;
+  const remainder = numerator % denominator;
+  const doubled = (remainder < 0n ? -remainder : remainder) * 2n;
+  const divisor = denominator < 0n ? -denominator : denominator;
+  if (doubled > divisor || (doubled === divisor && quotient % 2n !== 0n)) quotient += (numerator < 0n) === (denominator < 0n) ? 1n : -1n;
+  return formatDecimal({ coefficient: quotient, scale });
+}
+
+function decimalBinary(operator: "+" | "-" | "*" | "/", left: unknown, right: unknown, scale: number): string | null {
+  if (left === null || left === undefined || right === null || right === undefined) return null;
+  if (operator !== "/") planError("money", "money arithmetic supports per-capita division only");
+  const a = decimalInput(left);
+  const b = decimalInput(right);
+  return decimalDivide(a, b, scale);
+}
+
 function unique(values: readonly unknown[]): unknown[] {
   const seen = new Set<string>();
   return values.filter((value) => {
@@ -735,6 +808,7 @@ export async function* executeJoinedDTQLQueryPages(
   query: JoinedDTQLQuery,
   options: JoinedQueryExecutionOptions,
 ): AsyncIterable<QueryPage<Data>> {
+  if (options.pageSize !== undefined && (!Number.isSafeInteger(options.pageSize) || options.pageSize < 1 || options.pageSize > 1000)) planError("pageSize", "pageSize must be 1..1000");
   const scanPages = options.scanPages;
   if (scanPages === undefined) planError("from", "paged source transport is required");
   validateRelationShape(query.from, new WeakSet(), "from");
@@ -799,7 +873,7 @@ export async function* executeJoinedDTQLQueryPages(
         if (effective.limit !== undefined && emitted >= effective.limit) break;
         output.push({ key: fact.key, exists: true, data: project({ row, group: [row] }, effective, [rootAlias, childAlias]) });
         emitted++;
-        if (output.length === 500) { yield { records: output }; output = []; }
+        if (output.length === (options.pageSize ?? 500)) { yield { records: output }; output = []; }
       }
       if (effective.limit !== undefined && emitted >= effective.limit) break;
     }
@@ -898,16 +972,16 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
           group = { first: row, aggregates: new Map() };
           groups.set(groupKey, group);
         }
-        for (const [signature, aggregateExpression] of aggregateExpressions) updateStreamAggregate(group, signature, aggregateExpression, row);
+        for (const [signature, aggregateExpression] of aggregateExpressions) updateStreamAggregate(group, signature, aggregateExpression, row, options.money);
         processed += 1;
       }
     }
     options.onProgress?.({ phase: "process", rows: processed });
   }
-  const projected = [...groups.values()].filter((group) => effective.having === undefined || streamHaving(group, effective.having)).map((group) => ({
+  const projected = [...groups.values()].filter((group) => effective.having === undefined || streamHaving(group, effective.having, options.money)).map((group) => ({
     key: group.first.root.key,
     exists: true as const,
-    data: streamProject(group, effective, [rootAlias, childAlias]),
+    data: streamProject(group, effective, [rootAlias, childAlias], options.money),
   }));
   const start = effective.offset ?? 0;
   const ordered = effective.orders.length === 0 ? projected : projected.sort((left, right) => {
@@ -920,7 +994,7 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
   return { records: ordered.slice(start, effective.limit === undefined ? undefined : start + effective.limit) };
 }
 
-function updateStreamAggregate(group: StreamGroup, signature: string, expression: Extract<DTQLExpression, { readonly kind: "aggregate" }>, row: JoinedRow): void {
+function updateStreamAggregate(group: StreamGroup, signature: string, expression: Extract<DTQLExpression, { readonly kind: "aggregate" }>, row: JoinedRow, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): void {
   const argument = expression.args[0];
   if (argument === undefined) planError("aggregate", "aggregate requires an argument");
   const value = argument.kind === "star" ? 1 : expressionValue(row, [row], argument);
@@ -929,7 +1003,7 @@ function updateStreamAggregate(group: StreamGroup, signature: string, expression
   state.count += 1;
   switch (expression.function) {
     case "count": state.value = state.count; break;
-    case "sum": case "avg": state.value = (state.value === null ? 0 : finiteNumber(state.value, "aggregate")) + finiteNumber(value, "aggregate"); break;
+    case "sum": case "avg": state.value = exact === undefined ? (state.value === null ? 0 : finiteNumber(state.value, "aggregate")) + finiteNumber(value, "aggregate") : (state.value === null ? 0n : state.value as bigint) + moneyMinor(value, exact.minorUnitScale); break;
     case "min": if (state.value === null || compare(value, state.value) < 0) state.value = value; break;
     case "max": if (state.value === null || compare(value, state.value) > 0) state.value = value; break;
     case "first": if (state.count === 1) state.value = value; break;
@@ -938,21 +1012,25 @@ function updateStreamAggregate(group: StreamGroup, signature: string, expression
   group.aggregates.set(signature, state);
 }
 
-function streamExpression(group: StreamGroup, expression: DTQLExpression): unknown {
+function streamExpression(group: StreamGroup, expression: DTQLExpression, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): unknown {
   if (expression.kind === "aggregate") {
     const state = group.aggregates.get(JSON.stringify(expression));
     if (expression.function === "count") return state?.count ?? 0;
-    if (expression.function === "sum") return state?.value ?? 0;
-    if (expression.function === "avg") return state === undefined || state.count === 0 ? null : finiteNumber(state.value, "avg") / state.count;
+    if (expression.function === "sum") return exact === undefined ? state?.value ?? 0 : state === undefined ? null : moneyMinorText(state.value as bigint, exact.minorUnitScale);
+    if (expression.function === "avg") return state === undefined || state.count === 0 ? null : exact === undefined ? finiteNumber(state.value, "avg") / state.count : decimalDivide(moneyMinorText(state.value as bigint, exact.minorUnitScale), String(state.count), exact.divisionScale);
     return state?.value ?? null;
   }
-  if (expression.kind === "binary") return binary(expression.operator, streamExpression(group, expression.left), streamExpression(group, expression.right));
+  if (expression.kind === "binary") {
+    const left = streamExpression(group, expression.left, exact);
+    const right = streamExpression(group, expression.right, exact);
+    return exact === undefined ? binary(expression.operator, left, right) : decimalBinary(expression.operator, left, right, exact.divisionScale);
+  }
   return expressionValue(group.first, [group.first], expression);
 }
 
-function streamHaving(group: StreamGroup, having: NonNullable<JoinedDTQLQuery["having"]>): boolean {
-  const left = streamExpression(group, having.left);
-  const right = streamExpression(group, having.right);
+function streamHaving(group: StreamGroup, having: NonNullable<JoinedDTQLQuery["having"]>, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): boolean {
+  const left = streamExpression(group, having.left, exact);
+  const right = streamExpression(group, having.right, exact);
   switch (having.operator) {
     case "==": return equal(left, right);
     case "!=": return !equal(left, right);
@@ -964,12 +1042,12 @@ function streamHaving(group: StreamGroup, having: NonNullable<JoinedDTQLQuery["h
   }
 }
 
-function streamProject(group: StreamGroup, query: JoinedDTQLQuery, aliases: readonly string[]): Data {
+function streamProject(group: StreamGroup, query: JoinedDTQLQuery, aliases: readonly string[], exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): Data {
   if (query.columns === undefined) return project({ row: group.first, group: [group.first] }, query, aliases);
   const data: Data = {};
   for (const column of query.columns) {
     if (column.expression === undefined) planError("columns", "column expression is required");
-    data[columnOutput(column, "columns")] = streamExpression(group, column.expression) ?? null;
+    data[columnOutput(column, "columns")] = streamExpression(group, column.expression, exact) ?? null;
   }
   return data;
 }

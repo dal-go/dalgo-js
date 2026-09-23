@@ -156,6 +156,7 @@ export interface StructuredQuery<T> {
  */
 export interface JoinedDTQLQuery {
   readonly kind: "joined-dtql";
+  readonly money?: { readonly minorUnitScale: number; readonly divisionScale: number; readonly rounding: "halfEven" };
   readonly from: QueryRelation;
   readonly filters: readonly DTQLQueryFilter[];
   readonly orders: readonly DTQLQueryOrder[];

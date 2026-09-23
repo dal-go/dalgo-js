@@ -32,7 +32,7 @@ export interface DTQLSchema {
 type ObjectValue = Record<string, unknown>;
 
 const defaultMaxLimit = 1000;
-const rootKeys = new Set(["from", "where", "orderBy", "limit", "offset", "columns", "groupBy", "having"]);
+const rootKeys = new Set(["from", "where", "orderBy", "limit", "offset", "columns", "groupBy", "having", "money"]);
 const fromKeys = new Set(["database", "schema", "name", "alias", "as", "scan", "joins"]);
 const joinKeys = new Set(["type", "from", "on", "hints"]);
 const hintKeys = new Set(["algorithms"]);
@@ -77,6 +77,8 @@ export function parseDTQL(
   const offset = document.offset === undefined ? undefined : parseOffset(document.offset);
   const groupBy = document.groupBy === undefined ? undefined : parseGroupBy(document.groupBy, aliases, schema);
   const having = document.having === undefined ? undefined : parseHaving(document.having, aliases, schema);
+  const money = document.money === undefined ? undefined : parseMoney(document.money);
+  if (money !== undefined && !hasRelationModel) fail("money requires an aliased or joined relation model");
   if (columns !== undefined && !hasRelationModel) fail("columns require an aliased or joined relation model");
   if ((groupBy !== undefined || having !== undefined) && !hasRelationModel) fail("groupBy and having require an aliased or joined relation model");
   if (limit === undefined && !hasRelationModel) fail("limit must be a positive safe integer");
@@ -99,6 +101,7 @@ export function parseDTQL(
       ...(offset === undefined ? {} : { offset }),
       ...(groupBy === undefined ? {} : { groupBy }),
       ...(having === undefined ? {} : { having }),
+      ...(money === undefined ? {} : { money }),
     };
   }
   return query as StructuredQuery<Record<string, unknown>>;
@@ -116,7 +119,17 @@ export function serializeJoinedDTQL(query: JoinedDTQLQuery): ObjectValue {
     ...(query.columns === undefined ? {} : { columns: query.columns.map(serializeColumn) }),
     ...(query.groupBy === undefined ? {} : { groupBy: query.groupBy.map(serializeExpression) }),
     ...(query.having === undefined ? {} : { having: { left: serializeExpression(query.having.left), op: query.having.operator, right: serializeExpression(query.having.right) } }),
+    ...(query.money === undefined ? {} : { money: query.money }),
   };
+}
+
+function parseMoney(value: unknown): { readonly minorUnitScale: number; readonly divisionScale: number; readonly rounding: "halfEven" } {
+  const config = object(value, "money");
+  assertOnlyKeys(config, new Set(["minorUnitScale", "divisionScale", "rounding"]), "money");
+  if (!Number.isInteger(config.minorUnitScale) || (config.minorUnitScale as number) < 0 || (config.minorUnitScale as number) > 18 || !Number.isInteger(config.divisionScale) || (config.divisionScale as number) < 0 || (config.divisionScale as number) > 18 || config.rounding !== "halfEven") {
+    fail("money requires minorUnitScale and divisionScale 0..18 and rounding halfEven");
+  }
+  return { minorUnitScale: config.minorUnitScale as number, divisionScale: config.divisionScale as number, rounding: "halfEven" };
 }
 
 /** Serializes a joined query to canonical YAML. JSON callers can stringify the object form. */

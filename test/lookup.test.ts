@@ -51,4 +51,27 @@ describe("per-row lookup", () => {
     expect(progress[0]).toEqual({ rowsLoaded: 100, requestsCompleted: 0, requestsInFlight: 0, requestsPending: 100 });
     expect(progress.at(-1)).toEqual({ rowsLoaded: 100, requestsCompleted: 100, requestsInFlight: 0, requestsPending: 0 });
   });
+  it("aborts sibling requests and stops dispatch after the first lookup failure", async () => {
+    const rows = Array.from({ length: 20 }, (_, index) => ({ key: key("Invoice", index), exists: true as const, data: { id: index } }));
+    const failure = new Error("lookup failed");
+    const started: number[] = [];
+    let siblingAborted = false;
+    await expect(executeRecordLookups(rows, {
+      concurrency: 2,
+      keyOf: (row) => row.data.id,
+      fetch: (id, signal) => {
+        started.push(Number(id));
+        if (id === 0) return Promise.reject(failure);
+        return new Promise<number>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            siblingAborted = true;
+            reject(signal.reason instanceof Error ? signal.reason : new Error("lookup aborted"));
+          }, { once: true });
+        });
+      },
+      merge: (row) => row.data,
+    })).rejects.toBe(failure);
+    expect(siblingAborted).toBe(true);
+    expect(started).toEqual([0, 1]);
+  });
 });
