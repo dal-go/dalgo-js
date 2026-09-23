@@ -43,6 +43,38 @@ describe("parseDTQL", () => {
     expect(() => parseDTQL({ from: { name: "Customer" }, where: { op: "==", left: { field: "City" }, right: { value: ["Prague"] } }, limit: 1 }, schema)).toThrow("portable scalar");
   });
 
+  it("parses NotIn values, including an empty list and NULL", () => {
+    expect(parseDTQL({ from: { name: "Customer" }, where: { op: "NotIn", left: { field: "City" }, right: { values: ["Prague", null] } }, limit: 1 }, schema).filters)
+      .toEqual([{ field: "City", operator: "not-in", value: ["Prague", null] }]);
+    expect(parseDTQL({ from: { name: "Customer" }, where: { op: "NotIn", left: { field: "City" }, right: { values: [] } }, limit: 1 }, schema).filters)
+      .toEqual([{ field: "City", operator: "not-in", value: [] }]);
+    expect(() => parseDTQL({ from: { name: "Customer" }, where: { op: "NotIn", left: { field: "City" }, right: { value: "Prague" } }, limit: 1 }, schema)).toThrow("unsupported where.right key");
+    expect(() => parseDTQL({
+      from: { name: "A", alias: "a" },
+      groupBy: [{ field: "id", source: "a" }],
+      having: { op: "NotIn", left: { value: 1 }, right: { value: 2 } },
+      limit: 1,
+    }, schema)).toThrow("unsupported having operator NotIn");
+  });
+
+  it("round-trips joined NotIn filters with the canonical values shape", () => {
+    const query = parseDTQL({
+      from: { name: "A", alias: "a" },
+      where: { op: "NotIn", left: { field: "id", source: "a" }, right: { values: [] } },
+      limit: 1,
+    }, schema);
+    expect(isJoinedDTQLQuery(query)).toBe(true);
+    if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+
+    const serialized = serializeJoinedDTQL(query);
+    expect(serialized.where).toEqual({
+      op: "NotIn",
+      left: { field: "id", source: "a" },
+      right: { values: [] },
+    });
+    expect(parseDTQL(JSON.stringify(serialized), schema)).toEqual(query);
+  });
+
   it("rejects unbounded and unsupported DTQL before execution", () => {
     expect(() => parseDTQL({ from: { name: "Customer" } }, schema)).toThrow("limit");
     expect(() => parseDTQL({ from: { name: "Invoice" }, limit: 1 }, schema)).toThrow("ambiguous table");

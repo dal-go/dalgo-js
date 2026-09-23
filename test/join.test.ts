@@ -42,6 +42,30 @@ function schemaSource(relation: { readonly name: string; readonly schema?: strin
 }
 
 describe("executeJoinedDTQLQuery", () => {
+  it("evaluates NotIn with SQL empty-set and NULL semantics", async () => {
+    const rows = [
+      record("A", "a1", { id: 10 }),
+      record("A", "a2", { id: null }),
+      record("A", "a3", { id: 30 }),
+    ];
+    const query = (values: readonly unknown[]) => joined({
+      from: { name: "A", alias: "a" },
+      where: { op: "NotIn", left: { field: "id", source: "a" }, right: { values } },
+      columns: [{ field: "id", source: "a", as: "id" }],
+      limit: 10,
+    });
+
+    const executor = new MemoryExecutor({ A: rows });
+    const excludingValues = await executeJoinedDTQLQuery(executor, query([10, 20]));
+    expect(excludingValues.records.map((row) => row.data.id)).toEqual([30]);
+
+    const excludingNothing = await executeJoinedDTQLQuery(executor, query([]));
+    expect(excludingNothing.records.map((row) => row.data.id)).toEqual([10, null, 30]);
+
+    const containingNull = await executeJoinedDTQLQuery(executor, query([10, null]));
+    expect(containingNull.records).toEqual([]);
+  });
+
   it("selects executable algorithm preferences in order", () => {
     expect(selectJoinAlgorithm(["nestedLoop", "hash"], true)).toBe("nestedLoop");
     expect(selectJoinAlgorithm(["hash", "nestedLoop"], true)).toBe("hash");

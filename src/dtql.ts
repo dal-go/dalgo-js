@@ -46,7 +46,7 @@ const orderKeys = new Set(["field", "source", "desc"]);
 const columnKeys = new Set(["field", "source", "as", "wildcard", "aggregate", "distinct"]);
 const aggregateNames = new Set(["count", "sum", "avg", "min", "max", "first", "last"]);
 const aggregateKeys = new Set(["function", "distinct", "args"]);
-const operators = new Set(["==", "!=", "<", "<=", ">", ">=", "In"]);
+const operators = new Set(["==", "!=", "<", "<=", ">", ">=", "In", "NotIn"]);
 
 /**
  * Parses schema-validated DTQL into either the legacy single-source model or a
@@ -140,10 +140,11 @@ function serializeRelation(relation: QueryRelation): ObjectValue {
 }
 
 function serializeFilter(filter: DTQLQueryFilter): ObjectValue {
+  const isMembership = filter.operator === "in" || filter.operator === "not-in";
   return {
-    op: filter.operator === "in" ? "In" : filter.operator,
+    op: filter.operator === "in" ? "In" : filter.operator === "not-in" ? "NotIn" : filter.operator,
     left: { field: filter.field.field, source: filter.field.source },
-    right: filter.operator === "in" ? { values: filter.value } : { value: filter.value },
+    right: isMembership ? { values: filter.value } : { value: filter.value },
   };
 }
 
@@ -356,14 +357,16 @@ function parseWhere(
   if (!operators.has(operator)) fail(`unsupported where operator ${operator}`);
   const field = parseScopedField(requiredObject(where, "left"), fields, aliases, joined, "where.left", schema);
   const right = requiredObject(where, "right");
-  if (operator === "In") {
+  if (operator === "In" || operator === "NotIn") {
     assertOnlyKeys(right, valuesKeys, "where.right");
-    if (!Array.isArray(right.values) || right.values.length === 0 || !right.values.every(isPortableScalar)) {
-      fail("where In values must be a non-empty array of portable scalars");
+    if (!Array.isArray(right.values) || (operator === "In" && right.values.length === 0) || !right.values.every(isPortableScalar)) {
+      fail(operator === "In"
+        ? "where In values must be a non-empty array of portable scalars"
+        : "where NotIn values must be an array of portable scalars");
     }
     return typeof field === "string"
-      ? { field, operator: "in", value: right.values }
-      : { field, operator: "in", value: right.values };
+      ? { field, operator: toQueryOperator(operator), value: right.values }
+      : { field, operator: toQueryOperator(operator), value: right.values };
   }
   assertOnlyKeys(right, valueKeys, "where.right");
   if (!("value" in right) || !isPortableScalar(right.value)) fail("where.right.value must be a portable scalar");
@@ -381,6 +384,7 @@ function isPortableScalar(value: unknown): value is string | number | boolean | 
 function toQueryOperator(operator: string): QueryOperator {
   switch (operator) {
     case "In": return "in";
+    case "NotIn": return "not-in";
     case "==":
     case "!=":
     case "<":
@@ -494,7 +498,7 @@ function parseHaving(value: unknown, aliases: ReadonlyMap<string, QueryRelation>
   const having = object(value, "having");
   assertOnlyKeys(having, whereKeys, "having");
   const operator = requiredString(having, "op");
-  if (!operators.has(operator) || operator === "In") fail(`unsupported having operator ${operator}`);
+  if (!operators.has(operator) || operator === "In" || operator === "NotIn") fail(`unsupported having operator ${operator}`);
   return {
     left: parseHavingExpression(requiredObject(having, "left"), "having.left", aliases, schema),
     operator: toQueryOperator(operator),
