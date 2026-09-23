@@ -465,6 +465,12 @@ function matchesFilter(row: JoinedRow, filter: DTQLQueryFilter): boolean {
     case ">": return compare(left, right) > 0;
     case ">=": return compare(left, right) >= 0;
     case "in": return Array.isArray(right) && right.some((value) => equal(left, value));
+    case "not-in": {
+      if (!Array.isArray(right)) planError("where", "NotIn requires an array of values");
+      if (right.length === 0) return true;
+      if (left === null || left === undefined || right.some((value) => value === null || value === undefined)) return false;
+      return !right.some((value) => equal(left, value));
+    }
     default: planError("where", `unsupported filter ${filter.operator}`);
   }
 }
