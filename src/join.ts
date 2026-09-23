@@ -31,6 +31,11 @@ interface MaterializedRow {
 export type SelectedJoinAlgorithm = "hash" | "nestedLoop";
 
 export interface JoinedQueryExecutionOptions {
+  /** Selects a secured executor for each named database. */
+  readonly resolveExecutor?: (relation: QueryRelation) => QueryExecutor;
+  /** Paged source transport for the streaming aggregate plan. */
+  readonly scanPages?: (relation: QueryRelation, query: StructuredQuery<Data>) => AsyncIterable<QueryPage<Data>>;
+  readonly onProgress?: (progress: JoinedQueryProgress) => void;
   readonly maxFetchedRows?: number;
   readonly maxResultRows?: number;
   readonly maxCandidateEvaluations?: number;
@@ -44,7 +49,13 @@ export interface JoinedQueryExecutionOptions {
   readonly resolveSource?: (relation: QueryRelation) => StructuredQuery<Data>["source"];
 }
 
-type ExecutionLimits = Required<Omit<JoinedQueryExecutionOptions, "schema" | "resolveSource">>;
+export interface JoinedQueryProgress {
+  readonly phase: "download" | "process";
+  readonly database?: string;
+  readonly rows: number;
+}
+
+type ExecutionLimits = Required<Omit<JoinedQueryExecutionOptions, "schema" | "resolveSource" | "resolveExecutor" | "scanPages" | "onProgress">>;
 
 const defaults: ExecutionLimits = {
   maxFetchedRows: 10_000,
@@ -67,6 +78,7 @@ export async function executeJoinedDTQLQuery(
   query: JoinedDTQLQuery,
   options: JoinedQueryExecutionOptions = {},
 ): Promise<QueryPage<Data>> {
+  if (options.scanPages !== undefined && canStreamJoinedAggregate(query)) return executeStreamingJoinedAggregateQuery(query, options);
   const limits: ExecutionLimits = {
     maxFetchedRows: options.maxFetchedRows ?? defaults.maxFetchedRows,
     maxResultRows: options.maxResultRows ?? defaults.maxResultRows,
@@ -83,10 +95,11 @@ export async function executeJoinedDTQLQuery(
   const effectiveQuery = { ...query, ...(query.columns === undefined ? {} : { columns: expandColumns(query.columns, aliases, options.schema) }) };
   validateClauseSources(effectiveQuery, aliases);
   const keyReferences = collectKeyReferences(from, aliases);
-  const cached = await scanRelations(executor, nodes, keyReferences, limits, options.resolveSource);
+  const cached = await scanRelations(executor, nodes, keyReferences, limits, options.resolveSource, options.resolveExecutor, options.onProgress);
   const relationAliases = aliasesFor(from);
   let rows = await evaluateRelation(from, new Map(), cached, limits, { candidates: 0 }, undefined, "from");
   rows = rows.filter((row) => effectiveQuery.filters.every((filter) => matchesFilter(row, filter)));
+  options.onProgress?.({ phase: "process", rows: rows.length });
 
   const materialized = materialize(rows, effectiveQuery, limits);
   const ordered = stableOrder(materialized, effectiveQuery);
@@ -233,7 +246,9 @@ function expandColumns(
     if (source === undefined) planError(`columns[${index.toString()}].wildcard.source`, "joined wildcard must name a source");
     const relation = aliases.get(source);
     if (relation === undefined) planError(`columns[${index.toString()}].wildcard.source`, `unknown alias ${source}`);
-    const tables = schema?.tables.filter((table) => table.name === relation.name && (relation.schema === undefined || table.schema === relation.schema));
+    const tables = schema?.tables.filter((table) => table.name === relation.name &&
+      (relation.schema === undefined || table.schema === relation.schema) &&
+      (relation.database === undefined || table.database === undefined || table.database === relation.database));
     if (tables?.length !== 1) planError(`columns[${index.toString()}].wildcard`, "wildcard expansion requires ordered schema metadata");
     const table = tables[0];
     if (table === undefined) planError(`columns[${index.toString()}].wildcard`, "wildcard expansion requires ordered schema metadata");
@@ -283,6 +298,8 @@ async function scanRelations(
   keyReferences: ReadonlyMap<QueryRelation, readonly { readonly field: string; readonly path: string }[]>,
   limits: ExecutionLimits,
   resolveSource: JoinedQueryExecutionOptions["resolveSource"],
+  resolveExecutor: JoinedQueryExecutionOptions["resolveExecutor"],
+  onProgress: JoinedQueryExecutionOptions["onProgress"],
 ): Promise<ReadonlyMap<QueryRelation, readonly StoredRow[]>> {
   const result = new Map<QueryRelation, readonly StoredRow[]>();
   let fetched = 0;
@@ -291,11 +308,12 @@ async function scanRelations(
     const source: StructuredQuery<Data> = {
       source: relationSource(relation, resolveSource),
       filters: [],
-      orders: [],
-      limit: limits.maxFetchedRows + 1,
+      orders: relation.scan?.orderBy ?? [],
+      limit: relation.scan?.limit ?? limits.maxFetchedRows + 1,
     };
-    const page = await executor.query(source);
-    if (page.nextCursor !== undefined) planError(aliasOf(relation), "relation scan is paginated");
+    if (relation.database !== undefined && resolveExecutor === undefined) planError(aliasOf(relation), "database-qualified relation requires resolveExecutor");
+    const page = await (resolveExecutor?.(relation) ?? executor).query(source);
+    if (page.nextCursor !== undefined && relation.scan === undefined) planError(aliasOf(relation), "relation scan is paginated");
     const records = page.records;
     fetched += records.length;
     retained += records.reduce((total, record) => total + bytes(record.data), 0);
@@ -303,6 +321,7 @@ async function scanRelations(
     if (fetched > limits.maxFetchedRows) planError(aliasOf(relation), "fetched-row bound exceeded");
     if (retained > limits.maxRetainedBytes) planError(aliasOf(relation), "retained-byte bound exceeded");
     result.set(relation, records);
+    onProgress?.({ phase: "download", ...(relation.database === undefined ? {} : { database: relation.database }), rows: fetched });
   }
   return result;
 }
@@ -702,4 +721,175 @@ function cycleError(path: string): never {
 
 function planError(path: string, reason: string): never {
   throw new TypeError(`join_plan at ${path}: ${reason}`);
+}
+
+function canStreamJoinedAggregate(query: JoinedDTQLQuery): boolean {
+  return query.from.joins.length === 1 && query.from.joins[0]?.from.joins.length === 0 &&
+    selectJoinAlgorithm(query.from.joins[0].hints?.algorithms, true) === "hash" &&
+    (query.groupBy !== undefined || (query.columns ?? []).some((column) => column.expression !== undefined && containsAggregate(column.expression)));
+}
+
+interface StreamAggregateState {
+  count: number;
+  value: unknown;
+}
+
+interface StreamGroup {
+  first: JoinedRow;
+  aggregates: Map<string, StreamAggregateState>;
+}
+
+/** Streams a large fact relation through one indexed dimension and keeps only groups. */
+async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, options: JoinedQueryExecutionOptions): Promise<QueryPage<Data>> {
+  const scanPages = options.scanPages;
+  if (scanPages === undefined) planError("from", "paged source transport is required");
+  validateRelationShape(query.from, new WeakSet(), "from");
+  validateLimits({
+    maxFetchedRows: options.maxFetchedRows ?? defaults.maxFetchedRows,
+    maxResultRows: options.maxResultRows ?? defaults.maxResultRows,
+    maxCandidateEvaluations: options.maxCandidateEvaluations ?? defaults.maxCandidateEvaluations,
+    maxRetainedBytes: options.maxRetainedBytes ?? defaults.maxRetainedBytes,
+  });
+  const aliases = new Map<string, QueryRelation>();
+  collectRelations(query.from, aliases, [], new WeakSet(), "from");
+  validateExecutionScopes(query.from, new Set(), "from");
+  collectKeyReferences(query.from, aliases);
+  const join = query.from.joins[0];
+  if (join?.from.joins.length !== 0) planError("from", "streaming aggregation requires one flat join");
+  const root = query.from;
+  const child = join.from;
+  const rootAlias = aliasOf(root);
+  const childAlias = aliasOf(child);
+  const predicate = crossSidePredicate(join, new Set([childAlias]));
+  if (predicate === undefined) planError("from.joins[0].on", "streaming aggregation requires a cross-source equality");
+  const childRef = predicate.left.source === childAlias ? predicate.left : predicate.right;
+  const rootRef = predicate.left.source === rootAlias ? predicate.left : predicate.right;
+  if (rootRef.source !== rootAlias || childRef.source !== childAlias) planError("from.joins[0].on", "streaming aggregation requires root and child aliases");
+  const columns = query.columns === undefined ? undefined : expandColumns(query.columns, aliases, options.schema);
+  const effective = { ...query, ...(columns === undefined ? {} : { columns }) };
+  validateClauseSources(effective, aliases);
+  const aggregateExpressions = new Map<string, Extract<DTQLExpression, { readonly kind: "aggregate" }>>();
+  const collect = (value: DTQLExpression): void => {
+    if (value.kind === "aggregate") {
+      if (value.distinct) planError("columns", "streaming DISTINCT aggregate is not supported");
+      aggregateExpressions.set(JSON.stringify(value), value);
+    } else if (value.kind === "binary") { collect(value.left); collect(value.right); }
+  };
+  effective.columns?.forEach((column) => { if (column.expression !== undefined) collect(column.expression); });
+  if (effective.having !== undefined) { collect(effective.having.left); collect(effective.having.right); }
+  const dimension = new Map<string, StoredRow[]>();
+  const childQuery: StructuredQuery<Data> = { source: relationSource(child, options.resolveSource), filters: [], orders: child.scan?.orderBy ?? [], ...(child.scan?.limit === undefined ? {} : { limit: child.scan.limit }) };
+  let downloaded = 0;
+  let dimensionBytes = 0;
+  for await (const page of scanPages(child, childQuery)) {
+    for (const record of page.records) {
+      downloaded += 1;
+      dimensionBytes += bytes(record.data);
+      if (downloaded > (options.maxFetchedRows ?? defaults.maxFetchedRows) || dimensionBytes > (options.maxRetainedBytes ?? defaults.maxRetainedBytes)) planError(childAlias, "dimension bound exceeded");
+      const key = joinKey(record.data[childRef.field], "from.joins[0].on");
+      if (key !== undefined) dimension.set(key, [...(dimension.get(key) ?? []), record]);
+    }
+    options.onProgress?.({ phase: "download", ...(child.database === undefined ? {} : { database: child.database }), rows: downloaded });
+  }
+  const groups = new Map<string, StreamGroup>();
+  let groupBytes = 0;
+  const rootQuery: StructuredQuery<Data> = { source: relationSource(root, options.resolveSource), filters: [], orders: root.scan?.orderBy ?? [], ...(root.scan?.limit === undefined ? {} : { limit: root.scan.limit }) };
+  let processed = 0;
+  let factRows = 0;
+  for await (const page of scanPages(root, rootQuery)) {
+    factRows += page.records.length;
+    if (root.scan !== undefined && factRows > root.scan.limit) planError(rootAlias, "source exceeded its scan limit");
+    downloaded += page.records.length;
+    options.onProgress?.({ phase: "download", ...(root.database === undefined ? {} : { database: root.database }), rows: downloaded });
+    for (const fact of page.records) {
+      const key = joinKey(fact.data[rootRef.field], "from.joins[0].on");
+      const matches = key === undefined ? [] : dimension.get(key) ?? [];
+      const candidates = matches.length === 0 && join.type === "left" ? [undefined] : matches;
+      for (const candidate of candidates) {
+        const row: JoinedRow = { root: fact, aliases: new Map([[rootAlias, fact], [childAlias, candidate]]) };
+        if (candidate !== undefined && !join.on.every((condition) => matchesJoin(row, condition, "from.joins[0].on"))) continue;
+        if (!effective.filters.every((filter) => matchesFilter(row, filter))) continue;
+        const groupKey = effective.groupBy === undefined ? "all" : expressionKey(effective.groupBy.map((expression) => expressionValue(row, [row], expression)));
+        let group = groups.get(groupKey);
+        if (group === undefined) {
+          if (groups.size >= (options.maxResultRows ?? defaults.maxResultRows)) planError("groupBy", "group bound exceeded");
+          groupBytes += 128 + bytes([groupKey, [...row.aliases.values()].map((record) => record?.data)]);
+          if (groupBytes + dimensionBytes > (options.maxRetainedBytes ?? defaults.maxRetainedBytes)) planError("groupBy", "retained-byte bound exceeded");
+          group = { first: row, aggregates: new Map() };
+          groups.set(groupKey, group);
+        }
+        for (const [signature, aggregateExpression] of aggregateExpressions) updateStreamAggregate(group, signature, aggregateExpression, row);
+        processed += 1;
+      }
+    }
+    options.onProgress?.({ phase: "process", rows: processed });
+  }
+  const projected = [...groups.values()].filter((group) => effective.having === undefined || streamHaving(group, effective.having)).map((group) => ({
+    key: group.first.root.key,
+    exists: true as const,
+    data: streamProject(group, effective, [rootAlias, childAlias]),
+  }));
+  const start = effective.offset ?? 0;
+  const ordered = effective.orders.length === 0 ? projected : projected.sort((left, right) => {
+    for (const order of effective.orders) {
+      const cmp = compare(left.data[order.field.field], right.data[order.field.field]);
+      if (cmp !== 0) return order.direction === "desc" ? -cmp : cmp;
+    }
+    return 0;
+  });
+  return { records: ordered.slice(start, effective.limit === undefined ? undefined : start + effective.limit) };
+}
+
+function updateStreamAggregate(group: StreamGroup, signature: string, expression: Extract<DTQLExpression, { readonly kind: "aggregate" }>, row: JoinedRow): void {
+  const argument = expression.args[0];
+  if (argument === undefined) planError("aggregate", "aggregate requires an argument");
+  const value = argument.kind === "star" ? 1 : expressionValue(row, [row], argument);
+  if (value === null || value === undefined) return;
+  const state = group.aggregates.get(signature) ?? { count: 0, value: null };
+  state.count += 1;
+  switch (expression.function) {
+    case "count": state.value = state.count; break;
+    case "sum": case "avg": state.value = (state.value === null ? 0 : finiteNumber(state.value, "aggregate")) + finiteNumber(value, "aggregate"); break;
+    case "min": if (state.value === null || compare(value, state.value) < 0) state.value = value; break;
+    case "max": if (state.value === null || compare(value, state.value) > 0) state.value = value; break;
+    case "first": if (state.count === 1) state.value = value; break;
+    case "last": state.value = value; break;
+  }
+  group.aggregates.set(signature, state);
+}
+
+function streamExpression(group: StreamGroup, expression: DTQLExpression): unknown {
+  if (expression.kind === "aggregate") {
+    const state = group.aggregates.get(JSON.stringify(expression));
+    if (expression.function === "count") return state?.count ?? 0;
+    if (expression.function === "sum") return state?.value ?? 0;
+    if (expression.function === "avg") return state === undefined || state.count === 0 ? null : finiteNumber(state.value, "avg") / state.count;
+    return state?.value ?? null;
+  }
+  if (expression.kind === "binary") return binary(expression.operator, streamExpression(group, expression.left), streamExpression(group, expression.right));
+  return expressionValue(group.first, [group.first], expression);
+}
+
+function streamHaving(group: StreamGroup, having: NonNullable<JoinedDTQLQuery["having"]>): boolean {
+  const left = streamExpression(group, having.left);
+  const right = streamExpression(group, having.right);
+  switch (having.operator) {
+    case "==": return equal(left, right);
+    case "!=": return !equal(left, right);
+    case "<": return compare(left, right) < 0;
+    case "<=": return compare(left, right) <= 0;
+    case ">": return compare(left, right) > 0;
+    case ">=": return compare(left, right) >= 0;
+    default: planError("having", `unsupported operator ${having.operator}`);
+  }
+}
+
+function streamProject(group: StreamGroup, query: JoinedDTQLQuery, aliases: readonly string[]): Data {
+  if (query.columns === undefined) return project({ row: group.first, group: [group.first] }, query, aliases);
+  const data: Data = {};
+  for (const column of query.columns) {
+    if (column.expression === undefined) planError("columns", "column expression is required");
+    data[columnOutput(column, "columns")] = streamExpression(group, column.expression) ?? null;
+  }
+  return data;
 }
