@@ -20,6 +20,48 @@ class TableExecutor implements QueryExecutor {
 }
 
 describe("federated country sales", () => {
+  it("retains money query policy and computes fractional, large and per-capita values", async () => {
+    const document = {
+      from: { database: "orders", name: "Invoice", alias: "o", joins: [{
+        from: { database: "countries", name: "Country", alias: "c" },
+        on: [{ left: { field: "country_id", source: "o" }, op: "==", right: { field: "id", source: "c" } }],
+      }] },
+      groupBy: [{ field: "id", source: "c" }, { field: "population", source: "c" }],
+      money: { minorUnitScale: 2, divisionScale: 4, rounding: "halfEven" },
+      columns: [
+        { aggregate: { function: "sum", args: [{ field: "amount", source: "o" }] }, as: "totalSales" },
+        { aggregate: { function: "avg", args: [{ field: "amount", source: "o" }] }, as: "avgSale" },
+        { binary: { op: "/", left: { aggregate: { function: "sum", args: [{ field: "amount", source: "o" }] } }, right: { field: "population", source: "c" } }, as: "salesPerCapita" },
+      ],
+    };
+    const query = parseDTQL(document, schema);
+    if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+    expect(query.money).toEqual(document.money);
+    const result = await executeJoinedDTQLQuery(new TableExecutor("Invoice", []), query, {
+      scanPages: async function* (relation) {
+        await Promise.resolve();
+        if (relation.database === "countries") {
+          yield { records: [{ key: key("Country", 1), exists: true, data: { id: 1, population: 3 } }] };
+        } else {
+          yield { records: ["0.10", "0.20", "9007199254740993"].map((amount, id) => ({ key: key("Invoice", id), exists: true as const, data: { id, country_id: 1, amount } })) };
+        }
+      },
+    });
+    expect(result.records[0]?.data).toEqual({ totalSales: "9007199254740993.3", avgSale: "3002399751580331.1", salesPerCapita: "3002399751580331.1" });
+    const runCase = (amount: unknown, population: number) => executeJoinedDTQLQuery(new TableExecutor("Invoice", []), query, {
+      scanPages: async function* (relation) {
+        await Promise.resolve();
+        if (relation.database === "countries") yield { records: [{ key: key("Country", 1), exists: true, data: { id: 1, population } }] };
+        else yield { records: [{ key: key("Invoice", 1), exists: true, data: { id: 1, country_id: 1, amount } }] };
+      },
+    });
+    expect((await runCase(null, 3)).records[0]?.data).toEqual({ totalSales: null, avgSale: null, salesPerCapita: null });
+    expect((await runCase("1", 32)).records[0]?.data.salesPerCapita).toBe("0.0312");
+    expect((await runCase("3", 32)).records[0]?.data.salesPerCapita).toBe("0.0938");
+    await expect(runCase("1", 0)).rejects.toThrow(/division by zero/);
+    await expect(runCase("0.001", 3)).rejects.toThrow(/minorUnitScale/);
+    await expect(runCase(0.1, 3)).rejects.toThrow(/base-10 string or safe integer/);
+  });
   it("streams 120,000 joined output rows as bounded pages", async () => {
     const parsed = parseDTQL({
       from: { database: "orders", name: "Invoice", alias: "o", joins: [{
@@ -50,6 +92,36 @@ describe("federated country sales", () => {
     }
     expect(count).toBe(120_000);
     expect(finalProgress).toBe(120_000);
+  });
+  it("yields a configured visible-row page before reading the next fact page", async () => {
+    const query = parseDTQL({
+      from: { database: "orders", name: "Invoice", alias: "o", joins: [{
+        from: { database: "countries", name: "Country", alias: "c" },
+        on: [{ left: { field: "country_id", source: "o" }, op: "==", right: { field: "id", source: "c" } }],
+      }] },
+      columns: [{ field: "id", source: "o" }],
+    }, schema);
+    if (!isJoinedDTQLQuery(query)) throw new Error("expected join query");
+    let factPagesRead = 0;
+    const pages = executeJoinedDTQLQueryPages(query, { pageSize: 100, scanPages: async function* (relation) {
+      await Promise.resolve();
+      if (relation.database === "countries") {
+        yield { records: [{ key: key("Country", 1), exists: true, data: { id: 1 } }] };
+      } else {
+        for (let start = 0; start < 200; start += 100) {
+          factPagesRead += 1;
+          yield { records: Array.from({ length: 100 }, (_, offset) => ({ key: key("Invoice", start + offset), exists: true as const, data: { id: start + offset, country_id: 1 } })) };
+        }
+      }
+    } })[Symbol.asyncIterator]();
+    const first = await pages.next();
+    if (first.done) throw new Error("missing first page");
+    expect(first.value.records).toHaveLength(100);
+    expect(factPagesRead).toBe(1);
+    const second = await pages.next();
+    if (second.done) throw new Error("missing second page");
+    expect(second.value.records).toHaveLength(100);
+    expect(factPagesRead).toBe(2);
   });
   it("validates same-named tables against their own database schemas", () => {
     const distinctSchemas: DTQLSchema = { tables: [
