@@ -64,6 +64,10 @@ export interface QueryJoinPredicate {
  */
 export interface QueryRelation {
   readonly name: string;
+  /** Named database whose executor scans this relation. */
+  readonly database?: string;
+  /** Source ordering and bound, applied before the relation is joined. */
+  readonly scan?: { readonly orderBy: readonly QueryOrder<Record<string, unknown>>[]; readonly limit: number };
   readonly schema?: string;
   readonly alias?: string;
   readonly joins: readonly QueryJoin[];

@@ -23,6 +23,7 @@ import { parseDocument as parseYamlDocument, stringify as stringifyYaml } from "
 export interface DTQLSchema {
   readonly tables: readonly {
     readonly name: string;
+    readonly database?: string;
     readonly schema?: string;
     readonly fields: readonly string[];
   }[];
@@ -32,7 +33,7 @@ type ObjectValue = Record<string, unknown>;
 
 const defaultMaxLimit = 1000;
 const rootKeys = new Set(["from", "where", "orderBy", "limit", "offset", "columns", "groupBy", "having"]);
-const fromKeys = new Set(["schema", "name", "alias", "as", "joins"]);
+const fromKeys = new Set(["database", "schema", "name", "alias", "as", "scan", "joins"]);
 const joinKeys = new Set(["type", "from", "on", "hints"]);
 const hintKeys = new Set(["algorithms"]);
 const joinAlgorithms = new Set<QueryJoinAlgorithm>(["hash", "merge", "lookup", "batchedLookup", "nestedLoop"]);
@@ -43,7 +44,7 @@ const qualifiedFieldKeys = new Set(["field", "source"]);
 const valueKeys = new Set(["value"]);
 const valuesKeys = new Set(["values"]);
 const orderKeys = new Set(["field", "source", "desc"]);
-const columnKeys = new Set(["field", "source", "as", "wildcard", "aggregate", "distinct"]);
+const columnKeys = new Set(["field", "source", "as", "wildcard", "aggregate", "binary", "distinct"]);
 const aggregateNames = new Set(["count", "sum", "avg", "min", "max", "first", "last"]);
 const aggregateKeys = new Set(["function", "distinct", "args"]);
 const operators = new Set(["==", "!=", "<", "<=", ">", ">=", "In", "NotIn"]);
@@ -67,7 +68,7 @@ export function parseDTQL(
   const table = resolveRelationTable(relation, schema);
   const fields = new Set(table.fields);
   const aliases = relationAliases(relation);
-  const hasRelationModel = relation.alias !== undefined || relation.joins.length > 0;
+  const hasRelationModel = relation.database !== undefined || relation.alias !== undefined || relation.joins.length > 0;
   const requiresQualifiedFields = relation.joins.length > 0;
   const where = document.where === undefined ? undefined : parseWhere(document.where, fields, aliases, requiresQualifiedFields, schema);
   const orders = document.orderBy === undefined ? [] : parseOrders(document.orderBy, fields, aliases, requiresQualifiedFields, schema);
@@ -125,6 +126,8 @@ export function stringifyJoinedDTQL(query: JoinedDTQLQuery): string {
 
 function serializeRelation(relation: QueryRelation): ObjectValue {
   return {
+    ...(relation.database === undefined ? {} : { database: relation.database }),
+    ...(relation.scan === undefined ? {} : { scan: { orderBy: relation.scan.orderBy.map((order) => ({ field: order.field, ...(order.direction === "desc" ? { desc: true } : {}) })), limit: relation.scan.limit } }),
     ...(relation.schema === undefined ? {} : { schema: relation.schema }),
     name: relation.name,
     ...(relation.alias === undefined ? {} : { alias: relation.alias }),
@@ -190,19 +193,20 @@ function parseDocument(input: unknown): ObjectValue {
   return object(input, "DTQL action");
 }
 
-function resolveTable(name: string, requestedSchema: string | undefined, schema: DTQLSchema, context: string): DTQLSchema["tables"][number] {
+function resolveTable(name: string, requestedSchema: string | undefined, requestedDatabase: string | undefined, schema: DTQLSchema, context: string): DTQLSchema["tables"][number] {
   const candidates = schema.tables.filter((table) =>
-    table.name === name && (requestedSchema === undefined || table.schema === requestedSchema),
+    table.name === name && (requestedSchema === undefined || table.schema === requestedSchema) &&
+    (requestedDatabase === undefined || table.database === undefined || table.database === requestedDatabase),
   );
   if (candidates.length === 0) fail(`join_field at ${context}: unknown table ${requestedSchema === undefined ? name : `${requestedSchema}.${name}`}`);
-  if (candidates.length > 1) fail(`join_field at ${context}: ambiguous table ${name}; specify schema`);
+  if (candidates.length > 1) fail(`join_field at ${context}: ambiguous table ${name}; specify database and schema`);
   const table = candidates[0];
   if (table === undefined) fail(`join_field at ${context}: unknown table ${name}`);
   return table;
 }
 
 function resolveRelationTable(relation: QueryRelation, schema: DTQLSchema): DTQLSchema["tables"][number] {
-  return resolveTable(relation.name, relation.schema, schema, "from");
+  return resolveTable(relation.name, relation.schema, relation.database, schema, "from");
 }
 
 function parseRelation(value: ObjectValue, schema: DTQLSchema, path: string, ancestors: WeakSet<object>): QueryRelation {
@@ -211,16 +215,34 @@ function parseRelation(value: ObjectValue, schema: DTQLSchema, path: string, anc
   try {
     assertOnlyKeys(value, fromKeys, path);
     const name = requiredString(value, "name");
+    const database = optionalString(value, "database");
     const relationSchema = optionalString(value, "schema");
-    resolveTable(name, relationSchema, schema, path);
+    const table = resolveTable(name, relationSchema, database, schema, path);
+    const scan = value.scan === undefined ? undefined : parseRelationScan(object(value.scan, `${path}.scan`), table.fields, `${path}.scan`);
     const alias = parseAlias(value, path);
     const joinsValue = value.joins;
     if (joinsValue !== undefined && !Array.isArray(joinsValue)) fail(`join_shape at ${path}.joins: must be an array`);
     const joins = (joinsValue ?? []).map((entry, index) => parseJoin(object(entry, `${path}.joins[${index.toString()}]`), schema, `${path}.joins[${index.toString()}]`, ancestors));
-    return { name, ...(relationSchema === undefined ? {} : { schema: relationSchema }), ...(alias === undefined ? {} : { alias }), joins };
+    return { name, ...(database === undefined ? {} : { database }), ...(scan === undefined ? {} : { scan }), ...(relationSchema === undefined ? {} : { schema: relationSchema }), ...(alias === undefined ? {} : { alias }), joins };
   } finally {
     ancestors.delete(value);
   }
+}
+
+function parseRelationScan(value: ObjectValue, fields: readonly string[], path: string): NonNullable<QueryRelation["scan"]> {
+  assertOnlyKeys(value, new Set(["orderBy", "limit"]), path);
+  if (!Array.isArray(value.orderBy) || value.orderBy.length === 0) fail(`join_shape at ${path}.orderBy: a non-empty order is required`);
+  const limit = value.limit;
+  if (!Number.isSafeInteger(limit) || Number(limit) <= 0 || Number(limit) > 10_000) fail(`join_shape at ${path}.limit: must be between 1 and 10000`);
+  const orderBy = value.orderBy.map((item, index) => {
+    const term = object(item, `${path}.orderBy[${index.toString()}]`);
+    assertOnlyKeys(term, new Set(["field", "desc"]), `${path}.orderBy[${index.toString()}]`);
+    const field = requiredString(term, "field");
+    if (!fields.includes(field)) fail(`join_field at ${path}.orderBy[${index.toString()}].field: unknown field ${field}`);
+    if (term.desc !== undefined && typeof term.desc !== "boolean") fail(`join_shape at ${path}.orderBy[${index.toString()}].desc: must be boolean`);
+    return { field, direction: term.desc === true ? "desc" as const : "asc" as const };
+  });
+  return { orderBy, limit: Number(limit) };
 }
 
 function parseAlias(value: ObjectValue, path: string): string | undefined {
@@ -340,7 +362,7 @@ function validateJoinReference(
     const reason = allAliases.has(reference.source) ? "forward alias" : "unknown alias";
     fail(`join_scope at ${path}.source: ${reason} ${reference.source}`);
   }
-  const table = resolveTable(relation.name, relation.schema, schema, path);
+  const table = resolveTable(relation.name, relation.schema, relation.database, schema, path);
   if (!table.fields.includes(reference.field)) fail(`join_field at ${path}: unknown field ${reference.source}.${reference.field}`);
 }
 
@@ -535,7 +557,7 @@ function parseScopedField(
   assertOnlyKeys(value, qualifiedFieldKeys, path);
   const relation = aliases.get(source);
   if (relation === undefined) fail(`join_field at ${path}.source: unknown alias ${source}`);
-  const table = resolveTable(relation.name, relation.schema, schema, path);
+  const table = resolveTable(relation.name, relation.schema, relation.database, schema, path);
   if (!table.fields.includes(field)) fail(`join_field at ${path}: unknown field ${source}.${field}`);
   return { field, source };
 }
@@ -553,7 +575,7 @@ function parseKnownQualifiedField(
   const reference = { field, source };
   const relation = aliases.get(reference.source);
   if (relation === undefined) fail(`join_field at ${path}.source: unknown alias ${reference.source}`);
-  const table = resolveTable(relation.name, relation.schema, schema, path);
+  const table = resolveTable(relation.name, relation.schema, relation.database, schema, path);
   if (!table.fields.includes(reference.field)) fail(`join_field at ${path}: unknown field ${reference.source}.${reference.field}`);
   return reference;
 }
@@ -565,7 +587,7 @@ function resolveUniqueField(
   path: string,
 ): QueryFieldReference {
   const matches = [...aliases.entries()].filter(([, relation]) =>
-    resolveTable(relation.name, relation.schema, schema, path).fields.includes(field),
+    resolveTable(relation.name, relation.schema, relation.database, schema, path).fields.includes(field),
   );
   if (matches.length === 0) fail(`join_field at ${path}: unknown field ${field}`);
   if (matches.length !== 1) fail(`join_field at ${path}: ambiguous field ${field}; specify source`);
