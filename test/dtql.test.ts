@@ -49,12 +49,13 @@ describe("parseDTQL", () => {
     expect(parseDTQL({ from: { name: "Customer" }, where: { op: "NotIn", left: { field: "City" }, right: { values: [] } }, limit: 1 }, schema).filters)
       .toEqual([{ field: "City", operator: "not-in", value: [] }]);
     expect(() => parseDTQL({ from: { name: "Customer" }, where: { op: "NotIn", left: { field: "City" }, right: { value: "Prague" } }, limit: 1 }, schema)).toThrow("unsupported where.right key");
+    // Go parses a membership operator in HAVING and refuses it when a group is evaluated (see the parity suite).
     expect(() => parseDTQL({
       from: { name: "A", alias: "a" },
       groupBy: [{ field: "id", source: "a" }],
       having: { op: "NotIn", left: { value: 1 }, right: { value: 2 } },
       limit: 1,
-    }, schema)).toThrow("unsupported having operator NotIn");
+    }, schema)).not.toThrow();
   });
 
   it("round-trips joined NotIn filters with the canonical values shape", () => {

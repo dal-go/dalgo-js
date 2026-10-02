@@ -135,11 +135,42 @@ in this repository; each adapter migration needs its own test. Without
 `resolveSource`, a schema-qualified query fails with `join_plan` before any
 output is returned.
 
-## DTQL order keys, aliases and aggregates
+## DTQL conditions, order keys, aliases and aggregates
 
 A joined DTQL query follows the Go engine (`github.com/dal-go/dalgo`, `dtql`) for
-ordering and aggregation. `test/parity/` proves it case by case (see
-[Go parity suite](#go-parity-suite)).
+conditions, ordering and aggregation. `test/parity/` proves it case by case (see
+[Go parity suite](#go-parity-suite)); [Differences from Go](#differences-from-go) lists
+every place the two still disagree.
+
+**Conditions.** `where` and `having` take one condition: a comparison, or an `and` /
+`or` group of conditions that nests to any depth. A comparison is `op`, `left` and
+`right`, with an expression on each side (`field`, `value`, `values`, `binary`; in
+`having` also aggregates), so a literal may stand on the left, two fields may be
+compared, and either side may be arithmetic. A condition sets one form only, and a group
+holds at least one condition.
+
+```yaml
+where:
+  and:
+    - {op: ==, left: {field: LastName, source: c}, right: {value: Lovelace}}
+    - or:
+        - {op: ==, left: {field: Name, source: ar}, right: {value: Miles Davis}}
+        - {op: '>', left: {field: Total, source: i}, right: {binary: {op: '*', left: {field: Units, source: i}, right: {value: 2}}}}
+```
+
+A WHERE comparison with a null operand is *unknown*, and only a true condition keeps a
+row: `x == null` never holds, `In` never matches a null, and `NotIn` over a list that
+contains null never holds (over an empty list it always does). An `and` stops at its
+first false child and an `or` at its first true one; an unknown child decides neither,
+and a child that fails (`In` against something that is not a list, an aggregate or a
+parameter in WHERE) fails the query only when a row reaches it. In HAVING, `==` is true
+for two nulls and `<`, `<=`, `>`, `>=` are false when either side is null; `In` and
+`NotIn` parse but fail when a group is evaluated.
+
+The parsed query keeps the compact `DTQLQueryFilter` (`field`, `operator`, `value`) for a
+top-level field-versus-literal `where`, as before, and uses `DTQLComparison` and
+`DTQLConditionGroup` for every other shape; `having` is a `DTQLCondition`. Several
+hand-built `filters` hold together and serialise as one `and` group.
 
 **Order keys.** An `orderBy` item is either a field key (`field`, optional
 `source`, optional `desc`) or an *expression key*: any DTQL expression
@@ -160,11 +191,18 @@ An unknown property on a key (`descending: true`, `direction: desc`, `as: x`,
 or `param` key, instead of being ignored. `DTQLQueryOrder` is the union
 `DTQLFieldOrder | DTQLExpressionOrder`: narrow on `order.expression`.
 
-**Aliases.** A field key or HAVING operand with no `source` that names a column's
-`as` alias refers to that column (`orderBy: [{field: purchases, desc: true}]`,
-`having: {left: {field: purchases}, op: '>', right: {value: 1}}`). The alias is
-resolved at parse time to the expression it names, so the parsed query and its
-canonical serialisation carry that expression. An alias never takes a `source`.
+**Aliases.** A field with no `source` that names a column's `as` alias refers to that
+column, as an `orderBy` key or a `having` operand, also inside arithmetic
+(`orderBy: [{binary: {op: '-', left: {value: 0}, right: {field: purchases}}}]`) but not
+inside an aggregate's argument, which reads the input row. The alias is resolved at parse
+time to the expression it names, so the parsed query and its canonical serialisation carry
+that expression. An alias never takes a `source`, and the default name of an unaliased
+aggregate is not an alias.
+
+**Column names.** A column without `as` is named by its field. An aggregate without `as`
+is named by its text, as in Go: `COUNT(*)`, `SUM(s.qty)`, `COUNT(DISTINCT customer)`,
+fields spelled as the document wrote them (the parser records that name as `as` when it
+had to add a source). Any other column without `as` is rejected, and so is a duplicate name.
 
 **Aggregate queries** (any `groupBy`, `having`, or aggregate in a column or key)
 are validated at parse like Go's `ValidateAggregation`: every column and every
@@ -174,25 +212,59 @@ is not allowed for `min`, `max`, `first`, `last`; `sum(*)` and `count(distinct *
 are rejected; a wildcard cannot be selected. Without `columns` a grouped query
 returns its group keys, and an ungrouped aggregate query returns one empty row.
 HAVING accepts any expression (for example a `binary` ratio), not just a field or
-an aggregate.
+an aggregate. Every aggregate of the query is accumulated over every group, so an
+error in one (an overflow) is raised even when HAVING or `limit` would hide that group.
+A group key treats a missing field and a null as the same value.
+
+**Null and empty.** As in Go, `null` counts as absent for `where`, `having`, `orderBy`,
+`groupBy`, `columns`, `limit`, `offset`, `money`, an order key's `desc`, an aggregate's
+`distinct` and a column's `as`; an empty `groupBy` or `columns` is absent; `limit: 0` means no limit.
 
 **Values.** These follow Go and changed in this release:
 
 - Arithmetic is null for a null or non-numeric operand and for division by zero
-  (it was `Infinity`, or an error for text); an overflow to infinity is an error.
-- Mixed-type comparison orders booleans, then numbers, then strings (null first).
+  (it was `Infinity`, or an error for text). An overflow stays infinite in a comparison or
+  a sort key and is an error where it would reach a result: a column, an aggregate's
+  state, a group key, or the order key of an aggregate query.
+- `sum` and `avg` fail with `SUM numeric overflow` (`AVG numeric overflow`) as soon as the
+  running total leaves the finite range, even if later values would bring it back.
+- Mixed-type comparison orders booleans, then numbers, then strings (null first; a
+  missing field is null).
 - `sum` and `avg` ignore non-numeric values; `sum` over no numbers is null (it was
   0). `first` and `last` keep a null value.
-- HAVING `==` is true for two nulls; `<`, `<=`, `>`, `>=` are false when either side is null.
 - A flat aggregate join streams through `scanPages` for every aggregate query
   (an aggregate that appears only in an order key included) except one that uses
-  `DISTINCT`, which runs through the generic plan.
+  `DISTINCT`, which runs through the generic plan. `and` and `or` groups stream too.
 
-Deliberate differences from Go: `where` and `having` also accept `!=` (DTQL in Go has
-no `!=`); `groupBy` takes fields only; and a field without `source` resolves through the
-schema when exactly one relation has it (Go requires `source` in joins and aggregates);
-`and`/`or` groups in `where`/`having` are not implemented yet; strings compare by UTF-16
-code unit, Go by byte.
+### Differences from Go
+
+What remains, each pinned by a test (`test/differences.test.ts`):
+
+1. **`!=`.** `where` and `having` also accept `!=`; DTQL in Go has none. Here null is a
+   value for it: `x != null` means "x is not null", `null != "a"` is true, `null != null`
+   is false.
+2. **`groupBy` takes fields only.** Go accepts any scalar expression there.
+3. **Schema-resolved fields.** `parseDTQL` takes a schema. A field without `source`
+   resolves through it when exactly one relation has the field (ambiguity is an error),
+   where Go requires a `source` in a join and reads an unqualified field of a single
+   source as written. This includes a SELECT alias used as an `orderBy` key or `having`
+   operand on a *joined* query, which Go rejects (`unqualified JOIN field requires schema
+   metadata`), and on a single non-aggregate source, which Go hands to the provider. A
+   field the schema does not list is rejected at parse, where Go would read null.
+4. **Strings** compare by UTF-16 code unit, Go by UTF-8 byte; the two orders differ only
+   for characters outside the Basic Multilingual Plane against U+E000 to U+FFFF.
+5. **Subqueries are not supported** by the joined executor: `from.query`, a `query`
+   expression, `exists` and `notExists` are rejected at parse. Go's join executor runs
+   them; here `parseRecursiveDTQL` is the separate model for them.
+6. **A bare single source** (no `alias`, `database` or `joins`) parses to the legacy
+   `StructuredQuery`: its `where` is one field-versus-literal comparison (no groups or
+   expressions), it has no `columns`, `groupBy`, `having` or expression keys, and it
+   requires a positive `limit`.
+7. **Bounds are this package's own.** `limit` above `maxLimit` (1000 unless the option
+   says otherwise) is rejected at parse, and execution is bounded by `maxFetchedRows`,
+   `maxResultRows`, `maxCandidateEvaluations` and `maxRetainedBytes`.
+8. **Execution route.** Go passes a query with no join, aggregate or subquery straight
+   to the database; this package always evaluates in memory, with the rules above.
 
 ### Go parity suite
 
@@ -201,6 +273,9 @@ and `test/parity/expected.json` the rows (or the error) that the Go engine retur
 each case, with the dalgo version and commit it ran at. `test/parity.test.ts` runs every case
 through this package, generically and through `scanPages`, and compares exactly (numbers
 within 1e-9); a case Go rejects at parse must be rejected by `parseDTQL`. CI needs no Go.
+A case has to run through Go's own executor, so it uses a join or an aggregate: Go hands
+a plain single-source query to the provider, and the harness's in-memory provider does
+not filter.
 
 To add a case, append it to a file in `test/parity/cases/` and run
 `tools/parity/regenerate.sh` (Go and network access to the module proxy; see

@@ -1,9 +1,12 @@
-import { containsAggregate, effectiveColumns, hasAggregation, hasDistinctAggregate } from "./aggregation.js";
+import { containsAggregate, effectiveColumns, expressionText, hasAggregation, hasDistinctAggregate } from "./aggregation.js";
+import { evaluateCondition, isMembership, toCondition, walkComparisons, type Truth } from "./condition.js";
 import type { QueryExecutor } from "./database.js";
 import type { DTQLSchema } from "./dtql.js";
 import { Key } from "./key.js";
 import type { ExistingRecord } from "./record.js";
 import type {
+  DTQLComparison,
+  DTQLCondition,
   DTQLExpression,
   DTQLQueryFilter,
   JoinedDTQLQuery,
@@ -109,14 +112,16 @@ export async function executeJoinedDTQLQuery(
   const cached = await scanRelations(executor, nodes, keyReferences, limits, options.resolveSource, options.resolveExecutor, options.onProgress);
   const relationAliases = aliasesFor(from);
   let rows = await evaluateRelation(from, new Map(), cached, limits, { candidates: 0 }, undefined, "from");
-  rows = rows.filter((row) => effectiveQuery.filters.every((filter) => matchesFilter(row, filter)));
+  rows = rows.filter((row) => effectiveQuery.filters.every((filter) => matchesWhere(row, filter)));
   options.onProgress?.({ phase: "process", rows: rows.length });
 
   const materialized = materialize(rows, effectiveQuery, limits);
   const ordered = stableOrder(materialized, effectiveQuery);
   const start = effectiveQuery.offset ?? 0;
   const end = effectiveQuery.limit === undefined ? undefined : start + effectiveQuery.limit;
-  const page = ordered.slice(start, end).map((item) => ({ key: item.row.root.key, exists: true as const, data: project(item, effectiveQuery, relationAliases) }));
+  const toRecord = (item: MaterializedRow): ExistingRecord<Data> => ({ key: item.row.root.key, exists: true as const, data: project(item, effectiveQuery, relationAliases) });
+  // Go finishes every group before it applies OFFSET and LIMIT, so an error in a group's output is not hidden by paging.
+  const page = hasAggregation(effectiveQuery) ? ordered.map(toRecord).slice(start, end) : ordered.slice(start, end).map(toRecord);
   return { records: page };
 }
 
@@ -240,7 +245,7 @@ function validateClauseSources(query: JoinedDTQLQuery, aliases: ReadonlyMap<stri
       default: return;
     }
   };
-  query.filters.forEach((filter, index) => { field(filter.field, `where[${index.toString()}].left`); });
+  query.filters.forEach((filter, index) => { walkComparisons(toCondition(filter), `where[${index.toString()}]`, (comparison, path) => { expression(comparison.left, `${path}.left`); expression(comparison.right, `${path}.right`); }); });
   query.orders.forEach((order, index) => {
     if (order.expression === undefined) field(order.field, `orderBy[${index.toString()}]`);
     else expression(order.expression, `orderBy[${index.toString()}]`);
@@ -249,10 +254,7 @@ function validateClauseSources(query: JoinedDTQLQuery, aliases: ReadonlyMap<stri
     if (column.expression !== undefined) expression(column.expression, `columns[${index.toString()}]`);
   });
   query.groupBy?.forEach((group, index) => { expression(group, `groupBy[${index.toString()}]`); });
-  if (query.having !== undefined) {
-    expression(query.having.left, "having.left");
-    expression(query.having.right, "having.right");
-  }
+  if (query.having !== undefined) walkComparisons(query.having, "having", (comparison, path) => { expression(comparison.left, `${path}.left`); expression(comparison.right, `${path}.right`); });
 }
 
 function expandColumns(
@@ -501,26 +503,51 @@ function joinKey(value: unknown, path: string): string | undefined {
   keyTypeError(path);
 }
 
-function matchesFilter(row: JoinedRow, filter: DTQLQueryFilter): boolean {
-  const left = fieldValue(row, filter.field);
-  const right = filter.value;
-  // An ordering comparison with a null on either side is false, as in the Go engine.
-  const comparable = left !== null && left !== undefined && right !== null && right !== undefined;
-  switch (filter.operator) {
-    case "==": return equal(left, right);
-    case "!=": return !equal(left, right);
-    case "<": return comparable && compare(left, right) < 0;
-    case "<=": return comparable && compare(left, right) <= 0;
-    case ">": return comparable && compare(left, right) > 0;
-    case ">=": return comparable && compare(left, right) >= 0;
-    case "in": return Array.isArray(right) && right.some((value) => equal(left, value));
-    case "not-in": {
-      if (!Array.isArray(right)) planError("where", "NotIn requires an array of values");
-      if (right.length === 0) return true;
-      if (left === null || left === undefined || right.some((value) => value === null || value === undefined)) return false;
-      return !right.some((value) => equal(left, value));
+/**
+ * A WHERE filter as the Go executor decides it: only a true result keeps the
+ * row; a comparison with a null operand is unknown (so `x == null` never holds
+ * and `NotIn` over a list containing null never does either).
+ */
+function matchesWhere(row: JoinedRow, filter: DTQLQueryFilter | DTQLCondition): boolean {
+  return evaluateCondition(toCondition(filter), (comparison, path) => whereTruth(row, comparison, path), "where") === "true";
+}
+
+function whereTruth(row: JoinedRow, comparison: DTQLComparison, path: string): Truth {
+  const left = whereOperand(row, comparison.left, `${path}.left`);
+  if (isMembership(comparison.operator)) {
+    const right = whereOperand(row, comparison.right, `${path}.right`);
+    if (!Array.isArray(right)) planError(`${path}.right`, "IN requires an array");
+    const items: readonly unknown[] = right;
+    let truth: Truth = "false";
+    if (items.length > 0) {
+      if (items.some((item) => item !== null && left !== null && left !== undefined && equal(left, item))) truth = "true";
+      else if (left === null || left === undefined || items.includes(null)) truth = "unknown";
     }
-    default: planError("where", `unsupported filter ${filter.operator}`);
+    if (comparison.operator === "not-in") return truth === "true" ? "false" : truth === "false" ? "true" : truth;
+    return truth;
+  }
+  const right = whereOperand(row, comparison.right, `${path}.right`);
+  // `!=` is a DTQL extension of this package (Go has none): it treats null as a value, so `x != null` means "x is not null".
+  if (comparison.operator === "!=") return equal(left ?? null, right ?? null) ? "false" : "true";
+  if (left === null || left === undefined || right === null || right === undefined) return "unknown";
+  switch (comparison.operator) {
+    case "==": return equal(left, right) ? "true" : "false";
+    case "<": return compare(left, right) < 0 ? "true" : "false";
+    case "<=": return compare(left, right) <= 0 ? "true" : "false";
+    case ">": return compare(left, right) > 0 ? "true" : "false";
+    case ">=": return compare(left, right) >= 0 ? "true" : "false";
+    default: return planError(path, `unsupported operator ${comparison.operator}`);
+  }
+}
+
+/** A WHERE operand: a field, a literal, a list or arithmetic over them (no aggregate, star or parameter). */
+function whereOperand(row: JoinedRow, expression: DTQLExpression, path: string): unknown {
+  switch (expression.kind) {
+    case "field": return fieldValue(row, expression.field);
+    case "literal": return expression.value;
+    case "values": return expression.values;
+    case "binary": return binary(expression.operator, whereOperand(row, expression.left, `${path}.binary.left`), whereOperand(row, expression.right, `${path}.binary.right`));
+    default: return planError(path, `unsupported expression ${expression.kind}`);
   }
 }
 
@@ -529,15 +556,31 @@ function materialize(rows: readonly JoinedRow[], query: JoinedDTQLQuery, limits:
   const groups = new Map<string, JoinedRow[]>();
   if (rows.length === 0 && query.groupBy === undefined) groups.set("all", []);
   for (const row of rows) {
-    const key = query.groupBy === undefined ? "all" : expressionKey(query.groupBy.map((expression) => expressionValue(row, [row], expression)));
+    const key = query.groupBy === undefined ? "all" : groupKey(row, query.groupBy);
     const group = groups.get(key) ?? [];
     group.push(row);
     groups.set(key, group);
   }
   const values = [...groups.values()].map((group) => ({ row: group[0] ?? emptyAggregateRow(), group: Object.freeze(group) }));
   assertRowBound(values.map((value) => value.row), limits, "groupBy");
+  // Go accumulates every aggregate of the query over every group (so an overflow in one is an error even if
+  // the group is filtered out or paged away); evaluating them up front does the same.
+  const aggregates = queryAggregates(query);
+  for (const value of values) for (const expression of aggregates) aggregate(value.group, expression, "aggregate");
   const having = query.having;
   return having === undefined ? values : values.filter((value) => matchesHaving(value, having));
+}
+
+function queryAggregates(query: JoinedDTQLQuery): Extract<DTQLExpression, { readonly kind: "aggregate" }>[] {
+  const found: Extract<DTQLExpression, { readonly kind: "aggregate" }>[] = [];
+  const visit = (expression: DTQLExpression): void => {
+    if (expression.kind === "aggregate") found.push(expression);
+    else if (expression.kind === "binary") { visit(expression.left); visit(expression.right); }
+  };
+  query.columns?.forEach((column) => { if (column.expression !== undefined) visit(column.expression); });
+  query.orders.forEach((order) => { if (order.expression !== undefined) visit(order.expression); });
+  if (query.having !== undefined) walkComparisons(query.having, "having", (comparison) => { visit(comparison.left); visit(comparison.right); });
+  return found;
 }
 
 function validateExecutionScopes(relation: QueryRelation, inherited: ReadonlySet<string>, path: string): Set<string> {
@@ -561,15 +604,16 @@ function emptyAggregateRow(): JoinedRow {
   return { aliases: new Map(), root: { key: new Key("__dtql__", "aggregate"), exists: true, data: {} } };
 }
 
-function matchesHaving(value: MaterializedRow, having: NonNullable<JoinedDTQLQuery["having"]>): boolean {
-  return havingHolds(having.operator, expressionValue(value.row, value.group, having.left, "having.left"), expressionValue(value.row, value.group, having.right, "having.right"));
+function matchesHaving(value: MaterializedRow, having: DTQLCondition): boolean {
+  return evaluateCondition(having, (comparison, path) => havingHolds(comparison.operator, expressionValue(value.row, value.group, comparison.left, `${path}.left`), expressionValue(value.row, value.group, comparison.right, `${path}.right`)) ? "true" : "false", "having") === "true";
 }
 
 /**
  * HAVING comparison as the Go engine evaluates it: `==` is true for two nulls,
- * every ordering comparison is false when either side is null.
+ * every ordering comparison is false when either side is null, and membership
+ * operators are not supported there (Go reports it when a group is evaluated).
  */
-function havingHolds(operator: NonNullable<JoinedDTQLQuery["having"]>["operator"], leftValue: unknown, rightValue: unknown): boolean {
+function havingHolds(operator: DTQLComparison["operator"], leftValue: unknown, rightValue: unknown): boolean {
   const left = leftValue ?? null;
   const right = rightValue ?? null;
   switch (operator) {
@@ -577,6 +621,7 @@ function havingHolds(operator: NonNullable<JoinedDTQLQuery["having"]>["operator"
     case "!=": return !equal(left, right);
     default: break;
   }
+  if (operator === "in" || operator === "not-in") planError("having", `unsupported operator ${operator === "in" ? "In" : "NotIn"}`);
   if (left === null || right === null) return false;
   switch (operator) {
     case "<": return compare(left, right) < 0;
@@ -588,9 +633,16 @@ function havingHolds(operator: NonNullable<JoinedDTQLQuery["having"]>["operator"
 }
 
 function stableOrder(rows: readonly MaterializedRow[], query: JoinedDTQLQuery): MaterializedRow[] {
+  const grouped = hasAggregation(query);
   // Keys are resolved once per row, before sorting, so an evaluation error
   // surfaces deterministically instead of depending on comparison order.
-  return rows.map((row, index) => ({ row, index, keys: query.orders.map((order, position) => order.expression === undefined ? fieldValue(row.row, order.field) : expressionValue(row.row, row.group, order.expression, `orderBy[${position.toString()}]`)) })).sort((a, b) => {
+  return rows.map((row, index) => ({ row, index, keys: query.orders.map((order, position) => {
+    const location = `orderBy[${position.toString()}]`;
+    const key = order.expression === undefined ? fieldValue(row.row, order.field) : expressionValue(row.row, row.group, order.expression, location);
+    // Go keeps a group's order keys with its output, where a non-finite number is refused.
+    if (grouped) rejectNonFinite(key, location);
+    return key;
+  }) })).sort((a, b) => {
     for (const [position, order] of query.orders.entries()) {
       const result = compare(a.keys[position], b.keys[position]);
       if (result !== 0) return order.direction === "desc" ? -result : result;
@@ -613,14 +665,23 @@ function project(value: MaterializedRow, query: JoinedDTQLQuery, aliases: readon
     const expression = column.expression;
     const location = `columns[${position.toString()}]`;
     if (expression === undefined) planError(location, "column expression is required");
-    result[columnOutput(column, location)] = expressionValue(value.row, value.group, expression, location) ?? null;
+    const output = expressionValue(value.row, value.group, expression, location) ?? null;
+    rejectNonFinite(output, location);
+    result[columnOutput(column, location)] = output;
   }
   return result;
+}
+
+/** A number that overflowed to infinity (or NaN) cannot be part of a result, as in Go. */
+function rejectNonFinite(value: unknown, path: string): void {
+  if (typeof value === "number" && !Number.isFinite(value)) planError(path, "arithmetic overflow: the result is not a finite number");
 }
 
 function columnOutput(column: QueryColumn, path: string): string {
   if (column.as !== undefined) return column.as;
   if (column.expression?.kind === "field") return column.expression.field.field;
+  // As in Go, an aggregate with no alias is named by its text, for example COUNT(*).
+  if (column.expression?.kind === "aggregate") return expressionText(column.expression);
   planError(path, "non-field joined column requires an alias");
 }
 
@@ -631,40 +692,71 @@ function expressionValue(row: JoinedRow, group: readonly JoinedRow[], expression
     case "values": return expression.values;
     case "param": return planError(path, "parameters are not bound by generic execution");
     case "star": return planError(path, "star is only valid as an aggregate argument");
-    case "binary": return binary(expression.operator, expressionValue(row, group, expression.left, `${path}.binary.left`), expressionValue(row, group, expression.right, `${path}.binary.right`), path);
+    case "binary": return binary(expression.operator, expressionValue(row, group, expression.left, `${path}.binary.left`), expressionValue(row, group, expression.right, `${path}.binary.right`));
     case "aggregate": return aggregate(group, expression, path);
   }
 }
 
+/** Aggregate results per group, so an aggregate used in several places is computed (and can fail) once. */
+const aggregateResults = new WeakMap<readonly JoinedRow[], Map<string, unknown>>();
+
 function aggregate(rows: readonly JoinedRow[], expression: Extract<DTQLExpression, { readonly kind: "aggregate" }>, path: string): unknown {
+  let results = aggregateResults.get(rows);
+  if (results === undefined) {
+    results = new Map();
+    aggregateResults.set(rows, results);
+  }
+  const identity = JSON.stringify(expression);
+  if (results.has(identity)) return results.get(identity);
+  const value = computeAggregate(rows, expression, path);
+  results.set(identity, value);
+  return value;
+}
+
+function computeAggregate(rows: readonly JoinedRow[], expression: Extract<DTQLExpression, { readonly kind: "aggregate" }>, path: string): unknown {
   const argument = expression.args[0];
   if (argument === undefined) planError(path, "aggregate requires an argument");
   const argumentPath = `${path}.aggregate.args[0]`;
+  const name = expression.function.toUpperCase();
   if (expression.function === "first" || expression.function === "last") {
     // As in the Go engine, FIRST and LAST keep a null value instead of skipping it.
     const row = expression.function === "first" ? rows[0] : rows.at(-1);
-    return row === undefined ? null : expressionValue(row, [row], argument, argumentPath) ?? null;
+    const kept = row === undefined ? null : expressionValue(row, [row], argument, argumentPath) ?? null;
+    rejectNonFinite(kept, path);
+    return kept;
   }
   const values = argument.kind === "star" ? rows.map(() => 1) : rows.map((row) => expressionValue(row, [row], argument, argumentPath)).filter((value) => value !== undefined && value !== null);
-  const distinct = expression.distinct === true ? unique(values) : values;
+  const distinct = expression.distinct === true ? unique(values, path) : values;
   switch (expression.function) {
     case "count": return distinct.length;
-    case "min": return distinct.length === 0 ? null : distinct.reduce((left, right) => compare(left, right) <= 0 ? left : right);
-    case "max": return distinct.length === 0 ? null : distinct.reduce((left, right) => compare(left, right) >= 0 ? left : right);
+    case "min":
+    case "max": {
+      for (const value of distinct) rejectNonFinite(value, path);
+      const pick = expression.function === "min" ? (left: unknown, right: unknown) => compare(left, right) <= 0 ? left : right : (left: unknown, right: unknown) => compare(left, right) >= 0 ? left : right;
+      return distinct.length === 0 ? null : distinct.reduce(pick);
+    }
     case "sum":
     case "avg": {
       // Non-numeric values are outside SUM and AVG's domain and are ignored; no numbers at all is null.
-      const numbers = distinct.filter(isNumber);
-      if (numbers.length === 0) return null;
-      const total = numbers.reduce((sum, value) => sum + value, 0);
-      return expression.function === "sum" ? total : total / numbers.length;
+      // Like Go, fail as soon as the running total leaves the finite range, even if it would come back.
+      let total = 0;
+      let count = 0;
+      for (const value of distinct) {
+        if (!isNumeric(value)) continue;
+        if (!Number.isFinite(value)) planError(path, `${name} produced a non-finite value`);
+        total += value;
+        if (!Number.isFinite(total)) planError(path, `${name} numeric overflow`);
+        count += 1;
+      }
+      if (count === 0) return null;
+      return expression.function === "sum" ? total : total / count;
     }
     default: return null;
   }
 }
 
-function isNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+function isNumeric(value: unknown): value is number {
+  return typeof value === "number";
 }
 
 function fieldValue(row: JoinedRow, field: QueryFieldReference): unknown {
@@ -690,26 +782,30 @@ function equal(left: unknown, right: unknown): boolean {
  */
 function compare(left: unknown, right: unknown): number {
   if (left === right) return 0;
-  if (left === undefined || left === null) return -1;
+  // A missing field and a null are the same value.
+  if (left === undefined || left === null) return right === undefined || right === null ? 0 : -1;
   if (right === undefined || right === null) return 1;
   if ((typeof left === "number" && typeof right === "number") || (typeof left === "string" && typeof right === "string") || (typeof left === "boolean" && typeof right === "boolean")) return left < right ? -1 : 1;
   return typeRank(left) - typeRank(right);
 }
 
 function typeRank(value: unknown): number {
+  if (Array.isArray(value)) return 0;
   if (typeof value === "boolean") return 1;
   if (typeof value === "number") return 2;
   if (typeof value === "string") return 3;
   return 4;
 }
 
-/** Arithmetic is null for a null or non-numeric operand and for division by zero, as in the Go engine. */
-function binary(operator: "+" | "-" | "*" | "/", left: unknown, right: unknown, path: string): number | null {
-  if (!isNumber(left) || !isNumber(right)) return null;
+/**
+ * Arithmetic is null for a null or non-numeric operand and for division by
+ * zero, as in the Go engine. An overflow stays infinite here; it is refused
+ * only where the number would become part of a result.
+ */
+function binary(operator: "+" | "-" | "*" | "/", left: unknown, right: unknown): number | null {
+  if (!isNumeric(left) || !isNumeric(right)) return null;
   if (operator === "/" && right === 0) return null;
-  const result = operator === "+" ? left + right : operator === "-" ? left - right : operator === "*" ? left * right : left / right;
-  if (!Number.isFinite(result)) planError(path, "arithmetic overflow");
-  return result;
+  return operator === "+" ? left + right : operator === "-" ? left - right : operator === "*" ? left * right : left / right;
 }
 
 function finiteNumber(value: unknown, context: string): number {
@@ -781,9 +877,10 @@ function decimalBinary(operator: "+" | "-" | "*" | "/", left: unknown, right: un
   return decimalDivide(a, b, scale);
 }
 
-function unique(values: readonly unknown[]): unknown[] {
+function unique(values: readonly unknown[], path: string): unknown[] {
   const seen = new Set<string>();
   return values.filter((value) => {
+    rejectNonFinite(value, path);
     const key = expressionKey([value]);
     if (seen.has(key)) return false;
     seen.add(key);
@@ -796,9 +893,19 @@ function expressionKey(values: readonly unknown[]): string {
     if (typeof value === "number") return `number:${value.toString()}`;
     if (typeof value === "string") return `string:${value}`;
     if (typeof value === "boolean") return `boolean:${value ? "1" : "0"}`;
-    if (value === undefined) return "undefined";
+    // A field that is missing and one that is null belong to the same group, as in Go.
+    if (value === undefined) return null;
     return value;
   });
+}
+
+/** The group a row belongs to: its group-by values, with null and missing the same value. */
+function groupKey(row: JoinedRow, groupBy: readonly DTQLExpression[]): string {
+  return expressionKey(groupBy.map((expression) => {
+    const value = expressionValue(row, [row], expression);
+    rejectNonFinite(value, "groupBy");
+    return value;
+  }));
 }
 
 function assertRowBound(rows: readonly JoinedRow[], limits: ExecutionLimits, path: string): void {
@@ -924,7 +1031,7 @@ export async function* executeJoinedDTQLQueryPages(
       for (const candidate of candidates) {
         const row: JoinedRow = { root: fact, aliases: new Map([[rootAlias, fact], [childAlias, candidate]]) };
         if (candidate !== undefined && !join.on.every((condition) => matchesJoin(row, condition, "from.joins[0].on"))) continue;
-        if (!effective.filters.every((filter) => matchesFilter(row, filter))) continue;
+        if (!effective.filters.every((filter) => matchesWhere(row, filter))) continue;
         processed++;
         if (skipped < (effective.offset ?? 0)) { skipped++; continue; }
         if (effective.limit !== undefined && emitted >= effective.limit) break;
@@ -987,7 +1094,7 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
     } else if (value.kind === "binary") { collect(value.left); collect(value.right); }
   };
   effective.columns?.forEach((column) => { if (column.expression !== undefined) collect(column.expression); });
-  if (effective.having !== undefined) { collect(effective.having.left); collect(effective.having.right); }
+  if (effective.having !== undefined) walkComparisons(effective.having, "having", (comparison) => { collect(comparison.left); collect(comparison.right); });
   for (const order of effective.orders) {
     if (order.expression === undefined) continue;
     if (options.money !== undefined) planError("orderBy", "expression order keys are not supported in exact money mode");
@@ -1024,15 +1131,15 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
       for (const candidate of candidates) {
         const row: JoinedRow = { root: fact, aliases: new Map([[rootAlias, fact], [childAlias, candidate]]) };
         if (candidate !== undefined && !join.on.every((condition) => matchesJoin(row, condition, "from.joins[0].on"))) continue;
-        if (!effective.filters.every((filter) => matchesFilter(row, filter))) continue;
-        const groupKey = effective.groupBy === undefined ? "all" : expressionKey(effective.groupBy.map((expression) => expressionValue(row, [row], expression)));
-        let group = groups.get(groupKey);
+        if (!effective.filters.every((filter) => matchesWhere(row, filter))) continue;
+        const rowGroup = effective.groupBy === undefined ? "all" : groupKey(row, effective.groupBy);
+        let group = groups.get(rowGroup);
         if (group === undefined) {
           if (groups.size >= (options.maxResultRows ?? defaults.maxResultRows)) planError("groupBy", "group bound exceeded");
-          groupBytes += 128 + bytes([groupKey, [...row.aliases.values()].map((record) => record?.data)]);
+          groupBytes += 128 + bytes([rowGroup, [...row.aliases.values()].map((record) => record?.data)]);
           if (groupBytes + dimensionBytes > (options.maxRetainedBytes ?? defaults.maxRetainedBytes)) planError("groupBy", "retained-byte bound exceeded");
           group = { first: row, aggregates: new Map() };
-          groups.set(groupKey, group);
+          groups.set(rowGroup, group);
         }
         for (const [signature, aggregateExpression] of aggregateExpressions) updateStreamAggregate(group, signature, aggregateExpression, row, options.money);
         processed += 1;
@@ -1049,7 +1156,11 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
     data: streamProject(group, effective, [rootAlias, childAlias], options.money),
     // Every key, field keys included, is evaluated over the group. A field key
     // must not read the projected row: `columns` may rename it or leave it out.
-    sortKeys: effective.orders.map((order, position) => streamExpression(group, order.expression ?? { kind: "field", field: order.field }, `orderBy[${position.toString()}]`, options.money)),
+    sortKeys: effective.orders.map((order, position) => {
+      const key = streamExpression(group, order.expression ?? { kind: "field", field: order.field }, `orderBy[${position.toString()}]`, options.money);
+      rejectNonFinite(key, `orderBy[${position.toString()}]`);
+      return key;
+    }),
   }));
   const start = effective.offset ?? 0;
   const ordered = (effective.orders.length === 0 ? projected : projected.sort((left, right) => {
@@ -1067,22 +1178,37 @@ function updateStreamAggregate(group: StreamGroup, signature: string, expression
   if (argument === undefined) planError("aggregate", "aggregate requires an argument");
   const value = argument.kind === "star" ? 1 : expressionValue(row, [row], argument);
   const state = group.aggregates.get(signature) ?? { count: 0, value: null };
+  const name = expression.function.toUpperCase();
   if (expression.function === "first" || expression.function === "last") {
     // As in the Go engine, FIRST and LAST keep a null value instead of skipping it.
-    if (expression.function === "last" || state.count === 0) state.value = value ?? null;
+    if (expression.function === "last" || state.count === 0) {
+      state.value = value ?? null;
+      rejectNonFinite(state.value, "aggregate");
+    }
     state.count += 1;
     group.aggregates.set(signature, state);
     return;
   }
   if (value === null || value === undefined) return;
   // SUM and AVG ignore non-numeric values; the exact decimal path validates its own input.
-  if ((expression.function === "sum" || expression.function === "avg") && exact === undefined && !isNumber(value)) return;
+  if ((expression.function === "sum" || expression.function === "avg") && exact === undefined && !isNumeric(value)) return;
   state.count += 1;
   switch (expression.function) {
     case "count": state.value = state.count; break;
-    case "sum": case "avg": state.value = exact === undefined ? (state.value === null ? 0 : finiteNumber(state.value, "aggregate")) + finiteNumber(value, "aggregate") : (state.value === null ? 0n : state.value as bigint) + moneyMinor(value, exact.minorUnitScale); break;
-    case "min": if (state.value === null || compare(value, state.value) < 0) state.value = value; break;
-    case "max": if (state.value === null || compare(value, state.value) > 0) state.value = value; break;
+    case "sum": case "avg":
+      if (exact === undefined) {
+        // Like Go, fail as soon as the running total leaves the finite range, even if it would come back.
+        const input = value as number;
+        if (!Number.isFinite(input)) planError("aggregate", `${name} produced a non-finite value`);
+        const total = (state.value === null ? 0 : state.value as number) + input;
+        if (!Number.isFinite(total)) planError("aggregate", `${name} numeric overflow`);
+        state.value = total;
+      } else {
+        state.value = (state.value === null ? 0n : state.value as bigint) + moneyMinor(value, exact.minorUnitScale);
+      }
+      break;
+    case "min": rejectNonFinite(value, "aggregate"); if (state.value === null || compare(value, state.value) < 0) state.value = value; break;
+    case "max": rejectNonFinite(value, "aggregate"); if (state.value === null || compare(value, state.value) > 0) state.value = value; break;
   }
   group.aggregates.set(signature, state);
 }
@@ -1098,13 +1224,13 @@ function streamExpression(group: StreamGroup, expression: DTQLExpression, path: 
   if (expression.kind === "binary") {
     const left = streamExpression(group, expression.left, `${path}.binary.left`, exact);
     const right = streamExpression(group, expression.right, `${path}.binary.right`, exact);
-    return exact === undefined ? binary(expression.operator, left, right, path) : decimalBinary(expression.operator, left, right, exact.divisionScale);
+    return exact === undefined ? binary(expression.operator, left, right) : decimalBinary(expression.operator, left, right, exact.divisionScale);
   }
   return expressionValue(group.first, [group.first], expression, path);
 }
 
-function streamHaving(group: StreamGroup, having: NonNullable<JoinedDTQLQuery["having"]>, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): boolean {
-  return havingHolds(having.operator, streamExpression(group, having.left, "having.left", exact), streamExpression(group, having.right, "having.right", exact));
+function streamHaving(group: StreamGroup, having: DTQLCondition, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): boolean {
+  return evaluateCondition(having, (comparison, path) => havingHolds(comparison.operator, streamExpression(group, comparison.left, `${path}.left`, exact), streamExpression(group, comparison.right, `${path}.right`, exact)) ? "true" : "false", "having") === "true";
 }
 
 function streamProject(group: StreamGroup, query: JoinedDTQLQuery, aliases: readonly string[], exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): Data {
@@ -1113,7 +1239,9 @@ function streamProject(group: StreamGroup, query: JoinedDTQLQuery, aliases: read
   for (const [position, column] of query.columns.entries()) {
     const location = `columns[${position.toString()}]`;
     if (column.expression === undefined) planError(location, "column expression is required");
-    data[columnOutput(column, location)] = streamExpression(group, column.expression, location, exact) ?? null;
+    const output = streamExpression(group, column.expression, location, exact) ?? null;
+    rejectNonFinite(output, location);
+    data[columnOutput(column, location)] = output;
   }
   return data;
 }

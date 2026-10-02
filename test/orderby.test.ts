@@ -439,7 +439,7 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
     });
 
     it("rejects membership operators and the non-grouped fields it cannot evaluate", () => {
-      expect(() => joined({ ...aliasedBase(), having: { left: ratio, op: "In", right: { values: [1] } } })).toThrow("unsupported having operator In");
+      expect(() => joined({ ...aliasedBase(), having: { left: ratio, op: "In", right: { values: [1] } } })).toThrow("join_aggregate at having.right: (1) is neither an aggregate");
       expect(() => joined({ ...aliasedBase(), having: { left: { star: true }, op: "==", right: { value: 1 } } })).toThrow("join_aggregate at having.left: * is neither an aggregate");
     });
 
@@ -544,8 +544,9 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
 
     it("locates the errors that remain, at the key or column that caused them", async () => {
       const huge = over("*", over("*", { value: 1e308 }, field("n")), { value: 100 });
-      await expect(run({ columns: [field("id")], orderBy: [huge] })).rejects.toThrow("join_plan at orderBy[0].binary.left: arithmetic overflow");
-      await expect(run({ columns: [field("id"), { ...huge, as: "big" }] })).rejects.toThrow("join_plan at columns[1].binary.left: arithmetic overflow");
+      // An overflow only matters where the number reaches a result: a sort key may be infinite (as in Go).
+      await expect(run({ columns: [field("id")], orderBy: [huge] })).resolves.toHaveLength(5);
+      await expect(run({ columns: [field("id"), { ...huge, as: "big" }] })).rejects.toThrow("join_plan at columns[1]: arithmetic overflow");
       // A parameter column cannot be parsed, but a hand-built query can still carry one.
       const unbound: JoinedDTQLQuery = { ...joined({ from: { name: "A", alias: "a" } }), columns: [{ expression: { kind: "param", name: "p" }, as: "x" }] };
       await expect(executeJoinedDTQLQuery(new MemoryExecutor({ A: data }), unbound)).rejects.toThrow("join_plan at columns[0]: parameters are not bound by generic execution");

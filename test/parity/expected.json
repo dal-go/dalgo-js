@@ -965,6 +965,72 @@
     }
    ]
   },
+  "133 WHERE equals a null literal on a null column": {
+   "rows": []
+  },
+  "134 WHERE In with a null item": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 6
+    }
+   ]
+  },
+  "135 WHERE NotIn with a null item": {
+   "rows": []
+  },
+  "136 WHERE NotIn without a null item": {
+   "rows": [
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "137 WHERE NotIn an empty list": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "138 WHERE In an empty list": {
+   "rows": []
+  },
+  "139 WHERE null literal equals null literal": {
+   "rows": []
+  },
   "14 non-numeric arithmetic key (note + 1)": {
    "rows": [
     {
@@ -990,13 +1056,294 @@
     }
    ]
   },
+  "140 WHERE null literal In a list with null": {
+   "rows": []
+  },
+  "141 WHERE null literal NotIn a list": {
+   "rows": []
+  },
+  "142 WHERE number In a list": {
+   "rows": [
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 6
+    }
+   ]
+  },
+  "143 WHERE number NotIn a list": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "144 WHERE equals compares number with string": {
+   "rows": []
+  },
+  "145 WHERE equals a number note": {
+   "rows": [
+    {
+     "id": 6
+    }
+   ]
+  },
+  "146 WHERE equals a bool note": {
+   "rows": [
+    {
+     "id": 7
+    }
+   ]
+  },
+  "147 HAVING equals null on a null sum": {
+   "rows": [
+    {
+     "artist": "Monk",
+     "total": null
+    }
+   ]
+  },
+  "148 HAVING equals a number": {
+   "rows": [
+    {
+     "artist": "Miles",
+     "total": 3
+    }
+   ]
+  },
+  "149 HAVING null sum compared with ordering": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "total": 2
+    },
+    {
+     "artist": "Ella",
+     "total": 2
+    },
+    {
+     "artist": "Metallica",
+     "total": 5
+    },
+    {
+     "artist": "Miles",
+     "total": 3
+    }
+   ]
+  },
   "15 grouped ORDER BY on non-grouped field": {
    "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"s.id\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
+  "150 HAVING null literal equals null literal": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "total": 2
+    },
+    {
+     "artist": "Ella",
+     "total": 2
+    },
+    {
+     "artist": "Metallica",
+     "total": 5
+    },
+    {
+     "artist": "Miles",
+     "total": 3
+    },
+    {
+     "artist": "Monk",
+     "total": null
+    }
+   ]
+  },
+  "151 HAVING In with a literal right side": {
+   "error": "unsupported HAVING operator \"In\"",
+   "phase": "plan"
+  },
+  "152 HAVING In on no groups returns nothing": {
+   "rows": []
+  },
+  "153 WHERE equals null on a missing field": {
+   "rows": []
+  },
+  "154 WHERE In null on a missing field": {
+   "rows": []
+  },
+  "155 WHERE NotIn empty on a missing field": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "156 WHERE equals a string skips null and missing": {
+   "rows": [
+    {
+     "id": 3
+    }
+   ]
+  },
+  "157 WHERE less-than on a missing field": {
+   "rows": [
+    {
+     "id": 5
+    }
+   ]
+  },
+  "158 group by a field that is null in some rows and missing in others": {
+   "rows": [
+    {
+     "g": null,
+     "n": 4,
+     "total": 12
+    },
+    {
+     "g": "a",
+     "n": 1,
+     "total": 3
+    }
+   ]
+  },
+  "159 group by two fields with null and missing": {
+   "rows": [
+    {
+     "g": null,
+     "n": 3,
+     "s": null
+    },
+    {
+     "g": null,
+     "n": 1,
+     "s": "x"
+    },
+    {
+     "g": "a",
+     "n": 1,
+     "s": null
+    }
+   ]
+  },
   "16 grouped ORDER BY expr over non-grouped field (0 - id)": {
    "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"s.id\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
+  },
+  "160 group by a null-or-missing field through a flat join": {
+   "rows": [
+    {
+     "g": null,
+     "n": 4,
+     "total": 12
+    },
+    {
+     "g": "a",
+     "n": 1,
+     "total": 3
+    }
+   ]
+  },
+  "161 count distinct skips null and missing": {
+   "rows": [
+    {
+     "kinds": 1,
+     "present": 1
+    }
+   ]
+  },
+  "162 group by with a null group ordered last descending": {
+   "rows": [
+    {
+     "g": "a",
+     "n": 1
+    },
+    {
+     "g": null,
+     "n": 4
+    }
+   ]
+  },
+  "163 min and max over a null-or-missing field": {
+   "rows": [
+    {
+     "first": null,
+     "id": 1,
+     "lo": null
+    },
+    {
+     "first": null,
+     "id": 2,
+     "lo": null
+    },
+    {
+     "first": "a",
+     "id": 3,
+     "lo": "a"
+    },
+    {
+     "first": null,
+     "id": 4,
+     "lo": null
+    },
+    {
+     "first": null,
+     "id": 5,
+     "lo": null
+    }
+   ]
+  },
+  "164 SUM overflows to infinity": {
+   "error": "SUM numeric overflow",
+   "phase": "plan"
+  },
+  "165 AVG overflows to infinity": {
+   "error": "AVG numeric overflow",
+   "phase": "plan"
+  },
+  "166 SUM that cancels without overflow": {
+   "rows": [
+    {
+     "total": 0
+    }
+   ]
+  },
+  "167 SUM within range": {
+   "rows": [
+    {
+     "total": 1
+    }
+   ]
+  },
+  "168 SUM over all rows overflows at the second value": {
+   "error": "SUM numeric overflow",
+   "phase": "plan"
+  },
+  "169 SUM of an overflowing product": {
+   "error": "SUM produced a non-finite value",
+   "phase": "plan"
   },
   "17 mixed-type field key (note: string/number/bool/null)": {
    "rows": [
@@ -1030,6 +1377,88 @@
     }
    ]
   },
+  "170 MAX and MIN are not affected by size": {
+   "rows": [
+    {
+     "g": "a",
+     "hi": 1.5e+308,
+     "lo": 1.5e+308
+    },
+    {
+     "g": "b",
+     "hi": 1.5e+308,
+     "lo": -1.5e+308
+    },
+    {
+     "g": "c",
+     "hi": 1,
+     "lo": 1
+    }
+   ]
+  },
+  "171 overflowing product in a plain column": {
+   "error": "join_plan at columns: output is not JSON serializable: json: unsupported value: +Inf",
+   "phase": "plan"
+  },
+  "172 overflowing product as a plain order key": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "173 overflowing product of aggregates in a column": {
+   "error": "dalgo aggregation: retained aggregation byte limit 67108864 exceeded",
+   "phase": "plan"
+  },
+  "174 overflowing product of aggregates as an order key": {
+   "error": "dalgo aggregation: retained aggregation byte limit 67108864 exceeded",
+   "phase": "plan"
+  },
+  "175 overflowing product in WHERE": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    }
+   ]
+  },
+  "176 SUM overflow in a group that LIMIT pages away": {
+   "error": "SUM numeric overflow",
+   "phase": "plan"
+  },
+  "177 SUM overflow in a group that HAVING filters out": {
+   "error": "SUM numeric overflow",
+   "phase": "plan"
+  },
+  "178 SUM overflow in an aggregate used only by HAVING": {
+   "error": "SUM numeric overflow",
+   "phase": "plan"
+  },
+  "179 SUM overflow in an aggregate used only by an order key": {
+   "error": "SUM numeric overflow",
+   "phase": "plan"
+  },
   "18 flat join grouped, expr key sum/population desc (TS streams with scanPages)": {
    "rows": [
     {
@@ -1051,6 +1480,123 @@
     {
      "country": "USA",
      "total": 30
+    }
+   ]
+  },
+  "180 SUM overflow through a flat join": {
+   "error": "SUM numeric overflow",
+   "phase": "read"
+  },
+  "181 unaliased count star": {
+   "rows": [
+    {
+     "COUNT(*)": 7
+    }
+   ]
+  },
+  "182 unaliased aggregates over unqualified fields": {
+   "rows": [
+    {
+     "AVG(price)": 2,
+     "SUM(qty)": 2,
+     "artist": "Coltrane"
+    },
+    {
+     "AVG(price)": 2,
+     "SUM(qty)": 2,
+     "artist": "Ella"
+    },
+    {
+     "AVG(price)": 1,
+     "SUM(qty)": 5,
+     "artist": "Metallica"
+    },
+    {
+     "AVG(price)": 0.75,
+     "SUM(qty)": 3,
+     "artist": "Miles"
+    },
+    {
+     "AVG(price)": 3,
+     "SUM(qty)": null,
+     "artist": "Monk"
+    }
+   ]
+  },
+  "183 unaliased aggregates over qualified fields": {
+   "rows": [
+    {
+     "FIRST(s.id)": 2,
+     "LAST(s.id)": 6,
+     "MAX(s.price)": 2,
+     "MIN(s.price)": 2,
+     "SUM(s.qty)": 2,
+     "artist": "Coltrane"
+    },
+    {
+     "FIRST(s.id)": 7,
+     "LAST(s.id)": 7,
+     "MAX(s.price)": 2,
+     "MIN(s.price)": 2,
+     "SUM(s.qty)": 2,
+     "artist": "Ella"
+    },
+    {
+     "FIRST(s.id)": 4,
+     "LAST(s.id)": 4,
+     "MAX(s.price)": 1,
+     "MIN(s.price)": 1,
+     "SUM(s.qty)": 5,
+     "artist": "Metallica"
+    },
+    {
+     "FIRST(s.id)": 1,
+     "LAST(s.id)": 3,
+     "MAX(s.price)": 1.5,
+     "MIN(s.price)": 0,
+     "SUM(s.qty)": 3,
+     "artist": "Miles"
+    },
+    {
+     "FIRST(s.id)": 5,
+     "LAST(s.id)": 5,
+     "MAX(s.price)": 3,
+     "MIN(s.price)": 3,
+     "SUM(s.qty)": null,
+     "artist": "Monk"
+    }
+   ]
+  },
+  "184 unaliased distinct count": {
+   "rows": [
+    {
+     "COUNT(DISTINCT artist)": 5,
+     "COUNT(DISTINCT s.customer)": 3
+    }
+   ]
+  },
+  "185 two identical unaliased aggregates": {
+   "error": "join_field at columns[1]: duplicate output name COUNT(*)",
+   "phase": "plan"
+  },
+  "186 unaliased aggregate clashes with an alias": {
+   "error": "join_field at columns[1]: duplicate output name COUNT(*)",
+   "phase": "plan"
+  },
+  "187 unaliased binary column": {
+   "error": "join_shape at columns[1].as: non-field JOIN column requires alias",
+   "phase": "plan"
+  },
+  "188 unaliased literal column": {
+   "error": "join_shape at columns[0].as: non-field JOIN column requires alias",
+   "phase": "read"
+  },
+  "189 unaliased aggregate over a literal": {
+   "rows": [
+    {
+     "COUNT('it''s')": 7,
+     "COUNT(1)": 7,
+     "COUNT(1.5)": 7
     }
    ]
   },
@@ -1078,6 +1624,190 @@
     }
    ]
   },
+  "190 unaliased aggregate over a product": {
+   "rows": [
+    {
+     "SUM((s.price * qty))": 16
+    }
+   ]
+  },
+  "191 unaliased aggregate named in a field-looking way is not an alias": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"[COUNT(*)]\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "192 unaliased aggregates through a flat join": {
+   "rows": [
+    {
+     "COUNT(*)": 3,
+     "COUNT(DISTINCT l.customer)": 3,
+     "SUM(l.minutes)": 15,
+     "name": "Coltrane"
+    },
+    {
+     "COUNT(*)": 2,
+     "COUNT(DISTINCT l.customer)": 2,
+     "SUM(l.minutes)": 9,
+     "name": "Ella"
+    },
+    {
+     "COUNT(*)": 1,
+     "COUNT(DISTINCT l.customer)": 1,
+     "SUM(l.minutes)": 3,
+     "name": "Evans"
+    },
+    {
+     "COUNT(*)": 3,
+     "COUNT(DISTINCT l.customer)": 3,
+     "SUM(l.minutes)": 12,
+     "name": "Metallica"
+    },
+    {
+     "COUNT(*)": 3,
+     "COUNT(DISTINCT l.customer)": 2,
+     "SUM(l.minutes)": 15,
+     "name": "Miles"
+    },
+    {
+     "COUNT(*)": 2,
+     "COUNT(DISTINCT l.customer)": 1,
+     "SUM(l.minutes)": 12,
+     "name": "Monk"
+    }
+   ]
+  },
+  "193 desc null": {
+   "rows": [
+    {
+     "id": 5
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 1
+    },
+    {
+     "id": 7
+    },
+    {
+     "id": 4
+    }
+   ]
+  },
+  "194 desc false": {
+   "rows": [
+    {
+     "id": 5
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 1
+    },
+    {
+     "id": 7
+    },
+    {
+     "id": 4
+    }
+   ]
+  },
+  "195 yaml desc without a value": {
+   "rows": [
+    {
+     "id": 5
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 1
+    },
+    {
+     "id": 7
+    },
+    {
+     "id": 4
+    }
+   ]
+  },
+  "196 yaml desc null on an expression key": {
+   "rows": [
+    {
+     "id": 5
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 1
+    },
+    {
+     "id": 7
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 6
+    }
+   ]
+  },
+  "197 desc as a string": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!str `true` into bool",
+   "phase": "parse"
+  },
+  "198 desc as a number": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!int `1` into bool",
+   "phase": "parse"
+  },
+  "199 desc on a values key": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
   "20 aggregate key with HAVING and avg, grouped": {
    "rows": [
     {
@@ -1093,6 +1823,122 @@
      "customer": "c3"
     }
    ]
+  },
+  "200 WHERE literal on the left": {
+   "rows": [
+    {
+     "id": 4
+    }
+   ]
+  },
+  "201 WHERE literal on the left of equality": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    }
+   ]
+  },
+  "202 WHERE field against field": {
+   "rows": [
+    {
+     "id": 2
+    },
+    {
+     "id": 6
+    }
+   ]
+  },
+  "203 WHERE field equals field": {
+   "rows": []
+  },
+  "204 WHERE arithmetic on the left": {
+   "rows": [
+    {
+     "id": 4
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "205 WHERE arithmetic with a null operand": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "206 WHERE arithmetic division by zero": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "207 WHERE arithmetic on both sides": {
+   "rows": [
+    {
+     "id": 3
+    }
+   ]
+  },
+  "208 WHERE true constant comparison": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "209 WHERE false constant comparison": {
+   "rows": []
   },
   "21 jazz filter + count desc (where on genre)": {
    "rows": [
@@ -1114,10 +1960,890 @@
     }
    ]
   },
+  "210 WHERE In with a literal right side": {
+   "error": "query_shape at where.right: IN requires an array or query",
+   "phase": "plan"
+  },
+  "211 WHERE In with a field right side": {
+   "error": "query_shape at where.right: IN requires an array or query",
+   "phase": "plan"
+  },
+  "212 WHERE NotIn with a literal right side": {
+   "error": "query_shape at where.right: IN requires an array or query",
+   "phase": "plan"
+  },
+  "213 WHERE equals a values list": {
+   "rows": []
+  },
+  "214 WHERE less-than a values list": {
+   "rows": []
+  },
+  "215 WHERE greater-than a values list": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "216 WHERE values list on the left": {
+   "rows": []
+  },
+  "217 WHERE aggregate operand": {
+   "error": "query_shape at expression: unsupported expression dal.function",
+   "phase": "plan"
+  },
+  "218 WHERE aggregate operand on an empty table": {
+   "rows": []
+  },
+  "219 WHERE star operand": {
+   "error": "query_shape at expression: unsupported expression dal.star",
+   "phase": "plan"
+  },
   "22 empty input, aggregate-only key (implicit group)": {
    "rows": [
     {
      "n": 0
+    }
+   ]
+  },
+  "220 WHERE parameter operand": {
+   "error": "query_shape at expression: unsupported expression dal.Param",
+   "phase": "plan"
+  },
+  "221 WHERE parameter operand on an empty table": {
+   "rows": []
+  },
+  "222 WHERE with an invalid parameter name": {
+   "error": "invalid DTQL: comparison left: invalid parameter name \"1x\"",
+   "phase": "parse"
+  },
+  "223 WHERE with an unknown operator": {
+   "error": "invalid DTQL: unknown comparison operator \"like\"",
+   "phase": "parse"
+  },
+  "224 WHERE with an empty operator": {
+   "error": "invalid DTQL: unknown comparison operator \"\"",
+   "phase": "parse"
+  },
+  "225 WHERE missing the right side": {
+   "error": "invalid DTQL: comparison requires both left and right",
+   "phase": "parse"
+  },
+  "226 WHERE missing the left side": {
+   "error": "invalid DTQL: comparison requires both left and right",
+   "phase": "parse"
+  },
+  "227 WHERE missing the operator": {
+   "error": "invalid DTQL: unknown comparison operator \"\"",
+   "phase": "parse"
+  },
+  "228 WHERE empty object": {
+   "error": "invalid DTQL: condition must be a comparison (op/left/right) or a group (and/or)",
+   "phase": "parse"
+  },
+  "229 WHERE with an unknown key": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: field foo not found in type dtql.condYAML",
+   "phase": "parse"
+  },
+  "230 WHERE with an expression of two forms": {
+   "error": "invalid DTQL: comparison left: expression must set exactly one expression form, but several are set",
+   "phase": "parse"
+  },
+  "231 WHERE with an empty expression": {
+   "error": "invalid DTQL: comparison left: expression must set exactly one expression form",
+   "phase": "parse"
+  },
+  "232 WHERE with a non-scalar value": {
+   "error": "invalid DTQL: comparison right: value must be a scalar",
+   "phase": "parse"
+  },
+  "233 WHERE with a field of an unknown source": {
+   "error": "invalid DTQL: join_scope at where.left.source: unknown alias \"zz\"",
+   "phase": "parse"
+  },
+  "234 WHERE field against field through a join": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "235 WHERE literal on the left through a join": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "236 and of two predicates": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "237 or of two predicates": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "238 and with one predicate": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    }
+   ]
+  },
+  "239 or with one predicate": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    }
+   ]
+  },
+  "240 and of three predicates": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "241 or of three predicates": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "242 and of an or and a predicate": {
+   "rows": [
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    }
+   ]
+  },
+  "243 or of an and and a predicate": {
+   "rows": [
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    }
+   ]
+  },
+  "244 nested groups three deep": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "245 or with null comparisons": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    }
+   ]
+  },
+  "246 and with null comparisons": {
+   "rows": [
+    {
+     "id": 1
+    }
+   ]
+  },
+  "247 and with In and NotIn": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "248 and with field against field and literal on the left": {
+   "rows": [
+    {
+     "id": 2
+    },
+    {
+     "id": 6
+    }
+   ]
+  },
+  "249 and with arithmetic": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "250 and short-circuits an erroring second predicate": {
+   "rows": []
+  },
+  "251 and reaches an erroring second predicate": {
+   "error": "query_shape at where.conditions[1].right: IN requires an array or query",
+   "phase": "plan"
+  },
+  "252 or short-circuits an erroring second predicate": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "253 or reaches an erroring second predicate": {
+   "error": "query_shape at where.conditions[1].right: IN requires an array or query",
+   "phase": "plan"
+  },
+  "254 and with an erroring first predicate": {
+   "error": "query_shape at where.conditions[0].right: IN requires an array or query",
+   "phase": "plan"
+  },
+  "255 and after an unknown predicate still reaches an erroring one": {
+   "error": "query_shape at where.conditions[1].right: IN requires an array or query",
+   "phase": "plan"
+  },
+  "256 or after an unknown predicate still reaches an erroring one": {
+   "error": "query_shape at where.conditions[1].right: IN requires an array or query",
+   "phase": "plan"
+  },
+  "257 or of an unknown and a true predicate": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "258 and of an unknown and a true predicate": {
+   "rows": []
+  },
+  "259 or with NotIn over a null list item": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    }
+   ]
+  },
+  "260 and with NotIn over a null left side": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "261 empty and": {
+   "error": "invalid DTQL: \"AND\" group must have at least one condition",
+   "phase": "parse"
+  },
+  "262 empty or": {
+   "error": "invalid DTQL: \"OR\" group must have at least one condition",
+   "phase": "parse"
+  },
+  "263 and null": {
+   "error": "invalid DTQL: condition must be a comparison (op/left/right) or a group (and/or)",
+   "phase": "parse"
+  },
+  "264 and as an object": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!map into []dtql.condYAML",
+   "phase": "parse"
+  },
+  "265 and mixed with or": {
+   "error": "invalid DTQL: condition mixes comparison and group forms",
+   "phase": "parse"
+  },
+  "266 and mixed with a comparison": {
+   "error": "invalid DTQL: condition mixes comparison and group forms",
+   "phase": "parse"
+  },
+  "267 and with an invalid child": {
+   "error": "group condition #1: invalid DTQL: comparison requires both left and right",
+   "phase": "parse"
+  },
+  "268 and with a non-object child": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!int `1` into dtql.condYAML",
+   "phase": "parse"
+  },
+  "269 and with an empty child": {
+   "error": "group condition #0: invalid DTQL: condition must be a comparison (op/left/right) or a group (and/or)",
+   "phase": "parse"
+  },
+  "270 or with an unknown source in a child": {
+   "error": "invalid DTQL: join_scope at where.conditions[1].left.source: unknown alias \"zz\"",
+   "phase": "parse"
+  },
+  "271 and with an unknown key": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: field foo not found in type dtql.condYAML",
+   "phase": "parse"
+  },
+  "272 group inside group with an invalid operator": {
+   "error": "group condition #0: group condition #0: invalid DTQL: unknown comparison operator \"like\"",
+   "phase": "parse"
+  },
+  "273 yaml and group": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "274 group with an unqualified field on a single source": {
+   "rows": [
+    {
+     "artist": "Ella",
+     "n": 1
+    },
+    {
+     "artist": "Miles",
+     "n": 1
+    }
+   ]
+  },
+  "275 HAVING and of two aggregates": {
+   "rows": [
+    {
+     "artist": "Metallica",
+     "n": 1,
+     "total": 5
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    }
+   ]
+  },
+  "276 HAVING or of two aggregates": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Metallica",
+     "n": 1,
+     "total": 5
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    }
+   ]
+  },
+  "277 HAVING nested groups": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Ella",
+     "n": 1,
+     "total": 2
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    }
+   ]
+  },
+  "278 HAVING group with aliases": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Ella",
+     "n": 1,
+     "total": 2
+    },
+    {
+     "artist": "Metallica",
+     "n": 1,
+     "total": 5
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    }
+   ]
+  },
+  "279 HAVING group with a null comparison": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    },
+    {
+     "artist": "Monk",
+     "n": 1,
+     "total": null
+    }
+   ]
+  },
+  "280 HAVING group with a null ordering comparison": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Ella",
+     "n": 1,
+     "total": 2
+    },
+    {
+     "artist": "Metallica",
+     "n": 1,
+     "total": 5
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    }
+   ]
+  },
+  "281 HAVING group with a non-grouped field": {
+   "error": "invalid DTQL: aggregation: HAVING condition #0: HAVING left operand: \"s.genre\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "282 HAVING group with an empty list": {
+   "error": "invalid DTQL: having: invalid DTQL: \"AND\" group must have at least one condition",
+   "phase": "parse"
+  },
+  "283 HAVING group short-circuits an In": {
+   "rows": []
+  },
+  "284 HAVING group reaches an In": {
+   "error": "unsupported HAVING operator \"In\"",
+   "phase": "plan"
+  },
+  "285 HAVING group with an alias nested in arithmetic": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    }
+   ]
+  },
+  "286 music: how is a customer connected to an artist": {
+   "rows": [
+    {
+     "artist": "Miles Davis",
+     "customer": "Lovelace",
+     "track": "Blue in Green"
+    },
+    {
+     "artist": "Miles Davis",
+     "customer": "Lovelace",
+     "track": "So What"
+    }
+   ]
+  },
+  "287 music: customer and artist with no connection": {
+   "rows": []
+  },
+  "288 music: customer and artist through a different invoice": {
+   "rows": [
+    {
+     "artist": "Miles Davis",
+     "customer": "Young",
+     "track": "So What"
+    }
+   ]
+  },
+  "289 music: customer or artist": {
+   "rows": [
+    {
+     "artist": "Metallica",
+     "customer": "Chen",
+     "track": "One"
+    }
+   ]
+  },
+  "290 music: customer and one of several artists": {
+   "rows": [
+    {
+     "artist": "Miles Davis",
+     "customer": "Lovelace",
+     "track": "Blue in Green"
+    },
+    {
+     "artist": "John Coltrane",
+     "customer": "Lovelace",
+     "track": "Giant Steps"
+    },
+    {
+     "artist": "Miles Davis",
+     "customer": "Lovelace",
+     "track": "So What"
+    }
+   ]
+  },
+  "291 music: artists connected to a customer, counted": {
+   "rows": [
+    {
+     "artist": "Miles Davis",
+     "tracks": 1
+    }
+   ]
+  },
+  "292 music: group with the same field twice": {
+   "rows": [
+    {
+     "artist": "Miles Davis",
+     "customer": "Lovelace",
+     "track": "Blue in Green"
+    },
+    {
+     "artist": "John Coltrane",
+     "customer": "Lovelace",
+     "track": "Giant Steps"
+    },
+    {
+     "artist": "Miles Davis",
+     "customer": "Lovelace",
+     "track": "So What"
+    }
+   ]
+  },
+  "293 flat join with and and or in WHERE grouped by artist": {
+   "rows": [
+    {
+     "artist": "Ella",
+     "minutes": 1,
+     "plays": 1
+    },
+    {
+     "artist": "Metallica",
+     "minutes": 4,
+     "plays": 1
+    },
+    {
+     "artist": "Miles",
+     "minutes": 12,
+     "plays": 2
+    }
+   ]
+  },
+  "294 flat join with a HAVING group": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "minutes": 15,
+     "plays": 3
+    },
+    {
+     "artist": "Ella",
+     "minutes": 9,
+     "plays": 2
+    },
+    {
+     "artist": "Metallica",
+     "minutes": 12,
+     "plays": 3
+    },
+    {
+     "artist": "Miles",
+     "minutes": 15,
+     "plays": 3
+    },
+    {
+     "artist": "Monk",
+     "minutes": 12,
+     "plays": 2
+    }
+   ]
+  },
+  "295 flat join with both groups and a field-against-field comparison": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "plays": 2
+    },
+    {
+     "artist": "Ella",
+     "plays": 1
+    },
+    {
+     "artist": "Metallica",
+     "plays": 1
+    },
+    {
+     "artist": "Monk",
+     "plays": 2
+    }
+   ]
+  },
+  "296 left join with an or that matches the missing side": {
+   "rows": [
+    {
+     "id": 9,
+     "label": "Verve"
+    },
+    {
+     "id": 10,
+     "label": "Verve"
+    },
+    {
+     "id": 15,
+     "label": null
+    }
+   ]
+  },
+  "297 alias inside an expression order key": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    },
+    {
+     "artist": "Ella",
+     "n": 1,
+     "total": 2
+    },
+    {
+     "artist": "Metallica",
+     "n": 1,
+     "total": 5
+    },
+    {
+     "artist": "Monk",
+     "n": 1,
+     "total": null
+    }
+   ]
+  },
+  "298 alias inside an expression order key, descending": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    },
+    {
+     "artist": "Ella",
+     "n": 1,
+     "total": 2
+    },
+    {
+     "artist": "Metallica",
+     "n": 1,
+     "total": 5
+    },
+    {
+     "artist": "Monk",
+     "n": 1,
+     "total": null
+    }
+   ]
+  },
+  "299 two aliases inside one expression order key": {
+   "rows": [
+    {
+     "artist": "Monk",
+     "n": 1,
+     "total": null
+    },
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Ella",
+     "n": 1,
+     "total": 2
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    },
+    {
+     "artist": "Metallica",
+     "n": 1,
+     "total": 5
     }
    ]
   },
@@ -1145,6 +2871,168 @@
     }
    ]
   },
+  "300 alias beside an aggregate inside an expression order key": {
+   "rows": [
+    {
+     "artist": "Monk",
+     "n": 1,
+     "total": null
+    },
+    {
+     "artist": "Ella",
+     "n": 1,
+     "total": 2
+    },
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Metallica",
+     "n": 1,
+     "total": 5
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    }
+   ]
+  },
+  "301 alias inside an expression HAVING operand": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    }
+   ]
+  },
+  "302 alias inside an expression on both HAVING sides": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2,
+     "total": 2
+    },
+    {
+     "artist": "Ella",
+     "n": 1,
+     "total": 2
+    },
+    {
+     "artist": "Metallica",
+     "n": 1,
+     "total": 5
+    },
+    {
+     "artist": "Miles",
+     "n": 2,
+     "total": 3
+    }
+   ]
+  },
+  "303 alias with a source inside an expression": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"s.n\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "304 alias of a field column inside an expression": {
+   "rows": [
+    {
+     "n": 1,
+     "who": "Ella"
+    },
+    {
+     "n": 1,
+     "who": "Metallica"
+    },
+    {
+     "n": 1,
+     "who": "Monk"
+    },
+    {
+     "n": 2,
+     "who": "Coltrane"
+    },
+    {
+     "n": 2,
+     "who": "Miles"
+    }
+   ]
+  },
+  "305 unknown name inside an expression order key": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"nope\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "306 alias named like a source field in an aggregate query": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "qty": 2
+    },
+    {
+     "artist": "Miles",
+     "qty": 2
+    },
+    {
+     "artist": "Ella",
+     "qty": 1
+    },
+    {
+     "artist": "Metallica",
+     "qty": 1
+    },
+    {
+     "artist": "Monk",
+     "qty": 1
+    }
+   ]
+  },
+  "307 limit zero": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "308 negative limit": {
+   "error": "invalid DTQL: query_shape at limit and offset must be non-negative",
+   "phase": "parse"
+  },
+  "309 offset zero": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    }
+   ]
+  },
   "31 HAVING ratio \u003e 0.1 with zero divisor": {
    "rows": [
     {
@@ -1168,6 +3056,172 @@
      "r": 1
     }
    ]
+  },
+  "310 negative offset": {
+   "error": "invalid DTQL: query_shape at limit and offset must be non-negative",
+   "phase": "parse"
+  },
+  "311 offset past the end": {
+   "rows": []
+  },
+  "312 column alias null": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "313 aggregate distinct null": {
+   "rows": [
+    {
+     "n": 7
+    }
+   ]
+  },
+  "314 from alias null": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  from.alias must be a string",
+   "phase": "parse"
+  },
+  "315 empty groupBy": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "316 empty columns": {
+   "rows": [
+    {
+     "artist": "Miles",
+     "customer": "c1",
+     "genre": "Jazz",
+     "id": 1,
+     "k": 1,
+     "note": "x",
+     "price": 1.5,
+     "qty": 2,
+     "w": 1
+    },
+    {
+     "artist": "Coltrane",
+     "customer": "c2",
+     "genre": "Jazz",
+     "id": 2,
+     "k": 1,
+     "note": null,
+     "price": 2,
+     "qty": 1,
+     "w": 1
+    }
+   ]
+  },
+  "317 empty orderBy": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    }
+   ]
+  },
+  "318 where null": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "319 having null": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "320 unknown top-level key": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: field bogus not found in type dtql.document",
+   "phase": "parse"
+  },
+  "321 yaml with a duplicate key": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 3: mapping key \"columns\" already defined at line 2",
+   "phase": "parse"
+  },
+  "322 yaml with two documents": {
+   "error": "invalid DTQL-YAML: multiple documents are not allowed",
+   "phase": "parse"
   },
   "33 key = min(note) mixed types, grouped by genre": {
    "rows": [

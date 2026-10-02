@@ -1,4 +1,5 @@
-import type { DTQLExpression, DTQLHaving, DTQLQueryOrder, QueryColumn } from "./query.js";
+import { walkComparisons } from "./condition.js";
+import type { DTQLCondition, DTQLExpression, DTQLQueryOrder, QueryColumn } from "./query.js";
 
 /** True when the expression is, or contains, an aggregate call. */
 export function containsAggregate(expression: DTQLExpression): boolean {
@@ -15,7 +16,7 @@ export function containsDistinctAggregate(expression: DTQLExpression): boolean {
 export interface AggregationParts {
   readonly groupBy?: readonly DTQLExpression[] | undefined;
   readonly columns?: readonly QueryColumn[] | undefined;
-  readonly having?: DTQLHaving | undefined;
+  readonly having?: DTQLCondition | undefined;
   readonly orders: readonly DTQLQueryOrder[];
 }
 
@@ -34,7 +35,15 @@ export function hasAggregation(parts: AggregationParts): boolean {
 export function hasDistinctAggregate(parts: AggregationParts): boolean {
   return (parts.columns ?? []).some((column) => column.expression !== undefined && containsDistinctAggregate(column.expression)) ||
     parts.orders.some((order) => order.expression !== undefined && containsDistinctAggregate(order.expression)) ||
-    (parts.having !== undefined && (containsDistinctAggregate(parts.having.left) || containsDistinctAggregate(parts.having.right)));
+    (parts.having !== undefined && conditionHasDistinctAggregate(parts.having));
+}
+
+function conditionHasDistinctAggregate(condition: DTQLCondition): boolean {
+  let found = false;
+  walkComparisons(condition, "having", (comparison) => {
+    if (containsDistinctAggregate(comparison.left) || containsDistinctAggregate(comparison.right)) found = true;
+  });
+  return found;
 }
 
 /**
@@ -46,6 +55,33 @@ export function effectiveColumns(parts: AggregationParts): readonly QueryColumn[
   if (parts.columns !== undefined) return parts.columns;
   if (!hasAggregation(parts)) return undefined;
   return (parts.groupBy ?? []).map((expression) => ({ expression }));
+}
+
+/** How Go renders a literal inside an expression's text: strings quoted with doubled quotes, other values as JSON. */
+export function constantText(value: unknown): string {
+  return typeof value === "string" ? `'${value.replaceAll("'", "''")}'` : JSON.stringify(value);
+}
+
+/** How Go renders a field: `source.name`, with a name that is not a plain word in brackets. */
+export function fieldText(source: string | undefined, field: string): string {
+  const name = /^\w+$/.test(field) ? field : `[${field}]`;
+  return source === undefined ? name : `${source}.${name}`;
+}
+
+/**
+ * The text Go gives an expression (`COUNT(*)`, `SUM(s.qty)`, `(a / b)`), which is
+ * also the output name of an aggregate column that has no `as`.
+ */
+export function expressionText(expression: DTQLExpression): string {
+  switch (expression.kind) {
+    case "field": return fieldText(expression.field.source, expression.field.field);
+    case "literal": return constantText(expression.value);
+    case "values": return `(${expression.values.map(constantText).join(", ")})`;
+    case "param": return `$${expression.name}`;
+    case "star": return "*";
+    case "aggregate": return `${expression.function.toUpperCase()}(${expression.distinct === true ? "DISTINCT " : ""}${expression.args.map(expressionText).join(", ")})`;
+    case "binary": return `(${expressionText(expression.left)} ${expression.operator} ${expressionText(expression.right)})`;
+  }
 }
 
 /** A stable structural identity, equal exactly when two expressions are the same. */
@@ -84,8 +120,10 @@ export function validateAggregation(parts: AggregationParts): void {
     else if (!groupKeys.has(expressionIdentity(expression))) reject(location, `${expressionIdentity(expression)} is neither aggregated nor present in GROUP BY`);
   });
   if (parts.having !== undefined) {
-    validateGrouped(parts.having.left, groupKeys, "having.left");
-    validateGrouped(parts.having.right, groupKeys, "having.right");
+    walkComparisons(parts.having, "having", (comparison, path) => {
+      validateGrouped(comparison.left, groupKeys, `${path}.left`);
+      validateGrouped(comparison.right, groupKeys, `${path}.right`);
+    });
   }
   parts.orders.forEach((order, index) => {
     const location = `orderBy[${index.toString()}]`;
