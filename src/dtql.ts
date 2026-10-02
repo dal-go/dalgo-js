@@ -18,7 +18,7 @@ import type {
   StructuredQuery,
 } from "./query.js";
 import { constantText, expressionText, fieldText, validateAggregation } from "./aggregation.js";
-import { isMembership, isConditionGroup, toCondition } from "./condition.js";
+import { isMembership, isConditionGroup, nullOperandProblem, toCondition } from "./condition.js";
 import { parseDocument as parseYamlDocument, stringify as stringifyYaml } from "yaml";
 
 /** The allowlisted tables and fields against which a DTQL action is validated. */
@@ -76,10 +76,12 @@ export function parseDTQL(
   const table = resolveRelationTable(relation, schema);
   const fields = new Set(table.fields);
   const aliases = relationAliases(relation);
-  const hasRelationModel = relation.database !== undefined || relation.alias !== undefined || relation.joins.length > 0;
-  // An aliased single source is still the relation model: its fields are source-qualified references too.
   // A null value (or an empty list for columns and groupBy) means "absent", as in the Go engine.
   const rawWhere = given(document.where);
+  // A null test needs the relation model even on a bare single source: the legacy filter (field, operator, value)
+  // has no way to carry one, and a legacy executor would drop or misread it. The parse is then a JoinedDTQLQuery.
+  const hasRelationModel = relation.database !== undefined || relation.alias !== undefined || relation.joins.length > 0 || containsNullTest(rawWhere);
+  // An aliased single source is still the relation model: its fields are source-qualified references too.
   const where = rawWhere === undefined ? undefined : hasRelationModel ? parseWhereCondition(rawWhere, aliases, schema) : parseLegacyWhere(rawWhere, fields, aliases, schema);
   // Columns come first: ORDER BY and HAVING may name a column by its alias.
   const rawColumns = givenList(document.columns);
@@ -407,6 +409,14 @@ function validateJoinReference(
   if (!table.fields.includes(reference.field)) fail(`join_field at ${path}: unknown field ${reference.source}.${reference.field}`);
 }
 
+/** True when a WHERE document holds an `isNull` / `isNotNull`, at the top or inside an `and` / `or` group. */
+function containsNullTest(where: unknown): boolean {
+  if (where === null || typeof where !== "object" || Array.isArray(where)) return false;
+  const condition = where as ObjectValue;
+  if (given(condition.isNull) !== undefined || given(condition.isNotNull) !== undefined) return true;
+  return (["and", "or"] as const).some((key) => { const children = condition[key]; return Array.isArray(children) && children.some(containsNullTest); });
+}
+
 /**
  * The legacy single-source model (no alias, database or join) keeps the plain
  * field-versus-literal `where` of `StructuredQuery`; groups and expressions
@@ -420,7 +430,6 @@ function parseLegacyWhere(
 ): QueryFilter<Record<string, unknown>> | DTQLQueryFilter {
   const where = object(value, "where");
   if (Object.hasOwn(where, "and") || Object.hasOwn(where, "or")) fail("where groups require an aliased or joined relation model");
-  if (Object.hasOwn(where, "isNull") || Object.hasOwn(where, "isNotNull")) fail("where null tests (isNull, isNotNull) require an aliased or joined relation model");
   assertOnlyKeys(where, comparisonKeys, "where");
   const operator = requiredString(where, "op");
   if (!operators.has(operator)) fail(`unsupported where operator ${operator}`);
@@ -474,7 +483,13 @@ function parseCondition(
   if (forms === 0) fail(`${path}: condition must be a comparison (op/left/right), a group (and/or) or a null test (isNull/isNotNull)`);
   if (forms > 1) fail(`${path}: condition mixes comparison, group and null-test forms`);
   const nullTest = set("isNull") ? "isNull" : set("isNotNull") ? "isNotNull" : undefined;
-  if (nullTest !== undefined) return { kind: nullTest === "isNull" ? "is-null" : "is-not-null", operand: operand(object(condition[nullTest], `${path}.${nullTest}`), `${path}.${nullTest}`) };
+  if (nullTest !== undefined) {
+    const operandPath = `${path}.${nullTest}`;
+    const tested = operand(object(condition[nullTest], operandPath), operandPath);
+    const problem = nullOperandProblem(tested, label === "having");
+    if (problem !== undefined) fail(`query_shape at ${operandPath}: ${problem}`);
+    return { kind: nullTest === "isNull" ? "is-null" : "is-not-null", operand: tested };
+  }
   if (comparison) {
     const operator = requiredString(condition, "op");
     if (!operators.has(operator)) fail(`unsupported ${label} operator ${operator}`);

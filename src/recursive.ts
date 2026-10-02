@@ -1,5 +1,6 @@
 import type { QueryExecutor } from "./database.js";
 import type { DTQLSchema } from "./dtql.js";
+import { nullOperandProblem } from "./condition.js";
 import { Key } from "./key.js";
 import type { ExistingRecord } from "./record.js";
 import type {
@@ -615,7 +616,7 @@ function parseQuery(value: Record<string, unknown>, schema: DTQLSchema, path: st
     ...(value.offset === undefined ? {} : { offset: offset(value.offset, `${path}.offset`) }),
     ...(value.columns === undefined ? {} : { columns: list(value.columns, `${path}.columns`).map((item, index) => { const column = raw(item, `${path}.columns[${index.toString()}]`); const as = column.as === undefined ? undefined : text(column.as, `${path}.columns[${index.toString()}].as`); delete column.as; const expression = parseExpression(column, schema, `${path}.columns[${index.toString()}]`); if (expression.kind === "query" && as !== undefined) shape(`${path}.columns[${index.toString()}]`, "scalar query alias belongs in query.as"); return { expression, ...(as === undefined ? {} : { as }) }; }) }),
     ...(value.groupBy === undefined ? {} : { groupBy: list(value.groupBy, `${path}.groupBy`).map((item, index) => parseExpression(item, schema, `${path}.groupBy[${index.toString()}]`) as DTQLExpression) }),
-    ...(value.having === undefined ? {} : { having: parseCondition(raw(value.having, `${path}.having`), schema, `${path}.having`) }),
+    ...(value.having === undefined ? {} : { having: parseCondition(raw(value.having, `${path}.having`), schema, `${path}.having`, true) }),
   };
   return result;
 }
@@ -665,10 +666,10 @@ function parseHints(value: unknown, path: string): { readonly algorithms: readon
   return { algorithms: snapshot };
 }
 
-function parseCondition(value: Record<string, unknown>, schema: DTQLSchema, path: string): RecursiveDTQLCondition {
+function parseCondition(value: Record<string, unknown>, schema: DTQLSchema, path: string, having = false): RecursiveDTQLCondition {
   if (value.exists !== undefined || value.notExists !== undefined) { const yes = value.exists !== undefined; keys(value, new Set([yes ? "exists" : "notExists"]), path); const nested = raw(yes ? value.exists : value.notExists, `${path}.query`); keys(nested, new Set(["query"]), `${path}.query`); return { kind: yes ? "exists" : "not-exists", query: parseQuery(raw(nested.query, `${path}.query`), schema, `${path}.query`) }; }
-  if (value.isNull !== undefined || value.isNotNull !== undefined) { const yes = value.isNull !== undefined; const key = yes ? "isNull" : "isNotNull"; keys(value, new Set([key]), path); return { kind: yes ? "is-null" : "is-not-null", operand: parseExpression(raw(value[key], `${path}.${key}`), schema, `${path}.${key}`) }; }
-  if (value.and !== undefined || value.or !== undefined) { const kind = value.and === undefined ? "or" : "and"; keys(value, new Set([kind]), path); return { kind, conditions: list(value[kind], `${path}.${kind}`).map((item, index) => parseCondition(raw(item, `${path}.${kind}[${index.toString()}]`), schema, `${path}.${kind}[${index.toString()}]`)) }; }
+  if (value.isNull !== undefined || value.isNotNull !== undefined) { const yes = value.isNull !== undefined; const key = yes ? "isNull" : "isNotNull"; keys(value, new Set([key]), path); const operand = parseExpression(raw(value[key], `${path}.${key}`), schema, `${path}.${key}`); const problem = nullOperandProblem(operand, having); if (problem !== undefined) shape(`${path}.${key}`, problem); return { kind: yes ? "is-null" : "is-not-null", operand }; }
+  if (value.and !== undefined || value.or !== undefined) { const kind = value.and === undefined ? "or" : "and"; keys(value, new Set([kind]), path); return { kind, conditions: list(value[kind], `${path}.${kind}`).map((item, index) => parseCondition(raw(item, `${path}.${kind}[${index.toString()}]`), schema, `${path}.${kind}[${index.toString()}]`, having)) }; }
   keys(value, new Set(["left", "op", "right"]), path); const op = text(requireValue(value, "op", path), `${path}.op`); const operator = op === "In" ? "in" : op === "NotIn" ? "not-in" : op;
   if (!["==", "!=", "<", "<=", ">", ">=", "in", "not-in"].includes(operator)) shape(`${path}.op`, `unsupported operator ${op}`);
   return { kind: "comparison", left: parseExpression(requireValue(value, "left", path), schema, `${path}.left`), operator: operator as never, right: parseExpression(requireValue(value, "right", path), schema, `${path}.right`) };

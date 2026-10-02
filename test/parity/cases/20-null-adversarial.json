@@ -1,0 +1,1695 @@
+{
+ "cases": [
+  {
+   "name": "A01 three-level nesting",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sparse",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Sparse",
+        "alias": "t"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "id",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "id",
+          "source": "t"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "and": [
+      {
+       "or": [
+        {
+         "isNull": {
+          "field": "g",
+          "source": "s"
+         }
+        },
+        {
+         "and": [
+          {
+           "isNotNull": {
+            "field": "s",
+            "source": "s"
+           }
+          },
+          {
+           "left": {
+            "field": "v",
+            "source": "s"
+           },
+           "op": "==",
+           "right": {
+            "value": 5
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "or": [
+        {
+         "and": [
+          {
+           "isNotNull": {
+            "field": "v",
+            "source": "s"
+           }
+          },
+          {
+           "isNull": {
+            "field": "s",
+            "source": "s"
+           }
+          }
+         ]
+        },
+        {
+         "isNotNull": {
+          "field": "s",
+          "source": "t"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A02 and of unknown comparison and true null test",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "and": [
+      {
+       "left": {
+        "field": "note",
+        "source": "s"
+       },
+       "op": "==",
+       "right": {
+        "value": null
+       }
+      },
+      {
+       "isNull": {
+        "field": "note",
+        "source": "s"
+       }
+      }
+     ]
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A03 or of unknown comparison and false null test",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "or": [
+      {
+       "left": {
+        "field": "qty",
+        "source": "s"
+       },
+       "op": "==",
+       "right": {
+        "value": null
+       }
+      },
+      {
+       "isNull": {
+        "field": "note",
+        "source": "s"
+       }
+      },
+      {
+       "isNotNull": {
+        "field": "qty",
+        "source": "s"
+       }
+      }
+     ]
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A06 left join to empty isNull",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sparse",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Empty",
+        "alias": "e"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "id",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "id",
+          "source": "e"
+         }
+        }
+       ],
+       "type": "left"
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNull": {
+      "field": "id",
+      "source": "e"
+     }
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A07 left join to empty isNotNull",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sparse",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Empty",
+        "alias": "e"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "id",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "id",
+          "source": "e"
+         }
+        }
+       ],
+       "type": "left"
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNotNull": {
+      "field": "id",
+      "source": "e"
+     }
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A08 isNotNull keeps zero false and empty-ish",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "and": [
+      {
+       "isNotNull": {
+        "field": "price",
+        "source": "s"
+       }
+      },
+      {
+       "isNotNull": {
+        "value": ""
+       }
+      },
+      {
+       "isNotNull": {
+        "value": false
+       }
+      },
+      {
+       "isNotNull": {
+        "value": 0
+       }
+      }
+     ]
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A09 isNull over division by zero",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNull": {
+      "binary": {
+       "op": "/",
+       "left": {
+        "field": "qty",
+        "source": "s"
+       },
+       "right": {
+        "value": 0
+       }
+      }
+     }
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A10 isNull over string arithmetic",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNull": {
+      "binary": {
+       "op": "+",
+       "left": {
+        "field": "note",
+        "source": "s"
+       },
+       "right": {
+        "value": 1
+       }
+      }
+     }
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A11 isNull over empty values",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNull": {
+      "values": []
+     }
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A13 unqualified ambiguous operand",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNull": {
+      "field": "k"
+     }
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A14 HAVING isNull over count star",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sparse",
+     "alias": "s"
+    },
+    "columns": [
+     {
+      "field": "g",
+      "source": "s"
+     },
+     {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "star": true
+        }
+       ]
+      },
+      "as": "n"
+     }
+    ],
+    "having": {
+     "isNull": {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "star": true
+        }
+       ]
+      }
+     }
+    },
+    "groupBy": [
+     {
+      "field": "g",
+      "source": "s"
+     }
+    ],
+    "orderBy": [
+     {
+      "field": "g",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A15 HAVING isNotNull over count of all-missing",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sparse",
+     "alias": "s"
+    },
+    "columns": [
+     {
+      "field": "g",
+      "source": "s"
+     },
+     {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "star": true
+        }
+       ]
+      },
+      "as": "n"
+     }
+    ],
+    "having": {
+     "isNotNull": {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "field": "s",
+         "source": "s"
+        }
+       ]
+      }
+     }
+    },
+    "groupBy": [
+     {
+      "field": "g",
+      "source": "s"
+     }
+    ],
+    "orderBy": [
+     {
+      "field": "g",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A16 HAVING equal null beside isNull",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sparse",
+     "alias": "s"
+    },
+    "columns": [
+     {
+      "field": "g",
+      "source": "s"
+     },
+     {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "star": true
+        }
+       ]
+      },
+      "as": "n"
+     }
+    ],
+    "having": {
+     "or": [
+      {
+       "left": {
+        "field": "g",
+        "source": "s"
+       },
+       "op": "==",
+       "right": {
+        "value": null
+       }
+      },
+      {
+       "isNull": {
+        "field": "g",
+        "source": "s"
+       }
+      }
+     ]
+    },
+    "groupBy": [
+     {
+      "field": "g",
+      "source": "s"
+     }
+    ],
+    "orderBy": [
+     {
+      "field": "g",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A17 HAVING equal null alone",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sparse",
+     "alias": "s"
+    },
+    "columns": [
+     {
+      "field": "g",
+      "source": "s"
+     },
+     {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "star": true
+        }
+       ]
+      },
+      "as": "n"
+     }
+    ],
+    "having": {
+     "left": {
+      "field": "g",
+      "source": "s"
+     },
+     "op": "==",
+     "right": {
+      "value": null
+     }
+    },
+    "groupBy": [
+     {
+      "field": "g",
+      "source": "s"
+     }
+    ],
+    "orderBy": [
+     {
+      "field": "g",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A18 HAVING isNull over select alias",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sparse",
+     "alias": "s"
+    },
+    "columns": [
+     {
+      "field": "g",
+      "source": "s"
+     },
+     {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "star": true
+        }
+       ]
+      },
+      "as": "n"
+     }
+    ],
+    "having": {
+     "isNull": {
+      "field": "n"
+     }
+    },
+    "groupBy": [
+     {
+      "field": "g",
+      "source": "s"
+     }
+    ],
+    "orderBy": [
+     {
+      "field": "g",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A19 global aggregate over empty isNull sum",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Empty",
+     "alias": "e"
+    },
+    "columns": [
+     {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "star": true
+        }
+       ]
+      },
+      "as": "n"
+     },
+     {
+      "aggregate": {
+       "function": "sum",
+       "args": [
+        {
+         "field": "id",
+         "source": "e"
+        }
+       ]
+      },
+      "as": "t"
+     }
+    ],
+    "having": {
+     "isNull": {
+      "aggregate": {
+       "function": "sum",
+       "args": [
+        {
+         "field": "id",
+         "source": "e"
+        }
+       ]
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "A20 global aggregate over empty isNotNull sum",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Empty",
+     "alias": "e"
+    },
+    "columns": [
+     {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "star": true
+        }
+       ]
+      },
+      "as": "n"
+     }
+    ],
+    "having": {
+     "isNotNull": {
+      "aggregate": {
+       "function": "sum",
+       "args": [
+        {
+         "field": "id",
+         "source": "e"
+        }
+       ]
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "A21 grouped empty isNull",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Empty",
+     "alias": "e"
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "e"
+     }
+    ],
+    "having": {
+     "isNull": {
+      "aggregate": {
+       "function": "max",
+       "args": [
+        {
+         "field": "id",
+         "source": "e"
+        }
+       ]
+      }
+     }
+    },
+    "groupBy": [
+     {
+      "field": "id",
+      "source": "e"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A22 where removes all rows then global having",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "star": true
+        }
+       ]
+      },
+      "as": "n"
+     }
+    ],
+    "having": {
+     "isNull": {
+      "aggregate": {
+       "function": "max",
+       "args": [
+        {
+         "field": "qty",
+         "source": "s"
+        }
+       ]
+      }
+     }
+    },
+    "where": {
+     "isNull": {
+      "field": "id",
+      "source": "s"
+     }
+    }
+   }
+  },
+  {
+   "name": "A23 flat join having nested groups",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "genre",
+      "source": "s"
+     },
+     {
+      "aggregate": {
+       "function": "avg",
+       "args": [
+        {
+         "field": "qty",
+         "source": "s"
+        }
+       ]
+      },
+      "as": "a"
+     }
+    ],
+    "having": {
+     "and": [
+      {
+       "or": [
+        {
+         "isNull": {
+          "aggregate": {
+           "function": "min",
+           "args": [
+            {
+             "field": "qty",
+             "source": "s"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "isNotNull": {
+          "aggregate": {
+           "function": "avg",
+           "args": [
+            {
+             "field": "qty",
+             "source": "s"
+            }
+           ]
+          }
+         }
+        }
+       ]
+      },
+      {
+       "isNotNull": {
+        "field": "genre",
+        "source": "s"
+       }
+      }
+     ]
+    },
+    "groupBy": [
+     {
+      "field": "genre",
+      "source": "s"
+     }
+    ],
+    "orderBy": [
+     {
+      "field": "genre",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "or": [
+      {
+       "isNull": {
+        "field": "qty",
+        "source": "s"
+       }
+      },
+      {
+       "isNotNull": {
+        "field": "note",
+        "source": "s"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "A24 having isNull count distinct",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sparse",
+     "alias": "s"
+    },
+    "columns": [
+     {
+      "field": "s",
+      "source": "s"
+     },
+     {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "star": true
+        }
+       ]
+      },
+      "as": "n"
+     }
+    ],
+    "having": {
+     "isNull": {
+      "aggregate": {
+       "function": "count",
+       "args": [
+        {
+         "field": "g",
+         "source": "s"
+        }
+       ],
+       "distinct": true
+      }
+     }
+    },
+    "groupBy": [
+     {
+      "field": "s",
+      "source": "s"
+     }
+    ],
+    "orderBy": [
+     {
+      "field": "s",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A25 having isNull min over mixed null group in a join",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "customer",
+      "source": "s"
+     },
+     {
+      "aggregate": {
+       "function": "sum",
+       "args": [
+        {
+         "field": "qty",
+         "source": "s"
+        }
+       ]
+      },
+      "as": "q"
+     }
+    ],
+    "having": {
+     "isNull": {
+      "aggregate": {
+       "function": "sum",
+       "args": [
+        {
+         "field": "qty",
+         "source": "s"
+        }
+       ]
+      }
+     }
+    },
+    "groupBy": [
+     {
+      "field": "customer",
+      "source": "s"
+     }
+    ],
+    "orderBy": [
+     {
+      "field": "customer",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "left": {
+      "field": "artist",
+      "source": "s"
+     },
+     "op": "==",
+     "right": {
+      "value": "Monk"
+     }
+    }
+   }
+  },
+  {
+   "name": "A26 isNull sibling null key",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNull": {
+      "field": "note",
+      "source": "s"
+     },
+     "isNotNull": null
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A27 isNull operand is a list",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNull": [
+      {
+       "field": "note",
+       "source": "s"
+      }
+     ]
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A28 isNull over nested isNull",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNull": {
+      "isNull": {
+       "field": "note",
+       "source": "s"
+      }
+     }
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A30 isNull inside on beside a comparison",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        },
+        {
+         "and": [
+          {
+           "isNull": {
+            "field": "w",
+            "source": "d"
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A31 yaml form",
+   "yaml": "from:\n  database: chinook\n  name: Sale\n  alias: s\n  joins:\n    - from: {database: chinook, name: Dim, alias: d}\n      on:\n        - {left: {field: k, source: s}, op: '==', right: {field: k, source: d}}\nwhere:\n  or:\n    - isNull: {field: note, source: s}\n    - isNull: {field: qty, source: s}\ncolumns:\n  - {field: id, source: s}\norderBy:\n  - {field: id, source: s}\n"
+  },
+  {
+   "name": "A32 isNull wrong case key",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sale",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isnull": {
+      "field": "note",
+      "source": "s"
+     }
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A33 right join null-extended left",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Dim",
+     "alias": "d",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Sparse",
+        "alias": "s"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "k",
+          "source": "d"
+         },
+         "op": "==",
+         "right": {
+          "field": "id",
+          "source": "s"
+         }
+        }
+       ],
+       "type": "right"
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNull": {
+      "field": "w",
+      "source": "d"
+     }
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  },
+  {
+   "name": "A34 isNotNull over aggregate-free binary of two sources",
+   "query": {
+    "from": {
+     "database": "chinook",
+     "name": "Sparse",
+     "alias": "s",
+     "joins": [
+      {
+       "from": {
+        "database": "chinook",
+        "name": "Dim",
+        "alias": "d"
+       },
+       "on": [
+        {
+         "left": {
+          "field": "id",
+          "source": "s"
+         },
+         "op": "==",
+         "right": {
+          "field": "k",
+          "source": "d"
+         }
+        }
+       ],
+       "type": "left"
+      }
+     ]
+    },
+    "columns": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ],
+    "where": {
+     "isNotNull": {
+      "binary": {
+       "op": "+",
+       "left": {
+        "field": "v",
+        "source": "s"
+       },
+       "right": {
+        "field": "w",
+        "source": "d"
+       }
+      }
+     }
+    },
+    "orderBy": [
+     {
+      "field": "id",
+      "source": "s"
+     }
+    ]
+   }
+  }
+ ]
+}

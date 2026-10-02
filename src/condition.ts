@@ -1,4 +1,4 @@
-import type { DTQLComparison, DTQLCondition, DTQLConditionGroup, DTQLExpression, DTQLNullTest, DTQLQueryFilter, QueryOperator } from "./query.js";
+import type { DTQLComparison, DTQLCondition, DTQLConditionGroup, DTQLExpression, DTQLNullTest, DTQLQueryFilter, QueryOperator, RecursiveDTQLExpression } from "./query.js";
 
 /** A condition that is neither an `and`/`or` group: a comparison or a null test. */
 export type DTQLLeaf = DTQLComparison | DTQLNullTest;
@@ -16,6 +16,24 @@ export function isConditionGroup(condition: DTQLCondition): condition is DTQLCon
 /** True for an `isNull` / `isNotNull` condition. */
 export function isNullTest(condition: DTQLCondition): condition is DTQLNullTest {
   return "kind" in condition && (condition.kind === "is-null" || condition.kind === "is-not-null");
+}
+
+/**
+ * Why an expression cannot be the operand of a null test, or undefined when it
+ * can. A field, a literal, arithmetic over those and a scalar subquery can be
+ * NULL; a `values` list, `star` and `param` are not values a query can test,
+ * and an aggregate has a value only in `having`. Go rejects the same shapes at
+ * parse, with the same wording.
+ */
+export function nullOperandProblem(operand: DTQLExpression | RecursiveDTQLExpression, having: boolean): string | undefined {
+  switch (operand.kind) {
+    case "values": return "a values list is not a scalar to test";
+    case "star": return "star is not a value to test";
+    case "param": return "a param is not a value to test";
+    case "aggregate": return having ? undefined : "an aggregate has no value in where; test it in having";
+    case "binary": return nullOperandProblem(operand.left, having) ?? nullOperandProblem(operand.right, having);
+    default: return undefined;
+  }
 }
 
 /** The expressions a leaf condition reads, each with the key that locates it in an error path. */
