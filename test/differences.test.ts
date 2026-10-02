@@ -188,3 +188,27 @@ describe("conditions built by hand", () => {
     expect(await run({ A: aData }, query)).toEqual([{ "SUM(a.n)": 35, "COUNT(DISTINCT a.d)": 2, "COUNT(*)": 3 }]);
   });
 });
+
+describe("null tests (isNull / isNotNull)", () => {
+  const idsOf = (rows: readonly Data[]): unknown[] => rows.map((row) => row.id).sort();
+
+  it("rejects isNull on a field the schema lacks at parse; Go, without field metadata, reads the field as absent and matches every row", () => {
+    expect(() => parseDTQL({ ...join, where: { isNull: { field: "nope", source: "a" } } }, schema)).toThrow("unknown field a.nope");
+    expect(() => parseDTQL({ ...join, where: { isNotNull: { field: "nope", source: "a" } } }, schema)).toThrow("unknown field a.nope");
+  });
+
+  it("resolves an unqualified null-test operand through the schema; Go requires a source in a JOIN", async () => {
+    const query = joined({ from: { name: "A", alias: "a" }, where: { isNull: { field: "note" } }, columns: [{ field: "id", source: "a" }] });
+    expect(idsOf(await run({ A: aData }, query))).toEqual([2]);
+  });
+
+  it("rejects a null element of an and / or list; Go's YAML decoder drops it and runs the rest", () => {
+    expect(() => parseDTQL({ ...join, where: { and: [{ isNull: { field: "note", source: "a" } }, null] }, columns: [{ field: "id", source: "a" }] }, schema)).toThrow("where.and[1] must be an object");
+  });
+
+  it("parses a null test on a bare single source into the relation model (Go has one model and no such split)", () => {
+    const bare = parseDTQL({ from: { name: "A" }, where: { isNull: { field: "note" } }, limit: 10 }, schema);
+    expect(isJoinedDTQLQuery(bare)).toBe(true);
+    expect(isJoinedDTQLQuery(parseDTQL({ from: { name: "A" }, where: { op: "==", left: { field: "note" }, right: { value: null } }, limit: 10 }, schema))).toBe(false);
+  });
+});

@@ -1,8 +1,8 @@
 {
  "dalgo": {
-  "commit": "0b8c11b1a94b6495281c8aacd6399e0585f9b35f",
+  "commit": "f82b3756805807f3c958c0a49ec7930410117e67",
   "module": "github.com/dal-go/dalgo",
-  "version": "v0.88.2"
+  "version": "v0.89.0"
  },
  "results": {
   "01 saved per-capita fixture (desc, tie, div-by-zero)": {
@@ -2053,7 +2053,7 @@
    "phase": "parse"
   },
   "228 WHERE empty object": {
-   "error": "invalid DTQL: condition must be a comparison (op/left/right) or a group (and/or)",
+   "error": "invalid DTQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
    "phase": "parse"
   },
   "229 WHERE with an unknown key": {
@@ -2383,7 +2383,7 @@
    "phase": "parse"
   },
   "263 and null": {
-   "error": "invalid DTQL: condition must be a comparison (op/left/right) or a group (and/or)",
+   "error": "invalid DTQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
    "phase": "parse"
   },
   "264 and as an object": {
@@ -2391,11 +2391,11 @@
    "phase": "parse"
   },
   "265 and mixed with or": {
-   "error": "invalid DTQL: condition mixes comparison and group forms",
+   "error": "invalid DTQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
    "phase": "parse"
   },
   "266 and mixed with a comparison": {
-   "error": "invalid DTQL: condition mixes comparison and group forms",
+   "error": "invalid DTQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
    "phase": "parse"
   },
   "267 and with an invalid child": {
@@ -2407,7 +2407,7 @@
    "phase": "parse"
   },
   "269 and with an empty child": {
-   "error": "group condition #0: invalid DTQL: condition must be a comparison (op/left/right) or a group (and/or)",
+   "error": "group condition #0: invalid DTQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
    "phase": "parse"
   },
   "270 or with an unknown source in a child": {
@@ -3223,6 +3223,84 @@
    "error": "invalid DTQL-YAML: multiple documents are not allowed",
    "phase": "parse"
   },
+  "323 isNull on a null column in a joined WHERE": {
+   "rows": [
+    {
+     "id": 2
+    }
+   ]
+  },
+  "324 isNotNull on a column with nulls in a joined WHERE": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "325 equal null still matches nothing in a joined WHERE": {
+   "rows": []
+  },
+  "326 isNull covers a null and a missing field": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "327 isNotNull excludes a null and a missing field": {
+   "rows": [
+    {
+     "id": 3
+    }
+   ]
+  },
+  "328 isNull finds the null-extended side of a LEFT JOIN": {
+   "rows": [
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "329 isNotNull keeps the matched side of a LEFT JOIN": {
+   "rows": [
+    {
+     "id": 1
+    }
+   ]
+  },
   "33 key = min(note) mixed types, grouped by genre": {
    "rows": [
     {
@@ -3230,6 +3308,152 @@
     },
     {
      "genre": "Jazz"
+    }
+   ]
+  },
+  "330 or of equal null and isNull is two-valued": {
+   "rows": [
+    {
+     "id": 2
+    }
+   ]
+  },
+  "331 and of two null tests": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "332 or of two null tests": {
+   "rows": [
+    {
+     "id": 2
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "333 nested group mixing a comparison and a null test": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    }
+   ]
+  },
+  "334 isNull over arithmetic with a null operand": {
+   "rows": [
+    {
+     "id": 5
+    }
+   ]
+  },
+  "335 isNotNull over arithmetic": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "336 isNull over a null literal": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "337 isNotNull over a literal": {
+   "rows": [
+    {
+     "id": 7
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 1
+    }
+   ]
+  },
+  "338 isNull in a nested and inside or": {
+   "rows": [
+    {
+     "id": 2
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "339 HAVING isNull over a group key merges null and missing": {
+   "rows": [
+    {
+     "g": null,
+     "n": 4
     }
    ]
   },
@@ -3242,6 +3466,81 @@
      "genre": "Rock"
     }
    ]
+  },
+  "340 HAVING isNull over an aggregate": {
+   "rows": [
+    {
+     "g": "a",
+     "n": 1
+    }
+   ]
+  },
+  "341 HAVING isNotNull over an aggregate": {
+   "rows": [
+    {
+     "g": null,
+     "n": 4
+    }
+   ]
+  },
+  "342 HAVING or of null tests": {
+   "rows": [
+    {
+     "g": null,
+     "n": 4
+    },
+    {
+     "g": "a",
+     "n": 1
+    }
+   ]
+  },
+  "343 HAVING and of null tests": {
+   "rows": [
+    {
+     "g": "a",
+     "n": 1
+    }
+   ]
+  },
+  "344 HAVING isNotNull over arithmetic of aggregates": {
+   "rows": [
+    {
+     "g": null,
+     "n": 4
+    }
+   ]
+  },
+  "345 WHERE isNotNull with a flat aggregate join": {
+   "rows": [
+    {
+     "genre": "Jazz",
+     "n": 5
+    },
+    {
+     "genre": "Rock",
+     "n": 1
+    }
+   ]
+  },
+  "346 WHERE isNull with a flat aggregate join and HAVING isNotNull": {
+   "rows": [
+    {
+     "genre": "Jazz",
+     "total": 3
+    }
+   ]
+  },
+  "347 HAVING isNull over the sum of a flat aggregate join": {
+   "rows": []
+  },
+  "348 isNull with an empty operand": {
+   "error": "invalid DTQL: isNull operand: expression must set exactly one expression form",
+   "phase": "parse"
+  },
+  "349 isNull and isNotNull together": {
+   "error": "invalid DTQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
+   "phase": "parse"
   },
   "35 order by sum over all-null group (Monk qty null) asc": {
    "rows": [
@@ -3267,6 +3566,46 @@
     }
    ]
   },
+  "350 isNull mixed with a comparison": {
+   "error": "invalid DTQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
+   "phase": "parse"
+  },
+  "351 isNull mixed with a group": {
+   "error": "invalid DTQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
+   "phase": "parse"
+  },
+  "352 isNull with an unknown alias": {
+   "error": "invalid DTQL: join_scope at where.operand.source: unknown alias \"zzz\"",
+   "phase": "parse"
+  },
+  "353 isNull with two expression forms": {
+   "error": "invalid DTQL: isNull operand: expression must set exactly one expression form, but several are set",
+   "phase": "parse"
+  },
+  "354 isNull with an unknown key in the operand": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field bogus not found in expression",
+   "phase": "parse"
+  },
+  "355 isNull as a join predicate": {
+   "error": "invalid DTQL: join_shape at from.joins[0].on[0]: ON predicate must be a comparison",
+   "phase": "parse"
+  },
+  "356 isNull over a values list": {
+   "error": "invalid DTQL: query_shape at where.isNull: a values list is not a scalar to test",
+   "phase": "parse"
+  },
+  "357 isNull over a parameter": {
+   "error": "invalid DTQL: query_shape at where.isNull: a param is not a value to test",
+   "phase": "parse"
+  },
+  "358 isNull over a star": {
+   "error": "invalid DTQL: query_shape at where.isNull: star is not a value to test",
+   "phase": "parse"
+  },
+  "359 isNull in WHERE over an aggregate": {
+   "error": "invalid DTQL: query_shape at where.isNull: an aggregate has no value in where; test it in having",
+   "phase": "parse"
+  },
   "36 order by avg over all-null group asc": {
    "rows": [
     {
@@ -3288,6 +3627,28 @@
     {
      "artist": "Metallica",
      "q": 5
+    }
+   ]
+  },
+  "360 HAVING isNull over a field that is not grouped": {
+   "error": "invalid DTQL: aggregation: HAVING operand: \"s.v\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "361 isNull given as a scalar": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  expression must be a mapping",
+   "phase": "parse"
+  },
+  "362 isNull null is no condition": {
+   "error": "invalid DTQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
+   "phase": "parse"
+  },
+  "363 isNull null beside a comparison is the comparison": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
     }
    ]
   },
@@ -3793,6 +4154,271 @@
    "rows": [
     {
      "iso": "USA"
+    }
+   ]
+  },
+  "A01 three-level nesting": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "A02 and of unknown comparison and true null test": {
+   "rows": []
+  },
+  "A03 or of unknown comparison and false null test": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "A06 left join to empty isNull": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "A07 left join to empty isNotNull": {
+   "rows": []
+  },
+  "A08 isNotNull keeps zero false and empty-ish": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "A09 isNull over division by zero": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "A10 isNull over string arithmetic": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "A11 isNull over empty values": {
+   "error": "invalid DTQL: query_shape at where.isNull: a values list is not a scalar to test",
+   "phase": "parse"
+  },
+  "A13 unqualified ambiguous operand": {
+   "error": "invalid DTQL: join_field at where.operand.source: unqualified JOIN field requires schema metadata",
+   "phase": "parse"
+  },
+  "A14 HAVING isNull over count star": {
+   "rows": []
+  },
+  "A15 HAVING isNotNull over count of all-missing": {
+   "rows": [
+    {
+     "g": null,
+     "n": 4
+    },
+    {
+     "g": "a",
+     "n": 1
+    }
+   ]
+  },
+  "A16 HAVING equal null beside isNull": {
+   "rows": [
+    {
+     "g": null,
+     "n": 4
+    }
+   ]
+  },
+  "A17 HAVING equal null alone": {
+   "rows": [
+    {
+     "g": null,
+     "n": 4
+    }
+   ]
+  },
+  "A18 HAVING isNull over select alias": {
+   "rows": []
+  },
+  "A19 global aggregate over empty isNull sum": {
+   "rows": [
+    {
+     "n": 0,
+     "t": null
+    }
+   ]
+  },
+  "A20 global aggregate over empty isNotNull sum": {
+   "rows": []
+  },
+  "A21 grouped empty isNull": {
+   "rows": []
+  },
+  "A22 where removes all rows then global having": {
+   "rows": [
+    {
+     "n": 0
+    }
+   ]
+  },
+  "A23 flat join having nested groups": {
+   "rows": [
+    {
+     "a": 1.5,
+     "genre": "Jazz"
+    },
+    {
+     "a": 5,
+     "genre": "Rock"
+    }
+   ]
+  },
+  "A24 having isNull count distinct": {
+   "rows": []
+  },
+  "A25 having isNull min over mixed null group in a join": {
+   "rows": [
+    {
+     "customer": "c3",
+     "q": null
+    }
+   ]
+  },
+  "A26 isNull sibling null key": {
+   "rows": [
+    {
+     "id": 2
+    }
+   ]
+  },
+  "A27 isNull operand is a list": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  expression must be a mapping",
+   "phase": "parse"
+  },
+  "A28 isNull over nested isNull": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field isNull not found in expression",
+   "phase": "parse"
+  },
+  "A30 isNull inside on beside a comparison": {
+   "error": "invalid DTQL: join_shape at from.joins[0].on[1]: ON predicate must be a comparison",
+   "phase": "parse"
+  },
+  "A31 yaml form": {
+   "rows": [
+    {
+     "id": 2
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "A32 isNull wrong case key": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 36: field isnull not found in type dtql.condYAML",
+   "phase": "parse"
+  },
+  "A33 right join null-extended left": {
+   "error": "invalid DTQL: join_type at from.joins[0].type: unsupported join type \"right\"",
+   "phase": "parse"
+  },
+  "A34 isNotNull over aggregate-free binary of two sources": {
+   "rows": [
+    {
+     "id": 1
     }
    ]
   }

@@ -1,5 +1,6 @@
 import type { QueryExecutor } from "./database.js";
 import type { DTQLSchema } from "./dtql.js";
+import { nullOperandProblem } from "./condition.js";
 import { Key } from "./key.js";
 import type { ExistingRecord } from "./record.js";
 import type {
@@ -296,6 +297,11 @@ async function condition(executor: QueryExecutor, value: RecursiveDTQLCondition,
     const exists = await evaluateExists(executor, value.query, row, budget, options, `${path}.query`);
     return value.kind === "exists" ? exists : !exists;
   }
+  if (value.kind === "is-null" || value.kind === "is-not-null") {
+    // Never unknown: a null (or missing) operand is exactly what IS NULL tests for.
+    const operand = await expression(executor, value.operand, row, budget, options, `${path}.operand`, group);
+    return (operand === null || operand === undefined) === (value.kind === "is-null");
+  }
   const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>;
   const left = await expression(executor, comparison.left, row, budget, options, `${path}.left`, group);
   if (comparison.operator === "in" || comparison.operator === "not-in") {
@@ -357,6 +363,7 @@ function containsAggregate(value: RecursiveDTQLExpression): boolean { return val
 
 function containsAggregateCondition(value: RecursiveDTQLCondition): boolean {
   if (value.kind === "and" || value.kind === "or") return value.conditions.some(containsAggregateCondition);
+  if (value.kind === "is-null" || value.kind === "is-not-null") return containsAggregate(value.operand);
   return value.kind === "comparison" && (containsAggregate(value.left) || containsAggregate(value.right));
 }
 
@@ -522,6 +529,7 @@ function bindCondition(value: RecursiveDTQLCondition | undefined, schema: DTQLSc
   if (value === undefined) return;
   if (value.kind === "and" || value.kind === "or") { value.conditions.forEach((child, index) => { bindCondition(child, schema, local, outers, `${path}.${value.kind}[${index.toString()}]`); }); return; }
   if (value.kind === "exists" || value.kind === "not-exists") { bindQuery(value.query, schema, [local, ...outers], `${path}.query`, false); return; }
+  if (value.kind === "is-null" || value.kind === "is-not-null") { bindExpression(value.operand, schema, local, outers, `${path}.operand`, "column"); return; }
   const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>;
   bindExpression(comparison.left, schema, local, outers, `${path}.left`);
   const membership = comparison.operator === "in" || comparison.operator === "not-in";
@@ -585,6 +593,7 @@ function validateConditionProgram(value: RecursiveDTQLCondition | undefined, anc
   if (value === undefined) return;
   if (value.kind === "exists" || value.kind === "not-exists") { validateProgram(value.query, ancestors, `${path}.query`); return; }
   if (value.kind === "and" || value.kind === "or") { value.conditions.forEach((child, index) => { validateConditionProgram(child, ancestors, `${path}.${value.kind}[${index.toString()}]`); }); return; }
+  if (value.kind === "is-null" || value.kind === "is-not-null") { validateExpressionProgram(value.operand, ancestors, `${path}.operand`); return; }
   const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>;
   validateExpressionProgram(comparison.left, ancestors, `${path}.left`);
   validateExpressionProgram(comparison.right, ancestors, `${path}.right`);
@@ -607,7 +616,7 @@ function parseQuery(value: Record<string, unknown>, schema: DTQLSchema, path: st
     ...(value.offset === undefined ? {} : { offset: offset(value.offset, `${path}.offset`) }),
     ...(value.columns === undefined ? {} : { columns: list(value.columns, `${path}.columns`).map((item, index) => { const column = raw(item, `${path}.columns[${index.toString()}]`); const as = column.as === undefined ? undefined : text(column.as, `${path}.columns[${index.toString()}].as`); delete column.as; const expression = parseExpression(column, schema, `${path}.columns[${index.toString()}]`); if (expression.kind === "query" && as !== undefined) shape(`${path}.columns[${index.toString()}]`, "scalar query alias belongs in query.as"); return { expression, ...(as === undefined ? {} : { as }) }; }) }),
     ...(value.groupBy === undefined ? {} : { groupBy: list(value.groupBy, `${path}.groupBy`).map((item, index) => parseExpression(item, schema, `${path}.groupBy[${index.toString()}]`) as DTQLExpression) }),
-    ...(value.having === undefined ? {} : { having: parseCondition(raw(value.having, `${path}.having`), schema, `${path}.having`) }),
+    ...(value.having === undefined ? {} : { having: parseCondition(raw(value.having, `${path}.having`), schema, `${path}.having`, true) }),
   };
   return result;
 }
@@ -657,9 +666,10 @@ function parseHints(value: unknown, path: string): { readonly algorithms: readon
   return { algorithms: snapshot };
 }
 
-function parseCondition(value: Record<string, unknown>, schema: DTQLSchema, path: string): RecursiveDTQLCondition {
+function parseCondition(value: Record<string, unknown>, schema: DTQLSchema, path: string, having = false): RecursiveDTQLCondition {
   if (value.exists !== undefined || value.notExists !== undefined) { const yes = value.exists !== undefined; keys(value, new Set([yes ? "exists" : "notExists"]), path); const nested = raw(yes ? value.exists : value.notExists, `${path}.query`); keys(nested, new Set(["query"]), `${path}.query`); return { kind: yes ? "exists" : "not-exists", query: parseQuery(raw(nested.query, `${path}.query`), schema, `${path}.query`) }; }
-  if (value.and !== undefined || value.or !== undefined) { const kind = value.and === undefined ? "or" : "and"; keys(value, new Set([kind]), path); return { kind, conditions: list(value[kind], `${path}.${kind}`).map((item, index) => parseCondition(raw(item, `${path}.${kind}[${index.toString()}]`), schema, `${path}.${kind}[${index.toString()}]`)) }; }
+  if (value.isNull !== undefined || value.isNotNull !== undefined) { const yes = value.isNull !== undefined; const key = yes ? "isNull" : "isNotNull"; keys(value, new Set([key]), path); const operand = parseExpression(raw(value[key], `${path}.${key}`), schema, `${path}.${key}`); const problem = nullOperandProblem(operand, having); if (problem !== undefined) shape(`${path}.${key}`, problem); return { kind: yes ? "is-null" : "is-not-null", operand }; }
+  if (value.and !== undefined || value.or !== undefined) { const kind = value.and === undefined ? "or" : "and"; keys(value, new Set([kind]), path); return { kind, conditions: list(value[kind], `${path}.${kind}`).map((item, index) => parseCondition(raw(item, `${path}.${kind}[${index.toString()}]`), schema, `${path}.${kind}[${index.toString()}]`, having)) }; }
   keys(value, new Set(["left", "op", "right"]), path); const op = text(requireValue(value, "op", path), `${path}.op`); const operator = op === "In" ? "in" : op === "NotIn" ? "not-in" : op;
   if (!["==", "!=", "<", "<=", ">", ">=", "in", "not-in"].includes(operator)) shape(`${path}.op`, `unsupported operator ${op}`);
   return { kind: "comparison", left: parseExpression(requireValue(value, "left", path), schema, `${path}.left`), operator: operator as never, right: parseExpression(requireValue(value, "right", path), schema, `${path}.right`) };
@@ -677,7 +687,7 @@ function parseExpression(value: unknown, schema: DTQLSchema, path: string): Recu
 }
 
 function writeRelation(value: RecursiveDTQLRelation): Record<string, unknown> { const joins = value.joins.length === 0 ? {} : { joins: value.joins.map((join) => ({ ...(join.type === "inner" ? {} : { type: join.type }), from: writeRelation(join.from), on: join.on.map((item) => ({ left: item.left, op: "==", right: item.right })), ...(join.hints === undefined ? {} : { hints: { algorithms: [...join.hints.algorithms] } }) })) }; return value.kind === "table" ? { ...(value.schema === undefined ? {} : { schema: value.schema }), name: value.name, ...(value.alias === undefined ? {} : { alias: value.alias }), ...joins } : { query: serializeRecursiveDTQL(value.query ?? shape("relation", "query relation needs query")), ...joins }; }
-function writeCondition(value: RecursiveDTQLCondition): Record<string, unknown> { if (value.kind === "exists") return { exists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "not-exists") return { notExists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "and" || value.kind === "or") return { [value.kind]: value.conditions.map(writeCondition) }; const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>; return { left: writeExpression(comparison.left), op: comparison.operator === "in" ? "In" : comparison.operator === "not-in" ? "NotIn" : comparison.operator, right: writeExpression(comparison.right) }; }
+function writeCondition(value: RecursiveDTQLCondition): Record<string, unknown> { if (value.kind === "exists") return { exists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "not-exists") return { notExists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "and" || value.kind === "or") return { [value.kind]: value.conditions.map(writeCondition) }; if (value.kind === "is-null" || value.kind === "is-not-null") return { [value.kind === "is-null" ? "isNull" : "isNotNull"]: writeExpression(value.operand) }; const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>; return { left: writeExpression(comparison.left), op: comparison.operator === "in" ? "In" : comparison.operator === "not-in" ? "NotIn" : comparison.operator, right: writeExpression(comparison.right) }; }
 function writeExpression(value: RecursiveDTQLExpression): Record<string, unknown> { if (value.kind === "query") return { query: serializeRecursiveDTQL(value.query) }; if (value.kind === "field") return { field: value.field.field, ...(value.field.source === "" ? {} : { source: value.field.source }) }; if (value.kind === "literal") return { value: value.value }; if (value.kind === "values") return { values: value.values }; if (value.kind === "star") return { star: true }; if (value.kind === "aggregate") return { aggregate: { function: value.function, args: value.args.map(writeExpression), ...(value.distinct === true ? { distinct: true } : {}) } }; shape("expression", `cannot serialize ${value.kind}`); }
 function raw(value: unknown, path: string): Record<string, unknown> { if (typeof value === "string") { const parsed = parseYamlDocument(value, { prettyErrors: false, strict: true, uniqueKeys: true }); if (parsed.errors.length > 0) shape(path, "invalid YAML"); return raw(parsed.toJS(), path); } if (value === null || Array.isArray(value) || typeof value !== "object") shape(path, "must be object"); return { ...(value as Record<string, unknown>) }; }
 function rejectObjectCycles(value: unknown, path: string, ancestors: WeakSet<object>): void {

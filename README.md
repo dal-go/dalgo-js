@@ -167,6 +167,41 @@ parameter in WHERE) fails the query only when a row reaches it. In HAVING, `==` 
 for two nulls and `<`, `<=`, `>`, `>=` are false when either side is null; `In` and
 `NotIn` parse but fail when a group is evaluated.
 
+**Null tests.** `isNull` and `isNotNull` take one expression and are true when it is,
+respectively is not, null. They are the way to select or exclude nulls in a joined or
+aggregated query, where `x == null` matches nothing, and they are the same documents Go
+accepts (`dal.IsNullCondition`). They are valid wherever a condition is (`where`,
+`having`, inside `and` / `or`, and in a nested query of `parseRecursiveDTQL`), never
+unknown, and a field missing from a document counts as null; they are not valid in a
+join's `on` list. The operand is a field, a literal, arithmetic over those (or, in
+`parseRecursiveDTQL`, a scalar subquery); an aggregate is valid only in `having`, and
+`values`, `star` and `param` are rejected at parse (`query_shape at where.isNull: ...`),
+as Go rejects them.
+
+A bare single source (no `alias`, `database` or `joins`) accepts a null test too, so one
+spelling serves a parent query and the join derived from it, but it then parses to the
+relation model (`kind: "joined-dtql"`, run with `executeJoinedDTQLQuery`), because the
+legacy `StructuredQuery` filter (`field`, `operator`, `value`) has no way to carry one: a
+legacy `QueryExecutor` such as the IndexedDB adapter would drop an unknown filter or
+silently match no row. A bare query without a null test is still the legacy model.
+`where: {field: x, op: ==, value: null}` on the legacy model keeps its adapter's meaning
+(the IndexedDB adapter matches `null`, not a missing field), which is why a consumer that
+joins such a parent must rewrite `== null` to `isNull` and `!= null` to `isNotNull` itself.
+
+```yaml
+where:
+  and:
+    - isNull: {field: Company, source: c}          # no company, or the field is absent
+    - isNotNull: {field: InvoiceId, source: i}      # ...and it has an invoice
+having:
+  isNotNull: {aggregate: {function: max, args: [{field: Total, source: i}]}}
+```
+
+In code a null test parses to `DTQLNullTest` (`{ kind: "is-null" | "is-not-null", operand }`),
+a member of the `DTQLCondition` union. Code that narrows a `DTQLCondition` by
+`"kind" in condition` to find an `and` / `or` group must now check `kind === "and" || kind === "or"`.
+`RecursiveDTQLCondition` gains the same `is-null` / `is-not-null` kinds.
+
 The parsed query keeps the compact `DTQLQueryFilter` (`field`, `operator`, `value`) for a
 top-level field-versus-literal `where`, as before, and uses `DTQLComparison` and
 `DTQLConditionGroup` for every other shape; `having` is a `DTQLCondition`. Several
@@ -242,7 +277,7 @@ What remains, each pinned by a test (`test/differences.test.ts`):
 
 1. **`!=`.** `where` and `having` also accept `!=`; DTQL in Go has none. Here null is a
    value for it: `x != null` means "x is not null", `null != "a"` is true, `null != null`
-   is false.
+   is false. Prefer `isNotNull` for that meaning: Go has it too.
 2. **`groupBy` takes fields only.** Go accepts any scalar expression there.
 3. **Schema-resolved fields.** `parseDTQL` takes a schema. A field without `source`
    resolves through it when exactly one relation has the field (ambiguity is an error),
@@ -259,12 +294,23 @@ What remains, each pinned by a test (`test/differences.test.ts`):
 6. **A bare single source** (no `alias`, `database` or `joins`) parses to the legacy
    `StructuredQuery`: its `where` is one field-versus-literal comparison (no groups or
    expressions), it has no `columns`, `groupBy`, `having` or expression keys, and it
-   requires a positive `limit`.
+   requires a positive `limit`. The one exception is a null test (`isNull` /
+   `isNotNull`, alone or inside a group), which parses it to the relation model; Go has
+   no such split. Go accepts the same document, but its single-source execution is the
+   adapter's: only `dalgo2memory` evaluates a null test there, and every other Go adapter
+   rejects the query ("unsupported condition") until it implements it.
 7. **Bounds are this package's own.** `limit` above `maxLimit` (1000 unless the option
    says otherwise) is rejected at parse, and execution is bounded by `maxFetchedRows`,
    `maxResultRows`, `maxCandidateEvaluations` and `maxRetainedBytes`.
 8. **Execution route.** Go passes a query with no join, aggregate or subquery straight
    to the database; this package always evaluates in memory, with the rules above.
+9. **Null tests.** (a) `isNull` on a field the schema does not list is rejected at parse
+   here; Go, when the executor has no field metadata, cannot tell it from a field the
+   records lack and matches every row (`isNotNull` none). (b) An unqualified null-test
+   operand in a join resolves through the schema (see 3); Go requires a `source`.
+   (c) A `null` element of an `and` / `or` list is rejected here (`where.and[1] must be
+   an object`); Go's YAML decoder drops it and runs the rest of the group. (d) A null
+   test on a bare single source parses to the relation model (see 6).
 
 ### Go parity suite
 
@@ -280,8 +326,11 @@ not filter.
 To add a case, append it to a file in `test/parity/cases/` and run
 `tools/parity/regenerate.sh` (Go and network access to the module proxy; see
 `tools/parity/README.md`), then `pnpm test`. A difference is a regression in one of the
-two engines, or a Go change to port; moving the reference to a newer dalgo is the same
-script with the new revision. The Go program lives in `tools/parity` and is not shipped.
+two engines, or a Go change to port. To move the reference to another dalgo revision give
+the script the ref, `tools/parity/regenerate.sh v0.89.0` (a tag, commit or branch): it
+repins `tools/parity/go.mod`, regenerates, and fails if anything but the `dalgo` block of
+`test/parity/expected.json` changed. The Go program lives in `tools/parity` and is
+not shipped.
 
 ## Recursive DTQL subqueries
 
