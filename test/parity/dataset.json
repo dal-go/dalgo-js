@@ -1,0 +1,514 @@
+{
+ "tables": {
+  "chinook": {
+   "Invoice": [
+    {
+     "InvoiceId": 1,
+     "BillingCountry": "Brazil",
+     "Total": 5
+    },
+    {
+     "InvoiceId": 2,
+     "BillingCountry": "USA",
+     "Total": 10
+    },
+    {
+     "InvoiceId": 3,
+     "BillingCountry": "Chile",
+     "Total": 8
+    },
+    {
+     "InvoiceId": 4,
+     "BillingCountry": "Malta",
+     "Total": 10
+    },
+    {
+     "InvoiceId": 5,
+     "BillingCountry": "Iceland",
+     "Total": 4
+    },
+    {
+     "InvoiceId": 6,
+     "BillingCountry": "USA",
+     "Total": 20
+    },
+    {
+     "InvoiceId": 7,
+     "BillingCountry": "Atlantis",
+     "Total": 99
+    },
+    {
+     "InvoiceId": 8,
+     "BillingCountry": "Peru",
+     "Total": 5
+    }
+   ],
+   "Sale": [
+    {
+     "id": 1,
+     "artist": "Miles",
+     "genre": "Jazz",
+     "customer": "c1",
+     "qty": 2,
+     "price": 1.5,
+     "note": "x",
+     "k": 1
+    },
+    {
+     "id": 2,
+     "artist": "Coltrane",
+     "genre": "Jazz",
+     "customer": "c2",
+     "qty": 1,
+     "price": 2,
+     "note": null,
+     "k": 1
+    },
+    {
+     "id": 3,
+     "artist": "Miles",
+     "genre": "Jazz",
+     "customer": "c2",
+     "qty": 1,
+     "price": 0,
+     "note": "y",
+     "k": 1
+    },
+    {
+     "id": 4,
+     "artist": "Metallica",
+     "genre": "Rock",
+     "customer": "c1",
+     "qty": 5,
+     "price": 1,
+     "note": "z",
+     "k": 1
+    },
+    {
+     "id": 5,
+     "artist": "Monk",
+     "genre": "Jazz",
+     "customer": "c3",
+     "qty": null,
+     "price": 3,
+     "note": "w",
+     "k": 1
+    },
+    {
+     "id": 6,
+     "artist": "Coltrane",
+     "genre": "Jazz",
+     "customer": "c3",
+     "qty": 1,
+     "price": 2,
+     "note": 7,
+     "k": 1
+    },
+    {
+     "id": 7,
+     "artist": "Ella",
+     "genre": "Jazz",
+     "customer": "c1",
+     "qty": 2,
+     "price": 2,
+     "note": true,
+     "k": 1
+    }
+   ],
+   "Dim": [
+    {
+     "k": 1,
+     "w": 1
+    }
+   ],
+   "Empty": [],
+   "Artist": [
+    {
+     "name": "Miles",
+     "label": "Columbia"
+    },
+    {
+     "name": "Coltrane",
+     "label": "Impulse"
+    },
+    {
+     "name": "Monk",
+     "label": "Blue Note"
+    },
+    {
+     "name": "Ella",
+     "label": "Verve"
+    },
+    {
+     "name": "Evans",
+     "label": "Riverside"
+    },
+    {
+     "name": "Metallica",
+     "label": "Elektra"
+    }
+   ],
+   "Listen": [
+    {
+     "id": 1,
+     "artist": "Miles",
+     "genre": "Jazz",
+     "customer": "c1",
+     "minutes": 5
+    },
+    {
+     "id": 2,
+     "artist": "Miles",
+     "genre": "Jazz",
+     "customer": "c1",
+     "minutes": 7
+    },
+    {
+     "id": 3,
+     "artist": "Miles",
+     "genre": "Jazz",
+     "customer": "c2",
+     "minutes": 3
+    },
+    {
+     "id": 4,
+     "artist": "Coltrane",
+     "genre": "Jazz",
+     "customer": "c1",
+     "minutes": 9
+    },
+    {
+     "id": 5,
+     "artist": "Coltrane",
+     "genre": "Jazz",
+     "customer": "c2",
+     "minutes": 2
+    },
+    {
+     "id": 6,
+     "artist": "Coltrane",
+     "genre": "Jazz",
+     "customer": "c3",
+     "minutes": 4
+    },
+    {
+     "id": 7,
+     "artist": "Monk",
+     "genre": "Jazz",
+     "customer": "c3",
+     "minutes": 6
+    },
+    {
+     "id": 8,
+     "artist": "Monk",
+     "genre": "Jazz",
+     "customer": "c3",
+     "minutes": 6
+    },
+    {
+     "id": 9,
+     "artist": "Ella",
+     "genre": "Jazz",
+     "customer": "c2",
+     "minutes": 8
+    },
+    {
+     "id": 10,
+     "artist": "Ella",
+     "genre": "Jazz",
+     "customer": "c1",
+     "minutes": 1
+    },
+    {
+     "id": 11,
+     "artist": "Metallica",
+     "genre": "Rock",
+     "customer": "c1",
+     "minutes": 4
+    },
+    {
+     "id": 12,
+     "artist": "Metallica",
+     "genre": "Rock",
+     "customer": "c2",
+     "minutes": 4
+    },
+    {
+     "id": 13,
+     "artist": "Metallica",
+     "genre": "Rock",
+     "customer": "c3",
+     "minutes": 4
+    },
+    {
+     "id": 14,
+     "artist": "Evans",
+     "genre": "Jazz",
+     "customer": "c1",
+     "minutes": 3
+    },
+    {
+     "id": 15,
+     "artist": "Unsigned",
+     "genre": "Jazz",
+     "customer": "c1",
+     "minutes": 3
+    }
+   ],
+   "Sparse": [
+    {
+     "id": 1,
+     "g": null,
+     "v": 1
+    },
+    {
+     "id": 2,
+     "v": 2
+    },
+    {
+     "id": 3,
+     "g": "a",
+     "v": 3
+    },
+    {
+     "id": 4,
+     "g": null,
+     "v": 4
+    },
+    {
+     "id": 5,
+     "v": 5,
+     "s": "x"
+    }
+   ],
+   "Big": [
+    {
+     "id": 1,
+     "g": "a",
+     "x": 1.5e+308
+    },
+    {
+     "id": 2,
+     "g": "a",
+     "x": 1.5e+308
+    },
+    {
+     "id": 3,
+     "g": "b",
+     "x": -1.5e+308
+    },
+    {
+     "id": 4,
+     "g": "b",
+     "x": 1.5e+308
+    },
+    {
+     "id": 5,
+     "g": "c",
+     "x": 1
+    }
+   ]
+  },
+  "geo": {
+   "country_aliases": [
+    {
+     "alias": "Brazil",
+     "country": "BRA"
+    },
+    {
+     "alias": "USA",
+     "country": "USA"
+    },
+    {
+     "alias": "Chile",
+     "country": "CHI"
+    },
+    {
+     "alias": "Malta",
+     "country": "MAL"
+    },
+    {
+     "alias": "Iceland",
+     "country": "ICE"
+    }
+   ],
+   "population_wb": [
+    {
+     "country": "BRA",
+     "year": 2023,
+     "population": 200
+    },
+    {
+     "country": "USA",
+     "year": 2023,
+     "population": 300
+    },
+    {
+     "country": "CHI",
+     "year": 2023,
+     "population": 0
+    },
+    {
+     "country": "MAL",
+     "year": 2023,
+     "population": 100
+    },
+    {
+     "country": "ICE",
+     "year": 2023,
+     "population": 4
+    }
+   ]
+  },
+  "music": {
+   "Customer": [
+    {
+     "CustomerId": 1,
+     "FirstName": "Ada",
+     "LastName": "Lovelace",
+     "Country": "UK"
+    },
+    {
+     "CustomerId": 2,
+     "FirstName": "Bo",
+     "LastName": "Chen",
+     "Country": "China"
+    },
+    {
+     "CustomerId": 3,
+     "FirstName": "Cy",
+     "LastName": "Young",
+     "Country": "USA"
+    },
+    {
+     "CustomerId": 4,
+     "FirstName": "Di",
+     "LastName": "Prince",
+     "Country": "France"
+    }
+   ],
+   "Invoice": [
+    {
+     "InvoiceId": 1,
+     "CustomerId": 1,
+     "Total": 2
+    },
+    {
+     "InvoiceId": 2,
+     "CustomerId": 1,
+     "Total": 3
+    },
+    {
+     "InvoiceId": 3,
+     "CustomerId": 2,
+     "Total": 5
+    },
+    {
+     "InvoiceId": 4,
+     "CustomerId": 3,
+     "Total": 7
+    },
+    {
+     "InvoiceId": 5,
+     "CustomerId": 4,
+     "Total": 11
+    }
+   ],
+   "InvoiceLine": [
+    {
+     "InvoiceLineId": 1,
+     "InvoiceId": 1,
+     "TrackId": 1
+    },
+    {
+     "InvoiceLineId": 2,
+     "InvoiceId": 1,
+     "TrackId": 2
+    },
+    {
+     "InvoiceLineId": 3,
+     "InvoiceId": 2,
+     "TrackId": 3
+    },
+    {
+     "InvoiceLineId": 4,
+     "InvoiceId": 3,
+     "TrackId": 4
+    },
+    {
+     "InvoiceLineId": 5,
+     "InvoiceId": 4,
+     "TrackId": 1
+    },
+    {
+     "InvoiceLineId": 6,
+     "InvoiceId": 4,
+     "TrackId": 5
+    },
+    {
+     "InvoiceLineId": 7,
+     "InvoiceId": 5,
+     "TrackId": 3
+    }
+   ],
+   "Track": [
+    {
+     "TrackId": 1,
+     "Name": "So What",
+     "AlbumId": 1
+    },
+    {
+     "TrackId": 2,
+     "Name": "Blue in Green",
+     "AlbumId": 1
+    },
+    {
+     "TrackId": 3,
+     "Name": "Giant Steps",
+     "AlbumId": 2
+    },
+    {
+     "TrackId": 4,
+     "Name": "One",
+     "AlbumId": 3
+    },
+    {
+     "TrackId": 5,
+     "Name": "Orphan Track",
+     "AlbumId": 9
+    }
+   ],
+   "Album": [
+    {
+     "AlbumId": 1,
+     "Title": "Kind of Blue",
+     "ArtistId": 1
+    },
+    {
+     "AlbumId": 2,
+     "Title": "Giant Steps",
+     "ArtistId": 3
+    },
+    {
+     "AlbumId": 3,
+     "Title": "Master of Puppets",
+     "ArtistId": 2
+    }
+   ],
+   "Artist": [
+    {
+     "ArtistId": 1,
+     "Name": "Miles Davis"
+    },
+    {
+     "ArtistId": 2,
+     "Name": "Metallica"
+    },
+    {
+     "ArtistId": 3,
+     "Name": "John Coltrane"
+    }
+   ]
+  }
+ }
+}

@@ -102,25 +102,61 @@ export interface QueryColumn {
   readonly as?: string;
 }
 
-/** A predicate in a join-aware DTQL query. */
+/**
+ * A comparison between two expressions, as Go's `dal.Comparison`: a WHERE or
+ * HAVING predicate. WHERE accepts an expression on either side (a field, a
+ * literal, arithmetic, a `values` list); HAVING resolves aggregates per group.
+ */
+export interface DTQLComparison {
+  readonly left: DTQLExpression;
+  readonly operator: QueryOperator;
+  readonly right: DTQLExpression;
+}
+
+/** An `and` or `or` group of conditions, as Go's `dal.GroupCondition`. */
+export interface DTQLConditionGroup {
+  readonly kind: "and" | "or";
+  readonly conditions: readonly DTQLCondition[];
+}
+
+/** A WHERE or HAVING condition: a comparison or a nested `and`/`or` group. */
+export type DTQLCondition = DTQLComparison | DTQLConditionGroup;
+
+/**
+ * The compact form of the most common WHERE predicate: a field compared with a
+ * literal (`In` and `NotIn` take the list as `value`). The parser emits it for
+ * exactly that shape at the top level of `where`, and every other WHERE
+ * condition is a `DTQLCondition`.
+ */
 export interface DTQLQueryFilter {
   readonly field: QueryFieldReference;
   readonly operator: QueryOperator;
   readonly value: unknown;
 }
 
-/** A structured HAVING predicate; operators may grow with the expression model. */
-export interface DTQLHaving {
-  readonly left: DTQLExpression;
-  readonly operator: QueryOperator;
-  readonly right: DTQLExpression;
+/** A structured HAVING predicate. */
+export type DTQLHaving = DTQLComparison;
+
+/** An ordering term on a plain field of a join-aware DTQL query. */
+export interface DTQLFieldOrder {
+  readonly field: QueryFieldReference;
+  readonly expression?: undefined;
+  readonly direction: OrderDirection;
+}
+
+/**
+ * An ordering term on an arbitrary expression (for example a binary `/` over
+ * aggregates), as the Go DTQL engine accepts. Plain field keys keep the
+ * `DTQLFieldOrder` shape.
+ */
+export interface DTQLExpressionOrder {
+  readonly expression: DTQLExpression;
+  readonly field?: undefined;
+  readonly direction: OrderDirection;
 }
 
 /** An ordering term in a join-aware DTQL query. */
-export interface DTQLQueryOrder {
-  readonly field: QueryFieldReference;
-  readonly direction: OrderDirection;
-}
+export type DTQLQueryOrder = DTQLFieldOrder | DTQLExpressionOrder;
 
 export interface QueryFilter<T> {
   readonly field: FieldPath<T>;
@@ -158,13 +194,14 @@ export interface JoinedDTQLQuery {
   readonly kind: "joined-dtql";
   readonly money?: { readonly minorUnitScale: number; readonly divisionScale: number; readonly rounding: "halfEven" };
   readonly from: QueryRelation;
-  readonly filters: readonly DTQLQueryFilter[];
+  /** Conditions that must all hold; the parser emits at most one (Go has a single `where`). */
+  readonly filters: readonly (DTQLQueryFilter | DTQLCondition)[];
   readonly orders: readonly DTQLQueryOrder[];
   readonly columns?: readonly QueryColumn[];
   readonly limit?: number;
   readonly offset?: number;
   readonly groupBy?: readonly DTQLExpression[];
-  readonly having?: DTQLHaving;
+  readonly having?: DTQLCondition;
 }
 
 export type ParsedDTQLQuery<T> = StructuredQuery<T> | JoinedDTQLQuery;
@@ -179,7 +216,7 @@ export interface RecursiveDTQLQuery {
   readonly as?: string;
   readonly from: RecursiveDTQLRelation;
   readonly where?: RecursiveDTQLCondition;
-  readonly orderBy?: readonly DTQLQueryOrder[];
+  readonly orderBy?: readonly DTQLFieldOrder[];
   readonly limit?: number;
   readonly offset?: number;
   readonly columns?: readonly RecursiveDTQLColumn[];
