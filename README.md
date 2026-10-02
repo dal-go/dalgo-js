@@ -135,6 +135,79 @@ in this repository; each adapter migration needs its own test. Without
 `resolveSource`, a schema-qualified query fails with `join_plan` before any
 output is returned.
 
+## DTQL order keys, aliases and aggregates
+
+A joined DTQL query follows the Go engine (`github.com/dal-go/dalgo`, `dtql`) for
+ordering and aggregation. `test/parity/` proves it case by case (see
+[Go parity suite](#go-parity-suite)).
+
+**Order keys.** An `orderBy` item is either a field key (`field`, optional
+`source`, optional `desc`) or an *expression key*: any DTQL expression
+(`aggregate`, `binary`, `value`, `values`) plus an optional `desc`. Expression
+keys are evaluated per group in an aggregate query and per row otherwise; null
+sorts first ascending and last descending, and equal keys keep their input order.
+
+```yaml
+groupBy: [{field: alias, source: a}, {field: population, source: p}]
+orderBy:
+  - binary: {op: '/', left: {aggregate: {function: sum, args: [{field: Total, source: i}]}}, right: {field: population, source: p}}
+    desc: true
+  - {field: alias, source: a}
+```
+
+An unknown property on a key (`descending: true`, `direction: desc`, `as: x`,
+`source` without `field`) is rejected at parse with its position, as is a `star`
+or `param` key, instead of being ignored. `DTQLQueryOrder` is the union
+`DTQLFieldOrder | DTQLExpressionOrder`: narrow on `order.expression`.
+
+**Aliases.** A field key or HAVING operand with no `source` that names a column's
+`as` alias refers to that column (`orderBy: [{field: purchases, desc: true}]`,
+`having: {left: {field: purchases}, op: '>', right: {value: 1}}`). The alias is
+resolved at parse time to the expression it names, so the parsed query and its
+canonical serialisation carry that expression. An alias never takes a `source`.
+
+**Aggregate queries** (any `groupBy`, `having`, or aggregate in a column or key)
+are validated at parse like Go's `ValidateAggregation`: every column and every
+ORDER BY or HAVING operand must be an aggregate, a literal, or a `groupBy`
+expression; aggregates take exactly one argument, cannot nest, and `DISTINCT`
+is not allowed for `min`, `max`, `first`, `last`; `sum(*)` and `count(distinct *)`
+are rejected; a wildcard cannot be selected. Without `columns` a grouped query
+returns its group keys, and an ungrouped aggregate query returns one empty row.
+HAVING accepts any expression (for example a `binary` ratio), not just a field or
+an aggregate.
+
+**Values.** These follow Go and changed in this release:
+
+- Arithmetic is null for a null or non-numeric operand and for division by zero
+  (it was `Infinity`, or an error for text); an overflow to infinity is an error.
+- Mixed-type comparison orders booleans, then numbers, then strings (null first).
+- `sum` and `avg` ignore non-numeric values; `sum` over no numbers is null (it was
+  0). `first` and `last` keep a null value.
+- HAVING `==` is true for two nulls; `<`, `<=`, `>`, `>=` are false when either side is null.
+- A flat aggregate join streams through `scanPages` for every aggregate query
+  (an aggregate that appears only in an order key included) except one that uses
+  `DISTINCT`, which runs through the generic plan.
+
+Deliberate differences from Go: `where` and `having` also accept `!=` (DTQL in Go has
+no `!=`); `groupBy` takes fields only; and a field without `source` resolves through the
+schema when exactly one relation has it (Go requires `source` in joins and aggregates);
+`and`/`or` groups in `where`/`having` are not implemented yet; strings compare by UTF-16
+code unit, Go by byte.
+
+### Go parity suite
+
+`test/parity/cases/*.json` are queries, `test/parity/dataset.json` the in-memory tables,
+and `test/parity/expected.json` the rows (or the error) that the Go engine returned for
+each case, with the dalgo version and commit it ran at. `test/parity.test.ts` runs every case
+through this package, generically and through `scanPages`, and compares exactly (numbers
+within 1e-9); a case Go rejects at parse must be rejected by `parseDTQL`. CI needs no Go.
+
+To add a case, append it to a file in `test/parity/cases/` and run
+`tools/parity/regenerate.sh` (Go and network access to the module proxy; see
+`tools/parity/README.md`), then `pnpm test`. A difference is a regression in one of the
+two engines, or a Go change to port; moving the reference to a newer dalgo is the same
+script with the new revision. The Go program lives in `tools/parity` and is not shipped.
+
 ## Recursive DTQL subqueries
 
 `parseRecursiveDTQL` accepts one query shape at every nesting level. Use its
