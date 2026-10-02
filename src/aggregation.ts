@@ -1,4 +1,4 @@
-import { walkComparisons } from "./condition.js";
+import { walkConditionExpressions } from "./condition.js";
 import type { DTQLCondition, DTQLExpression, DTQLQueryOrder, QueryColumn } from "./query.js";
 
 /** True when the expression is, or contains, an aggregate call. */
@@ -40,8 +40,8 @@ export function hasDistinctAggregate(parts: AggregationParts): boolean {
 
 function conditionHasDistinctAggregate(condition: DTQLCondition): boolean {
   let found = false;
-  walkComparisons(condition, "having", (comparison) => {
-    if (containsDistinctAggregate(comparison.left) || containsDistinctAggregate(comparison.right)) found = true;
+  walkConditionExpressions(condition, "having", (expression) => {
+    if (containsDistinctAggregate(expression)) found = true;
   });
   return found;
 }
@@ -120,10 +120,7 @@ export function validateAggregation(parts: AggregationParts): void {
     else if (!groupKeys.has(expressionIdentity(expression))) reject(location, `${expressionIdentity(expression)} is neither aggregated nor present in GROUP BY`);
   });
   if (parts.having !== undefined) {
-    walkComparisons(parts.having, "having", (comparison, path) => {
-      validateGrouped(comparison.left, groupKeys, `${path}.left`);
-      validateGrouped(comparison.right, groupKeys, `${path}.right`);
-    });
+    walkConditionExpressions(parts.having, "having", (expression, path) => { validateGrouped(expression, groupKeys, path); });
   }
   parts.orders.forEach((order, index) => {
     const location = `orderBy[${index.toString()}]`;

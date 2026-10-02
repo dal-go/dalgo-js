@@ -1,4 +1,7 @@
-import type { DTQLComparison, DTQLCondition, DTQLConditionGroup, DTQLQueryFilter, QueryOperator } from "./query.js";
+import type { DTQLComparison, DTQLCondition, DTQLConditionGroup, DTQLExpression, DTQLNullTest, DTQLQueryFilter, QueryOperator } from "./query.js";
+
+/** A condition that is neither an `and`/`or` group: a comparison or a null test. */
+export type DTQLLeaf = DTQLComparison | DTQLNullTest;
 
 /** True for the `In` and `NotIn` membership operators. */
 export function isMembership(operator: QueryOperator): boolean {
@@ -7,7 +10,25 @@ export function isMembership(operator: QueryOperator): boolean {
 
 /** True when the condition is an `and`/`or` group rather than one comparison. */
 export function isConditionGroup(condition: DTQLCondition): condition is DTQLConditionGroup {
-  return "kind" in condition;
+  return "kind" in condition && (condition.kind === "and" || condition.kind === "or");
+}
+
+/** True for an `isNull` / `isNotNull` condition. */
+export function isNullTest(condition: DTQLCondition): condition is DTQLNullTest {
+  return "kind" in condition && (condition.kind === "is-null" || condition.kind === "is-not-null");
+}
+
+/** The expressions a leaf condition reads, each with the key that locates it in an error path. */
+export function leafOperands(leaf: DTQLLeaf): readonly (readonly [string, DTQLExpression])[] {
+  return "operand" in leaf ? [["operand", leaf.operand]] : [["left", leaf.left], ["right", leaf.right]];
+}
+
+/**
+ * A null test as Go decides it: never unknown. `value` is what the operand
+ * evaluated to; an undefined (missing) value counts as null.
+ */
+export function nullTestTruth(test: DTQLNullTest, value: unknown): Truth {
+  return ((value === null || value === undefined) === (test.kind === "is-null")) ? "true" : "false";
 }
 
 /** Rewrites the compact field-versus-literal filter as the general comparison it stands for. */
@@ -24,15 +45,21 @@ export function toCondition(filter: DTQLQueryFilter | DTQLCondition): DTQLCondit
 }
 
 /**
- * Visits every comparison of a condition, depth first, with the path that
- * locates it (`where`, `having.and[1]`, ...), the way Go's executor reports it.
+ * Visits every leaf (comparison or null test) of a condition, depth first, with
+ * the path that locates it (`where`, `having.and[1]`, ...), the way Go's
+ * executor reports it.
  */
-export function walkComparisons(condition: DTQLCondition, path: string, visit: (comparison: DTQLComparison, path: string) => void): void {
+export function walkLeaves(condition: DTQLCondition, path: string, visit: (leaf: DTQLLeaf, path: string) => void): void {
   if (!isConditionGroup(condition)) {
     visit(condition, path);
     return;
   }
-  condition.conditions.forEach((child, index) => { walkComparisons(child, `${path}.${condition.kind}[${index.toString()}]`, visit); });
+  condition.conditions.forEach((child, index) => { walkLeaves(child, `${path}.${condition.kind}[${index.toString()}]`, visit); });
+}
+
+/** Visits every expression a condition reads, with its path (`where.left`, `having.and[0].operand`, ...). */
+export function walkConditionExpressions(condition: DTQLCondition, path: string, visit: (expression: DTQLExpression, path: string) => void): void {
+  walkLeaves(condition, path, (leaf, leafPath) => { for (const [key, expression] of leafOperands(leaf)) visit(expression, `${leafPath}.${key}`); });
 }
 
 /**
@@ -40,11 +67,12 @@ export function walkComparisons(condition: DTQLCondition, path: string, visit: (
  * `and` stops at the first false child, an `or` at the first true one, and a
  * leaf is only evaluated when it is reached (so an error in a later leaf is
  * raised only if the earlier ones did not decide the group). An unknown
- * (null-affected) leaf neither stops a group nor satisfies it.
+ * (null-affected) comparison neither stops a group nor satisfies it; a null
+ * test is never unknown.
  */
 export type Truth = "true" | "false" | "unknown";
 
-export function evaluateCondition(condition: DTQLCondition, leaf: (comparison: DTQLComparison, path: string) => Truth, path: string): Truth {
+export function evaluateCondition(condition: DTQLCondition, leaf: (leaf: DTQLLeaf, path: string) => Truth, path: string): Truth {
   if (!isConditionGroup(condition)) return leaf(condition, path);
   const stopOn: Truth = condition.kind === "or" ? "true" : "false";
   let unknown = false;

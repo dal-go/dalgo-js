@@ -14,8 +14,10 @@
 # with go.mod/go.sum and the new pin below.
 set -euo pipefail
 
-# The dalgo revision (v0.88.2) every expectation was generated from.
-DALGO_COMMIT="${1:-0b8c11b1a94b6495281c8aacd6399e0585f9b35f}"
+# The dalgo revision every expectation was generated from: the head of
+# dal-go/dalgo#193 (isNull / isNotNull), v0.88.2 plus that change. Once that pull request
+# is merged and released, re-pin this to the released tag's commit and regenerate.
+DALGO_COMMIT="${1:-a41035df5f8b5da120b73d84bb1c0e4934f35631}"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$here"

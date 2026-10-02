@@ -119,8 +119,19 @@ export interface DTQLConditionGroup {
   readonly conditions: readonly DTQLCondition[];
 }
 
-/** A WHERE or HAVING condition: a comparison or a nested `and`/`or` group. */
-export type DTQLCondition = DTQLComparison | DTQLConditionGroup;
+/**
+ * A null test, as Go's `dal.IsNullCondition`: `isNull` (`kind: "is-null"`) and
+ * `isNotNull` (`kind: "is-not-null"`). It is true or false for every input,
+ * never unknown, so it is the way to select or exclude nulls in a joined or
+ * aggregated query where `x == null` matches nothing. A missing field is null.
+ */
+export interface DTQLNullTest {
+  readonly kind: "is-null" | "is-not-null";
+  readonly operand: DTQLExpression;
+}
+
+/** A WHERE or HAVING condition: a comparison, a null test or a nested `and`/`or` group. */
+export type DTQLCondition = DTQLComparison | DTQLConditionGroup | DTQLNullTest;
 
 /**
  * The compact form of the most common WHERE predicate: a field compared with a
@@ -250,6 +261,7 @@ export interface RecursiveDTQLColumn {
 export type RecursiveDTQLCondition =
   | { readonly kind: "comparison"; readonly left: RecursiveDTQLExpression; readonly operator: QueryOperator; readonly right: RecursiveDTQLExpression }
   | { readonly kind: "and" | "or"; readonly conditions: readonly RecursiveDTQLCondition[] }
+  | { readonly kind: "is-null" | "is-not-null"; readonly operand: RecursiveDTQLExpression }
   | { readonly kind: "exists" | "not-exists"; readonly query: RecursiveDTQLQuery };
 
 export type AnyParsedDTQLQuery<T> = ParsedDTQLQuery<T> | RecursiveDTQLQuery;

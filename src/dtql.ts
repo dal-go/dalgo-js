@@ -41,7 +41,7 @@ const hintKeys = new Set(["algorithms"]);
 const joinAlgorithms = new Set<QueryJoinAlgorithm>(["hash", "merge", "lookup", "batchedLookup", "nestedLoop"]);
 const joinPredicateKeys = new Set(["left", "op", "right"]);
 const comparisonKeys = new Set(["op", "left", "right"]);
-const conditionKeys = new Set(["op", "left", "right", "and", "or"]);
+const conditionKeys = new Set(["op", "left", "right", "and", "or", "isNull", "isNotNull"]);
 const paramName = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
 const fieldKeys = new Set(["field"]);
 const qualifiedFieldKeys = new Set(["field", "source"]);
@@ -184,6 +184,7 @@ function serializeWhere(filters: readonly (DTQLQueryFilter | DTQLCondition)[]): 
 
 function serializeCondition(condition: DTQLCondition): ObjectValue {
   if (isConditionGroup(condition)) return { [condition.kind]: condition.conditions.map(serializeCondition) };
+  if ("operand" in condition) return { [condition.kind === "is-null" ? "isNull" : "isNotNull"]: serializeExpression(condition.operand) };
   return {
     op: condition.operator === "in" ? "In" : condition.operator === "not-in" ? "NotIn" : condition.operator,
     left: serializeExpression(condition.left),
@@ -419,6 +420,7 @@ function parseLegacyWhere(
 ): QueryFilter<Record<string, unknown>> | DTQLQueryFilter {
   const where = object(value, "where");
   if (Object.hasOwn(where, "and") || Object.hasOwn(where, "or")) fail("where groups require an aliased or joined relation model");
+  if (Object.hasOwn(where, "isNull") || Object.hasOwn(where, "isNotNull")) fail("where null tests (isNull, isNotNull) require an aliased or joined relation model");
   assertOnlyKeys(where, comparisonKeys, "where");
   const operator = requiredString(where, "op");
   if (!operators.has(operator)) fail(`unsupported where operator ${operator}`);
@@ -444,7 +446,7 @@ function parseLegacyWhere(
 
 function parseWhereCondition(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLQueryFilter | DTQLCondition {
   const condition = parseCondition(value, "where", "where", (operand, path) => parseExpression(operand, path, aliases, schema));
-  if (isConditionGroup(condition)) return condition;
+  if (isConditionGroup(condition) || "operand" in condition) return condition;
   const { left, operator, right } = condition;
   // The compact filter keeps the shape consumers already read: a field against a literal (or a list for In/NotIn).
   if (left.kind === "field" && isMembership(operator) && right.kind === "values") return { field: left.field, operator, value: right.values };
@@ -454,7 +456,8 @@ function parseWhereCondition(value: unknown, aliases: ReadonlyMap<string, QueryR
 
 /**
  * Parses a WHERE or HAVING condition with Go's grammar: a comparison
- * (`op`/`left`/`right`) or an `and`/`or` group of conditions, never both.
+ * (`op`/`left`/`right`), an `and`/`or` group of conditions, or a null test
+ * (`isNull` / `isNotNull` with one expression), never two of them.
  */
 function parseCondition(
   value: unknown,
@@ -467,9 +470,11 @@ function parseCondition(
   assertOnlyKeys(condition, conditionKeys, label);
   const set = (key: string): boolean => condition[key] !== undefined && condition[key] !== null;
   const comparison = ["op", "left", "right"].some((key) => set(key) && condition[key] !== "");
-  const forms = [comparison, set("and"), set("or")].filter(Boolean).length;
-  if (forms === 0) fail(`${path}: condition must be a comparison (op/left/right) or a group (and/or)`);
-  if (forms > 1) fail(`${path}: condition mixes comparison and group forms`);
+  const forms = [comparison, set("and"), set("or"), set("isNull"), set("isNotNull")].filter(Boolean).length;
+  if (forms === 0) fail(`${path}: condition must be a comparison (op/left/right), a group (and/or) or a null test (isNull/isNotNull)`);
+  if (forms > 1) fail(`${path}: condition mixes comparison, group and null-test forms`);
+  const nullTest = set("isNull") ? "isNull" : set("isNotNull") ? "isNotNull" : undefined;
+  if (nullTest !== undefined) return { kind: nullTest === "isNull" ? "is-null" : "is-not-null", operand: operand(object(condition[nullTest], `${path}.${nullTest}`), `${path}.${nullTest}`) };
   if (comparison) {
     const operator = requiredString(condition, "op");
     if (!operators.has(operator)) fail(`unsupported ${label} operator ${operator}`);

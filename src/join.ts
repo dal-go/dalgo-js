@@ -1,5 +1,5 @@
 import { containsAggregate, effectiveColumns, expressionText, hasAggregation, hasDistinctAggregate } from "./aggregation.js";
-import { evaluateCondition, isMembership, toCondition, walkComparisons, type Truth } from "./condition.js";
+import { evaluateCondition, isMembership, nullTestTruth, toCondition, walkConditionExpressions, type DTQLLeaf, type Truth } from "./condition.js";
 import type { QueryExecutor } from "./database.js";
 import type { DTQLSchema } from "./dtql.js";
 import { Key } from "./key.js";
@@ -245,7 +245,7 @@ function validateClauseSources(query: JoinedDTQLQuery, aliases: ReadonlyMap<stri
       default: return;
     }
   };
-  query.filters.forEach((filter, index) => { walkComparisons(toCondition(filter), `where[${index.toString()}]`, (comparison, path) => { expression(comparison.left, `${path}.left`); expression(comparison.right, `${path}.right`); }); });
+  query.filters.forEach((filter, index) => { walkConditionExpressions(toCondition(filter), `where[${index.toString()}]`, expression); });
   query.orders.forEach((order, index) => {
     if (order.expression === undefined) field(order.field, `orderBy[${index.toString()}]`);
     else expression(order.expression, `orderBy[${index.toString()}]`);
@@ -254,7 +254,7 @@ function validateClauseSources(query: JoinedDTQLQuery, aliases: ReadonlyMap<stri
     if (column.expression !== undefined) expression(column.expression, `columns[${index.toString()}]`);
   });
   query.groupBy?.forEach((group, index) => { expression(group, `groupBy[${index.toString()}]`); });
-  if (query.having !== undefined) walkComparisons(query.having, "having", (comparison, path) => { expression(comparison.left, `${path}.left`); expression(comparison.right, `${path}.right`); });
+  if (query.having !== undefined) walkConditionExpressions(query.having, "having", expression);
 }
 
 function expandColumns(
@@ -509,10 +509,12 @@ function joinKey(value: unknown, path: string): string | undefined {
  * and `NotIn` over a list containing null never does either).
  */
 function matchesWhere(row: JoinedRow, filter: DTQLQueryFilter | DTQLCondition): boolean {
-  return evaluateCondition(toCondition(filter), (comparison, path) => whereTruth(row, comparison, path), "where") === "true";
+  return evaluateCondition(toCondition(filter), (leaf, path) => whereTruth(row, leaf, path), "where") === "true";
 }
 
-function whereTruth(row: JoinedRow, comparison: DTQLComparison, path: string): Truth {
+function whereTruth(row: JoinedRow, leaf: DTQLLeaf, path: string): Truth {
+  if ("operand" in leaf) return nullTestTruth(leaf, whereOperand(row, leaf.operand, `${path}.operand`));
+  const comparison = leaf;
   const left = whereOperand(row, comparison.left, `${path}.left`);
   if (isMembership(comparison.operator)) {
     const right = whereOperand(row, comparison.right, `${path}.right`);
@@ -579,7 +581,7 @@ function queryAggregates(query: JoinedDTQLQuery): Extract<DTQLExpression, { read
   };
   query.columns?.forEach((column) => { if (column.expression !== undefined) visit(column.expression); });
   query.orders.forEach((order) => { if (order.expression !== undefined) visit(order.expression); });
-  if (query.having !== undefined) walkComparisons(query.having, "having", (comparison) => { visit(comparison.left); visit(comparison.right); });
+  if (query.having !== undefined) walkConditionExpressions(query.having, "having", visit);
   return found;
 }
 
@@ -605,7 +607,10 @@ function emptyAggregateRow(): JoinedRow {
 }
 
 function matchesHaving(value: MaterializedRow, having: DTQLCondition): boolean {
-  return evaluateCondition(having, (comparison, path) => havingHolds(comparison.operator, expressionValue(value.row, value.group, comparison.left, `${path}.left`), expressionValue(value.row, value.group, comparison.right, `${path}.right`)) ? "true" : "false", "having") === "true";
+  return evaluateCondition(having, (leaf, path) => {
+    if ("operand" in leaf) return nullTestTruth(leaf, expressionValue(value.row, value.group, leaf.operand, `${path}.operand`));
+    return havingHolds(leaf.operator, expressionValue(value.row, value.group, leaf.left, `${path}.left`), expressionValue(value.row, value.group, leaf.right, `${path}.right`)) ? "true" : "false";
+  }, "having") === "true";
 }
 
 /**
@@ -1094,7 +1099,7 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
     } else if (value.kind === "binary") { collect(value.left); collect(value.right); }
   };
   effective.columns?.forEach((column) => { if (column.expression !== undefined) collect(column.expression); });
-  if (effective.having !== undefined) walkComparisons(effective.having, "having", (comparison) => { collect(comparison.left); collect(comparison.right); });
+  if (effective.having !== undefined) walkConditionExpressions(effective.having, "having", collect);
   for (const order of effective.orders) {
     if (order.expression === undefined) continue;
     if (options.money !== undefined) planError("orderBy", "expression order keys are not supported in exact money mode");
@@ -1230,7 +1235,10 @@ function streamExpression(group: StreamGroup, expression: DTQLExpression, path: 
 }
 
 function streamHaving(group: StreamGroup, having: DTQLCondition, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): boolean {
-  return evaluateCondition(having, (comparison, path) => havingHolds(comparison.operator, streamExpression(group, comparison.left, `${path}.left`, exact), streamExpression(group, comparison.right, `${path}.right`, exact)) ? "true" : "false", "having") === "true";
+  return evaluateCondition(having, (leaf, path) => {
+    if ("operand" in leaf) return nullTestTruth(leaf, streamExpression(group, leaf.operand, `${path}.operand`, exact));
+    return havingHolds(leaf.operator, streamExpression(group, leaf.left, `${path}.left`, exact), streamExpression(group, leaf.right, `${path}.right`, exact)) ? "true" : "false";
+  }, "having") === "true";
 }
 
 function streamProject(group: StreamGroup, query: JoinedDTQLQuery, aliases: readonly string[], exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): Data {

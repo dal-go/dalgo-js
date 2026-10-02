@@ -167,6 +167,29 @@ parameter in WHERE) fails the query only when a row reaches it. In HAVING, `==` 
 for two nulls and `<`, `<=`, `>`, `>=` are false when either side is null; `In` and
 `NotIn` parse but fail when a group is evaluated.
 
+**Null tests.** `isNull` and `isNotNull` take one expression and are true when it is,
+respectively is not, null. They are the way to select or exclude nulls in a joined or
+aggregated query, where `x == null` matches nothing, and they are the same documents Go
+accepts (`dal.IsNullCondition`). They are valid wherever a condition is (`where`,
+`having`, inside `and` / `or`, and in a nested query of `parseRecursiveDTQL`), never
+unknown, and a field missing from a document counts as null; they are not valid in a
+join's `on` list. A bare single source (no `alias`, `database` or `joins`) rejects them
+at parse, like groups.
+
+```yaml
+where:
+  and:
+    - isNull: {field: Company, source: c}          # no company, or the field is absent
+    - isNotNull: {field: InvoiceId, source: i}      # ...and it has an invoice
+having:
+  isNotNull: {aggregate: {function: max, args: [{field: Total, source: i}]}}
+```
+
+In code a null test parses to `DTQLNullTest` (`{ kind: "is-null" | "is-not-null", operand }`),
+a member of the `DTQLCondition` union. Code that narrows a `DTQLCondition` by
+`"kind" in condition` to find an `and` / `or` group must now check `kind === "and" || kind === "or"`.
+`RecursiveDTQLCondition` gains the same `is-null` / `is-not-null` kinds.
+
 The parsed query keeps the compact `DTQLQueryFilter` (`field`, `operator`, `value`) for a
 top-level field-versus-literal `where`, as before, and uses `DTQLComparison` and
 `DTQLConditionGroup` for every other shape; `having` is a `DTQLCondition`. Several
@@ -242,7 +265,7 @@ What remains, each pinned by a test (`test/differences.test.ts`):
 
 1. **`!=`.** `where` and `having` also accept `!=`; DTQL in Go has none. Here null is a
    value for it: `x != null` means "x is not null", `null != "a"` is true, `null != null`
-   is false.
+   is false. Prefer `isNotNull` for that meaning: Go has it too.
 2. **`groupBy` takes fields only.** Go accepts any scalar expression there.
 3. **Schema-resolved fields.** `parseDTQL` takes a schema. A field without `source`
    resolves through it when exactly one relation has the field (ambiguity is an error),
@@ -257,8 +280,8 @@ What remains, each pinned by a test (`test/differences.test.ts`):
    expression, `exists` and `notExists` are rejected at parse. Go's join executor runs
    them; here `parseRecursiveDTQL` is the separate model for them.
 6. **A bare single source** (no `alias`, `database` or `joins`) parses to the legacy
-   `StructuredQuery`: its `where` is one field-versus-literal comparison (no groups or
-   expressions), it has no `columns`, `groupBy`, `having` or expression keys, and it
+   `StructuredQuery`: its `where` is one field-versus-literal comparison (no groups, null
+   tests or expressions), it has no `columns`, `groupBy`, `having` or expression keys, and it
    requires a positive `limit`.
 7. **Bounds are this package's own.** `limit` above `maxLimit` (1000 unless the option
    says otherwise) is rejected at parse, and execution is bounded by `maxFetchedRows`,
