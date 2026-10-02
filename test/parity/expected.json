@@ -1,0 +1,1746 @@
+{
+ "dalgo": {
+  "commit": "0b8c11b1a94b6495281c8aacd6399e0585f9b35f",
+  "module": "github.com/dal-go/dalgo",
+  "version": "v0.88.2"
+ },
+ "results": {
+  "01 saved per-capita fixture (desc, tie, div-by-zero)": {
+   "rows": [
+    {
+     "country": "Iceland",
+     "population": 4,
+     "populationYear": 2023,
+     "salesPerMillion": 1000000,
+     "totalSales": 4
+    },
+    {
+     "country": "USA",
+     "population": 300,
+     "populationYear": 2023,
+     "salesPerMillion": 100000,
+     "totalSales": 30
+    },
+    {
+     "country": "Malta",
+     "population": 100,
+     "populationYear": 2023,
+     "salesPerMillion": 100000,
+     "totalSales": 10
+    },
+    {
+     "country": "Brazil",
+     "population": 200,
+     "populationYear": 2023,
+     "salesPerMillion": 25000,
+     "totalSales": 5
+    },
+    {
+     "country": "Chile",
+     "population": 0,
+     "populationYear": 2023,
+     "salesPerMillion": null,
+     "totalSales": 8
+    }
+   ]
+  },
+  "02 saved per-capita asc (NULL first)": {
+   "rows": [
+    {
+     "country": "Chile",
+     "population": 0,
+     "populationYear": 2023,
+     "salesPerMillion": null,
+     "totalSales": 8
+    },
+    {
+     "country": "Brazil",
+     "population": 200,
+     "populationYear": 2023,
+     "salesPerMillion": 25000,
+     "totalSales": 5
+    },
+    {
+     "country": "USA",
+     "population": 300,
+     "populationYear": 2023,
+     "salesPerMillion": 100000,
+     "totalSales": 30
+    },
+    {
+     "country": "Malta",
+     "population": 100,
+     "populationYear": 2023,
+     "salesPerMillion": 100000,
+     "totalSales": 10
+    },
+    {
+     "country": "Iceland",
+     "population": 4,
+     "populationYear": 2023,
+     "salesPerMillion": 1000000,
+     "totalSales": 4
+    }
+   ]
+  },
+  "03 saved per-capita offset 1 limit 2": {
+   "rows": [
+    {
+     "country": "USA",
+     "population": 300,
+     "populationYear": 2023,
+     "salesPerMillion": 100000,
+     "totalSales": 30
+    },
+    {
+     "country": "Malta",
+     "population": 100,
+     "populationYear": 2023,
+     "salesPerMillion": 100000,
+     "totalSales": 10
+    }
+   ]
+  },
+  "04 unprojected aggregate key desc + group field tiebreak": {
+   "rows": [
+    {
+     "country": "Atlantis"
+    },
+    {
+     "country": "USA"
+    },
+    {
+     "country": "Malta"
+    },
+    {
+     "country": "Chile"
+    },
+    {
+     "country": "Brazil"
+    },
+    {
+     "country": "Peru"
+    },
+    {
+     "country": "Iceland"
+    }
+   ]
+  },
+  "05 ungrouped expr key over nested join (0 - population)": {
+   "rows": [
+    {
+     "country": "USA"
+    },
+    {
+     "country": "Brazil"
+    },
+    {
+     "country": "Malta"
+    },
+    {
+     "country": "Iceland"
+    },
+    {
+     "country": "Chile"
+    }
+   ]
+  },
+  "06 constant key desc (stable)": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "07 aggregate-only key, no columns, no groupBy": {
+   "rows": [
+    {}
+   ]
+  },
+  "08 ungrouped NULL operand asc (qty*price), single source": {
+   "rows": [
+    {
+     "id": 5,
+     "v": null
+    },
+    {
+     "id": 3,
+     "v": 0
+    },
+    {
+     "id": 2,
+     "v": 2
+    },
+    {
+     "id": 6,
+     "v": 2
+    },
+    {
+     "id": 1,
+     "v": 3
+    },
+    {
+     "id": 7,
+     "v": 4
+    },
+    {
+     "id": 4,
+     "v": 5
+    }
+   ]
+  },
+  "09 ungrouped NULL operand desc (qty*price)": {
+   "rows": [
+    {
+     "id": 4
+    },
+    {
+     "id": 7
+    },
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "10 mixed field desc + expression asc (ungrouped)": {
+   "rows": [
+    {
+     "artist": "Monk",
+     "id": 5
+    },
+    {
+     "artist": "Miles",
+     "id": 3
+    },
+    {
+     "artist": "Miles",
+     "id": 1
+    },
+    {
+     "artist": "Metallica",
+     "id": 4
+    },
+    {
+     "artist": "Ella",
+     "id": 7
+    },
+    {
+     "artist": "Coltrane",
+     "id": 6
+    },
+    {
+     "artist": "Coltrane",
+     "id": 2
+    }
+   ]
+  },
+  "100 flat join: count distinct falls back to the generic plan": {
+   "rows": [
+    {
+     "distinctTotals": 2,
+     "invoices": 2,
+     "iso": "USA"
+    },
+    {
+     "distinctTotals": 1,
+     "invoices": 1,
+     "iso": "BRA"
+    },
+    {
+     "distinctTotals": 1,
+     "invoices": 1,
+     "iso": "CHI"
+    },
+    {
+     "distinctTotals": 1,
+     "invoices": 1,
+     "iso": "ICE"
+    },
+    {
+     "distinctTotals": 1,
+     "invoices": 1,
+     "iso": "MAL"
+    }
+   ]
+  },
+  "101 flat join: first and last keep null values": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "firstNote": null,
+     "lastNote": 7
+    },
+    {
+     "artist": "Ella",
+     "firstNote": true,
+     "lastNote": true
+    },
+    {
+     "artist": "Metallica",
+     "firstNote": "z",
+     "lastNote": "z"
+    },
+    {
+     "artist": "Miles",
+     "firstNote": "x",
+     "lastNote": "y"
+    },
+    {
+     "artist": "Monk",
+     "firstNote": "w",
+     "lastNote": "w"
+    }
+   ]
+  },
+  "102 flat join: left join keeps unmatched groups": {
+   "rows": [
+    {
+     "billing": "USA",
+     "n": 2
+    },
+    {
+     "billing": "Atlantis",
+     "n": 1
+    },
+    {
+     "billing": "Brazil",
+     "n": 1
+    },
+    {
+     "billing": "Chile",
+     "n": 1
+    },
+    {
+     "billing": "Iceland",
+     "n": 1
+    },
+    {
+     "billing": "Malta",
+     "n": 1
+    },
+    {
+     "billing": "Peru",
+     "n": 1
+    }
+   ]
+  },
+  "103 sum and avg ignore non-numeric values": {
+   "rows": [
+    {
+     "a": 7,
+     "c": 5,
+     "cd": 5,
+     "genre": "Jazz",
+     "s": 7
+    },
+    {
+     "a": null,
+     "c": 1,
+     "cd": 1,
+     "genre": "Rock",
+     "s": null
+    }
+   ]
+  },
+  "104 min and max over mixed types": {
+   "rows": [
+    {
+     "genre": "Jazz",
+     "hi": "y",
+     "lo": true
+    },
+    {
+     "genre": "Rock",
+     "hi": "z",
+     "lo": "z"
+    }
+   ]
+  },
+  "105 first and last keep null values": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "firstNote": null,
+     "lastNote": 7
+    },
+    {
+     "artist": "Ella",
+     "firstNote": true,
+     "lastNote": true
+    },
+    {
+     "artist": "Metallica",
+     "firstNote": "z",
+     "lastNote": "z"
+    },
+    {
+     "artist": "Miles",
+     "firstNote": "x",
+     "lastNote": "y"
+    },
+    {
+     "artist": "Monk",
+     "firstNote": "w",
+     "lastNote": "w"
+    }
+   ]
+  },
+  "106 non-numeric arithmetic in a column is null": {
+   "rows": [
+    {
+     "genre": "Jazz",
+     "x": null,
+     "y": null
+    },
+    {
+     "genre": "Rock",
+     "x": null,
+     "y": null
+    }
+   ]
+  },
+  "107 non-numeric arithmetic order key sorts null first": {
+   "rows": [
+    {
+     "genre": "Rock"
+    },
+    {
+     "genre": "Jazz"
+    }
+   ]
+  },
+  "108 division by zero is null and sorts first ascending": {
+   "rows": [
+    {
+     "id": 3,
+     "r": null
+    },
+    {
+     "id": 5,
+     "r": null
+    },
+    {
+     "id": 2,
+     "r": 0.5
+    },
+    {
+     "id": 6,
+     "r": 0.5
+    },
+    {
+     "id": 7,
+     "r": 1
+    },
+    {
+     "id": 1,
+     "r": 1.3333333333333333
+    },
+    {
+     "id": 4,
+     "r": 5
+    }
+   ]
+  },
+  "109 division by zero is null and sorts last descending": {
+   "rows": [
+    {
+     "id": 4,
+     "r": 5
+    },
+    {
+     "id": 1,
+     "r": 1.3333333333333333
+    },
+    {
+     "id": 7,
+     "r": 1
+    },
+    {
+     "id": 2,
+     "r": 0.5
+    },
+    {
+     "id": 6,
+     "r": 0.5
+    },
+    {
+     "id": 3,
+     "r": null
+    },
+    {
+     "id": 5,
+     "r": null
+    }
+   ]
+  },
+  "11 ungrouped division by zero key + column (qty/price)": {
+   "rows": [
+    {
+     "id": 4,
+     "r": 5
+    },
+    {
+     "id": 1,
+     "r": 1.3333333333333333
+    },
+    {
+     "id": 7,
+     "r": 1
+    },
+    {
+     "id": 2,
+     "r": 0.5
+    },
+    {
+     "id": 6,
+     "r": 0.5
+    },
+    {
+     "id": 3,
+     "r": null
+    },
+    {
+     "id": 5,
+     "r": null
+    }
+   ]
+  },
+  "110 literal division by zero": {
+   "rows": [
+    {
+     "z": null,
+     "zero": 0
+    }
+   ]
+  },
+  "111 mixed types in one field key, descending": {
+   "rows": [
+    {
+     "id": 4,
+     "note": "z"
+    },
+    {
+     "id": 3,
+     "note": "y"
+    },
+    {
+     "id": 1,
+     "note": "x"
+    },
+    {
+     "id": 5,
+     "note": "w"
+    },
+    {
+     "id": 6,
+     "note": 7
+    },
+    {
+     "id": 7,
+     "note": true
+    },
+    {
+     "id": 2,
+     "note": null
+    }
+   ]
+  },
+  "112 HAVING comparing a string maximum with a number": {
+   "rows": [
+    {
+     "genre": "Jazz"
+    },
+    {
+     "genre": "Rock"
+    }
+   ]
+  },
+  "113 HAVING comparing a mixed-type minimum with a number": {
+   "rows": [
+    {
+     "genre": "Rock"
+    }
+   ]
+  },
+  "114 HAVING binary expression over aggregates": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "spend": 8
+    },
+    {
+     "artist": "Ella",
+     "spend": 4
+    },
+    {
+     "artist": "Metallica",
+     "spend": 5
+    },
+    {
+     "artist": "Miles",
+     "spend": 4.5
+    }
+   ]
+  },
+  "115 HAVING literal on the left, binary on the right": {
+   "rows": [
+    {
+     "artist": "Coltrane"
+    },
+    {
+     "artist": "Ella"
+    },
+    {
+     "artist": "Metallica"
+    },
+    {
+     "artist": "Miles"
+    }
+   ]
+  },
+  "116 HAVING equality with a null aggregate": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "q": 2
+    },
+    {
+     "artist": "Ella",
+     "q": 2
+    },
+    {
+     "artist": "Metallica",
+     "q": 5
+    },
+    {
+     "artist": "Miles",
+     "q": 3
+    },
+    {
+     "artist": "Monk",
+     "q": null
+    }
+   ]
+  },
+  "117 HAVING ordering comparison drops null aggregates": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "q": 2
+    },
+    {
+     "artist": "Ella",
+     "q": 2
+    },
+    {
+     "artist": "Metallica",
+     "q": 5
+    },
+    {
+     "artist": "Miles",
+     "q": 3
+    }
+   ]
+  },
+  "119 aggregate without a groupBy over an empty table": {
+   "rows": [
+    {
+     "lo": null,
+     "n": 0,
+     "total": null
+    }
+   ]
+  },
+  "12 grouped: expr key count desc, ties (jazz-style top artists)": {
+   "rows": [
+    {
+     "artist": "Miles",
+     "purchases": 2
+    },
+    {
+     "artist": "Coltrane",
+     "purchases": 2
+    },
+    {
+     "artist": "Metallica",
+     "purchases": 1
+    }
+   ]
+  },
+  "120 limit and offset apply after aggregate ordering": {
+   "rows": [
+    {
+     "artist": "Miles",
+     "n": 2
+    },
+    {
+     "artist": "Ella",
+     "n": 1
+    }
+   ]
+  },
+  "121 jazz artists: join, WHERE genre, count distinct, aggregate key, tiebreak": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "label": "Impulse",
+     "listeners": 3,
+     "minutes": 15,
+     "plays": 3
+    },
+    {
+     "artist": "Miles",
+     "label": "Columbia",
+     "listeners": 2,
+     "minutes": 15,
+     "plays": 3
+    },
+    {
+     "artist": "Ella",
+     "label": "Verve",
+     "listeners": 2,
+     "minutes": 9,
+     "plays": 2
+    },
+    {
+     "artist": "Monk",
+     "label": "Blue Note",
+     "listeners": 1,
+     "minutes": 12,
+     "plays": 2
+    },
+    {
+     "artist": "Evans",
+     "label": "Riverside",
+     "listeners": 1,
+     "minutes": 3,
+     "plays": 1
+    }
+   ]
+  },
+  "122 jazz artists: same query ascending with an offset": {
+   "rows": [
+    {
+     "artist": "Monk",
+     "listeners": 1
+    },
+    {
+     "artist": "Ella",
+     "listeners": 2
+    },
+    {
+     "artist": "Miles",
+     "listeners": 2
+    },
+    {
+     "artist": "Coltrane",
+     "listeners": 3
+    }
+   ]
+  },
+  "123 countries above a per-million threshold (HAVING binary)": {
+   "rows": [
+    {
+     "country": "Iceland",
+     "population": 4,
+     "salesPerMillion": 1000000
+    },
+    {
+     "country": "Malta",
+     "population": 100,
+     "salesPerMillion": 100000
+    },
+    {
+     "country": "USA",
+     "population": 300,
+     "salesPerMillion": 100000
+    }
+   ]
+  },
+  "124 countries above a per-million threshold, threshold on the left": {
+   "rows": [
+    {
+     "country": "Iceland",
+     "salesPerMillion": 1000000
+    },
+    {
+     "country": "Malta",
+     "salesPerMillion": 100000
+    },
+    {
+     "country": "USA",
+     "salesPerMillion": 100000
+    }
+   ]
+  },
+  "125 ungrouped join: non-numeric arithmetic in a column": {
+   "rows": [
+    {
+     "id": 1,
+     "spend": 3,
+     "x": null
+    },
+    {
+     "id": 2,
+     "spend": 2,
+     "x": null
+    },
+    {
+     "id": 3,
+     "spend": 0,
+     "x": null
+    },
+    {
+     "id": 4,
+     "spend": 5,
+     "x": null
+    },
+    {
+     "id": 5,
+     "spend": null,
+     "x": null
+    },
+    {
+     "id": 6,
+     "spend": 2,
+     "x": null
+    },
+    {
+     "id": 7,
+     "spend": 4,
+     "x": null
+    }
+   ]
+  },
+  "126 WHERE less-than skips null values": {
+   "rows": [
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 6
+    }
+   ]
+  },
+  "127 WHERE greater-or-equal skips null values": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "128 WHERE comparing a mixed-type column with a number": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    }
+   ]
+  },
+  "129 WHERE equality on a string": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    }
+   ]
+  },
+  "13 alias order key (field: purchases, no source)": {
+   "rows": [
+    {
+     "artist": "Miles",
+     "purchases": 2
+    },
+    {
+     "artist": "Coltrane",
+     "purchases": 2
+    },
+    {
+     "artist": "Metallica",
+     "purchases": 1
+    },
+    {
+     "artist": "Monk",
+     "purchases": 1
+    },
+    {
+     "artist": "Ella",
+     "purchases": 1
+    }
+   ]
+  },
+  "130 WHERE In over values": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 5
+    }
+   ]
+  },
+  "131 WHERE unqualified field on an aliased single source": {
+   "rows": [
+    {
+     "artist": "Metallica",
+     "n": 1
+    }
+   ]
+  },
+  "132 literal column on a join": {
+   "rows": [
+    {
+     "id": 1,
+     "seven": 7,
+     "tag": "fixed"
+    },
+    {
+     "id": 2,
+     "seven": 7,
+     "tag": "fixed"
+    }
+   ]
+  },
+  "14 non-numeric arithmetic key (note + 1)": {
+   "rows": [
+    {
+     "id": 7
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 1
+    },
+    {
+     "id": 6
+    }
+   ]
+  },
+  "15 grouped ORDER BY on non-grouped field": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"s.id\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "16 grouped ORDER BY expr over non-grouped field (0 - id)": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"s.id\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "17 mixed-type field key (note: string/number/bool/null)": {
+   "rows": [
+    {
+     "id": 2,
+     "note": null
+    },
+    {
+     "id": 7,
+     "note": true
+    },
+    {
+     "id": 6,
+     "note": 7
+    },
+    {
+     "id": 5,
+     "note": "w"
+    },
+    {
+     "id": 1,
+     "note": "x"
+    },
+    {
+     "id": 3,
+     "note": "y"
+    },
+    {
+     "id": 4,
+     "note": "z"
+    }
+   ]
+  },
+  "18 flat join grouped, expr key sum/population desc (TS streams with scanPages)": {
+   "rows": [
+    {
+     "country": "ICE",
+     "total": 4
+    },
+    {
+     "country": "BRA",
+     "total": 5
+    },
+    {
+     "country": "CHI",
+     "total": 8
+    },
+    {
+     "country": "MAL",
+     "total": 10
+    },
+    {
+     "country": "USA",
+     "total": 30
+    }
+   ]
+  },
+  "19 flat join grouped, field key on projected alias column mismatch": {
+   "rows": [
+    {
+     "iso": "USA",
+     "total": 30
+    },
+    {
+     "iso": "MAL",
+     "total": 10
+    },
+    {
+     "iso": "ICE",
+     "total": 4
+    },
+    {
+     "iso": "CHI",
+     "total": 8
+    },
+    {
+     "iso": "BRA",
+     "total": 5
+    }
+   ]
+  },
+  "20 aggregate key with HAVING and avg, grouped": {
+   "rows": [
+    {
+     "avgQty": 3,
+     "customer": "c1"
+    },
+    {
+     "avgQty": 1,
+     "customer": "c2"
+    },
+    {
+     "avgQty": 1,
+     "customer": "c3"
+    }
+   ]
+  },
+  "21 jazz filter + count desc (where on genre)": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "customers": 2
+    },
+    {
+     "artist": "Miles",
+     "customers": 2
+    },
+    {
+     "artist": "Ella",
+     "customers": 1
+    },
+    {
+     "artist": "Monk",
+     "customers": 1
+    }
+   ]
+  },
+  "22 empty input, aggregate-only key (implicit group)": {
+   "rows": [
+    {
+     "n": 0
+    }
+   ]
+  },
+  "30 HAVING sum(qty)/sum(price) \u003c 100 with zero divisor (id 3)": {
+   "rows": [
+    {
+     "id": 1,
+     "r": 1.3333333333333333
+    },
+    {
+     "id": 2,
+     "r": 0.5
+    },
+    {
+     "id": 4,
+     "r": 5
+    },
+    {
+     "id": 6,
+     "r": 0.5
+    },
+    {
+     "id": 7,
+     "r": 1
+    }
+   ]
+  },
+  "31 HAVING ratio \u003e 0.1 with zero divisor": {
+   "rows": [
+    {
+     "id": 1,
+     "r": 1.3333333333333333
+    },
+    {
+     "id": 2,
+     "r": 0.5
+    },
+    {
+     "id": 4,
+     "r": 5
+    },
+    {
+     "id": 6,
+     "r": 0.5
+    },
+    {
+     "id": 7,
+     "r": 1
+    }
+   ]
+  },
+  "33 key = min(note) mixed types, grouped by genre": {
+   "rows": [
+    {
+     "genre": "Rock"
+    },
+    {
+     "genre": "Jazz"
+    }
+   ]
+  },
+  "34 order key literal string/bool/null value": {
+   "rows": [
+    {
+     "genre": "Jazz"
+    },
+    {
+     "genre": "Rock"
+    }
+   ]
+  },
+  "35 order by sum over all-null group (Monk qty null) asc": {
+   "rows": [
+    {
+     "artist": "Monk",
+     "q": null
+    },
+    {
+     "artist": "Coltrane",
+     "q": 2
+    },
+    {
+     "artist": "Ella",
+     "q": 2
+    },
+    {
+     "artist": "Miles",
+     "q": 3
+    },
+    {
+     "artist": "Metallica",
+     "q": 5
+    }
+   ]
+  },
+  "36 order by avg over all-null group asc": {
+   "rows": [
+    {
+     "artist": "Monk",
+     "q": null
+    },
+    {
+     "artist": "Coltrane",
+     "q": 1
+    },
+    {
+     "artist": "Miles",
+     "q": 1.5
+    },
+    {
+     "artist": "Ella",
+     "q": 2
+    },
+    {
+     "artist": "Metallica",
+     "q": 5
+    }
+   ]
+  },
+  "37 duplicate expression keys asc+desc": {
+   "rows": [
+    {
+     "artist": "Monk"
+    },
+    {
+     "artist": "Metallica"
+    },
+    {
+     "artist": "Ella"
+    },
+    {
+     "artist": "Miles"
+    },
+    {
+     "artist": "Coltrane"
+    }
+   ]
+  },
+  "38 aggregate key, no groupBy, with plain field column": {
+   "error": "invalid DTQL: aggregation: selected expression \"s.artist\" is neither aggregated nor present in GROUP BY",
+   "phase": "parse"
+  },
+  "40 desc:false explicit": {
+   "rows": [
+    {
+     "artist": "Ella"
+    },
+    {
+     "artist": "Metallica"
+    },
+    {
+     "artist": "Monk"
+    },
+    {
+     "artist": "Coltrane"
+    },
+    {
+     "artist": "Miles"
+    }
+   ]
+  },
+  "41 nested aggregate in key sum(sum(qty))": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: nested aggregates are not supported",
+   "phase": "parse"
+  },
+  "42 overflow key 1e308*qty*100 desc": {
+   "error": "dalgo aggregation: retained aggregation byte limit 67108864 exceeded",
+   "phase": "plan"
+  },
+  "50 unknown key descending:true": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field descending not found in expression",
+   "phase": "parse"
+  },
+  "51 unknown key direction:desc": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field direction not found in expression",
+   "phase": "parse"
+  },
+  "52 extra as": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field as not found in expression",
+   "phase": "parse"
+  },
+  "53 star key": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"*\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "54 values key": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"(1,2)\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "55 source without field": {
+   "error": "invalid DTQL: orderBy #0: source is valid only with field",
+   "phase": "parse"
+  },
+  "60 ungrouped join: param order key": {
+   "error": "query_shape at expression: unsupported expression dal.Param",
+   "phase": "plan"
+  },
+  "61 ungrouped join: star order key": {
+   "error": "query_shape at expression: unsupported expression dal.star",
+   "phase": "plan"
+  },
+  "62 ungrouped join: values order key": {
+   "rows": [
+    {
+     "id": 1
+    },
+    {
+     "id": 2
+    },
+    {
+     "id": 3
+    },
+    {
+     "id": 4
+    },
+    {
+     "id": 5
+    },
+    {
+     "id": 6
+    },
+    {
+     "id": 7
+    }
+   ]
+  },
+  "63 ungrouped join: aggregate-only key with a plain column": {
+   "error": "invalid DTQL: aggregation: selected expression \"s.id\" is neither aggregated nor present in GROUP BY",
+   "phase": "parse"
+  },
+  "64 grouped: sum(*) order key": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: SUM(*) is not supported",
+   "phase": "parse"
+  },
+  "65 grouped: count(distinct *) order key": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: COUNT(DISTINCT *) is not supported",
+   "phase": "parse"
+  },
+  "66 grouped: min(distinct x) order key": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: DISTINCT is not supported for MIN",
+   "phase": "parse"
+  },
+  "67 grouped: aggregate with two arguments as order key": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: SUM requires exactly one argument",
+   "phase": "parse"
+  },
+  "68 grouped: aggregate without arguments as order key": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: SUM requires exactly one argument",
+   "phase": "parse"
+  },
+  "69 grouped: key combining an aggregate and a group key": {
+   "rows": [
+    {
+     "k": 1,
+     "n": 7
+    }
+   ]
+  },
+  "70 grouped: desc that is not a boolean": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!str `descending` into bool",
+   "phase": "parse"
+  },
+  "71 grouped: unknown key beside a field key": {
+   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field extra not found in expression",
+   "phase": "parse"
+  },
+  "72 grouped: two expression forms in one key": {
+   "error": "invalid DTQL: orderBy #0: expression must set exactly one expression form, but several are set",
+   "phase": "parse"
+  },
+  "73 grouped: empty order key": {
+   "error": "invalid DTQL: orderBy #0: expression must set exactly one expression form",
+   "phase": "parse"
+  },
+  "74 grouped: order key with only desc": {
+   "error": "invalid DTQL: orderBy #0: expression must set exactly one expression form",
+   "phase": "parse"
+  },
+  "75 grouped: group key not selected used as order key": {
+   "rows": [
+    {
+     "n": 1
+    },
+    {
+     "n": 2
+    },
+    {
+     "n": 1
+    },
+    {
+     "n": 1
+    },
+    {
+     "n": 2
+    }
+   ]
+  },
+  "76 flat join: group key not selected used as order key": {
+   "rows": [
+    {
+     "total": 30
+    },
+    {
+     "total": 10
+    },
+    {
+     "total": 4
+    },
+    {
+     "total": 8
+    },
+    {
+     "total": 5
+    }
+   ]
+  },
+  "77 grouped: plain column that is not a group key": {
+   "error": "invalid DTQL: aggregation: selected expression \"s.artist\" is neither aggregated nor present in GROUP BY",
+   "phase": "parse"
+  },
+  "78 no groupBy: plain column beside an aggregate column": {
+   "error": "invalid DTQL: aggregation: selected expression \"s.artist\" is neither aggregated nor present in GROUP BY",
+   "phase": "parse"
+  },
+  "79 grouped: constant column": {
+   "error": "invalid DTQL: aggregation: selected expression \"1\" is neither aggregated nor present in GROUP BY",
+   "phase": "parse"
+  },
+  "80 grouped: aggregate column mixing a group key": {
+   "rows": [
+    {
+     "x": 12
+    }
+   ]
+  },
+  "81 groupBy containing an aggregate": {
+   "error": "invalid DTQL: aggregation: GROUP BY expression #0 contains an aggregate",
+   "phase": "parse"
+  },
+  "82 grouped: wildcard column": {
+   "error": "invalid DTQL: aggregation: aggregate SELECT column #0 cannot be a wildcard",
+   "phase": "parse"
+  },
+  "83 groupBy without columns projects the group key": {
+   "rows": [
+    {
+     "artist": "Coltrane"
+    },
+    {
+     "artist": "Ella"
+    },
+    {
+     "artist": "Metallica"
+    },
+    {
+     "artist": "Miles"
+    },
+    {
+     "artist": "Monk"
+    }
+   ]
+  },
+  "84 groupBy of two keys without columns": {
+   "rows": [
+    {
+     "artist": "Monk",
+     "genre": "Jazz"
+    },
+    {
+     "artist": "Miles",
+     "genre": "Jazz"
+    },
+    {
+     "artist": "Metallica",
+     "genre": "Rock"
+    },
+    {
+     "artist": "Ella",
+     "genre": "Jazz"
+    },
+    {
+     "artist": "Coltrane",
+     "genre": "Jazz"
+    }
+   ]
+  },
+  "85 alias order key then group field": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "purchases": 2
+    },
+    {
+     "artist": "Miles",
+     "purchases": 2
+    },
+    {
+     "artist": "Ella",
+     "purchases": 1
+    },
+    {
+     "artist": "Metallica",
+     "purchases": 1
+    },
+    {
+     "artist": "Monk",
+     "purchases": 1
+    }
+   ]
+  },
+  "86 alias of a field column as order key": {
+   "rows": [
+    {
+     "n": 2,
+     "who": "Miles"
+    },
+    {
+     "n": 2,
+     "who": "Coltrane"
+    },
+    {
+     "n": 1,
+     "who": "Monk"
+    },
+    {
+     "n": 1,
+     "who": "Metallica"
+    },
+    {
+     "n": 1,
+     "who": "Ella"
+    }
+   ]
+  },
+  "87 alias referenced in HAVING": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "purchases": 2
+    },
+    {
+     "artist": "Miles",
+     "purchases": 2
+    }
+   ]
+  },
+  "88 alias of a binary column as order key": {
+   "rows": [
+    {
+     "artist": "Metallica",
+     "avgQty": 5
+    },
+    {
+     "artist": "Ella",
+     "avgQty": 2
+    },
+    {
+     "artist": "Miles",
+     "avgQty": 1.5
+    },
+    {
+     "artist": "Coltrane",
+     "avgQty": 1
+    },
+    {
+     "artist": "Monk",
+     "avgQty": null
+    }
+   ]
+  },
+  "89 unknown alias as order key": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"nope\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "90 alias with a source as order key": {
+   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"s.purchases\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "phase": "parse"
+  },
+  "91 unqualified fields in a single aliased source": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2
+    },
+    {
+     "artist": "Miles",
+     "n": 2
+    },
+    {
+     "artist": "Ella",
+     "n": 1
+    },
+    {
+     "artist": "Metallica",
+     "n": 1
+    },
+    {
+     "artist": "Monk",
+     "n": 1
+    }
+   ]
+  },
+  "92 alias named like its source field": {
+   "rows": [
+    {
+     "artist": "Coltrane",
+     "n": 2
+    },
+    {
+     "artist": "Miles",
+     "n": 2
+    },
+    {
+     "artist": "Ella",
+     "n": 1
+    },
+    {
+     "artist": "Metallica",
+     "n": 1
+    },
+    {
+     "artist": "Monk",
+     "n": 1
+    }
+   ]
+  },
+  "93 alias in HAVING compared with another alias": {
+   "rows": [
+    {
+     "artist": "Monk",
+     "n": 1,
+     "q": 0
+    }
+   ]
+  },
+  "94 flat join: field key on an aliased group column": {
+   "rows": [
+    {
+     "iso": "USA",
+     "total": 30
+    },
+    {
+     "iso": "MAL",
+     "total": 10
+    },
+    {
+     "iso": "ICE",
+     "total": 4
+    },
+    {
+     "iso": "CHI",
+     "total": 8
+    },
+    {
+     "iso": "BRA",
+     "total": 5
+    }
+   ]
+  },
+  "95 flat join: field key beside an aggregate expression key": {
+   "rows": [
+    {
+     "iso": "USA",
+     "total": 30
+    },
+    {
+     "iso": "BRA",
+     "total": 5
+    },
+    {
+     "iso": "CHI",
+     "total": 8
+    },
+    {
+     "iso": "ICE",
+     "total": 4
+    },
+    {
+     "iso": "MAL",
+     "total": 10
+    }
+   ]
+  },
+  "96 flat join: aggregate expression key then field key": {
+   "rows": [
+    {
+     "iso": "USA"
+    },
+    {
+     "iso": "MAL"
+    },
+    {
+     "iso": "CHI"
+    },
+    {
+     "iso": "BRA"
+    },
+    {
+     "iso": "ICE"
+    }
+   ]
+  },
+  "97 flat join: aggregate only in the order key, no columns": {
+   "rows": [
+    {}
+   ]
+  },
+  "98 flat join: aggregates over zero rows give one row": {
+   "rows": [
+    {
+     "mean": null,
+     "n": 0,
+     "top": null,
+     "total": null
+    }
+   ]
+  },
+  "99 flat join: HAVING without any aggregate keeps the implicit group": {
+   "rows": [
+    {
+     "iso": "USA"
+    }
+   ]
+  }
+ }
+}

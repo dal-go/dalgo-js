@@ -17,6 +17,7 @@ import type {
   JoinedDTQLQuery,
   StructuredQuery,
 } from "./query.js";
+import { validateAggregation } from "./aggregation.js";
 import { parseDocument as parseYamlDocument, stringify as stringifyYaml } from "yaml";
 
 /** The allowlisted tables and fields against which a DTQL action is validated. */
@@ -44,7 +45,10 @@ const qualifiedFieldKeys = new Set(["field", "source"]);
 const valueKeys = new Set(["value"]);
 const valuesKeys = new Set(["values"]);
 const orderKeys = new Set(["field", "source", "desc"]);
-const columnKeys = new Set(["field", "source", "as", "wildcard", "aggregate", "binary", "distinct"]);
+const expressionOrderKeys = new Set(["value", "values", "param", "star", "aggregate", "binary", "desc"]);
+const columnExtraKeys = new Set(["as", "distinct"]);
+const noKeys: ReadonlySet<string> = new Set();
+const columnKeys = new Set(["field", "source", "as", "wildcard", "aggregate", "binary", "distinct", "value"]);
 const aggregateNames = new Set(["count", "sum", "avg", "min", "max", "first", "last"]);
 const aggregateKeys = new Set(["function", "distinct", "args"]);
 const operators = new Set(["==", "!=", "<", "<=", ">", ">=", "In", "NotIn"]);
@@ -69,19 +73,23 @@ export function parseDTQL(
   const fields = new Set(table.fields);
   const aliases = relationAliases(relation);
   const hasRelationModel = relation.database !== undefined || relation.alias !== undefined || relation.joins.length > 0;
-  const requiresQualifiedFields = relation.joins.length > 0;
+  // An aliased single source is still the relation model: its fields are source-qualified references too.
+  const requiresQualifiedFields = hasRelationModel;
   const where = document.where === undefined ? undefined : parseWhere(document.where, fields, aliases, requiresQualifiedFields, schema);
-  const orders = document.orderBy === undefined ? [] : parseOrders(document.orderBy, fields, aliases, requiresQualifiedFields, hasRelationModel, schema);
+  // Columns come first: ORDER BY and HAVING may name a column by its alias.
   const columns = document.columns === undefined ? undefined : parseColumns(document.columns, aliases, schema);
+  const columnAliases = selectAliases(columns);
+  const orders = document.orderBy === undefined ? [] : parseOrders(document.orderBy, fields, aliases, requiresQualifiedFields, hasRelationModel, schema, columnAliases);
   const limit = document.limit === undefined ? undefined : parseLimit(document.limit, options.maxLimit ?? defaultMaxLimit);
   const offset = document.offset === undefined ? undefined : parseOffset(document.offset);
   const groupBy = document.groupBy === undefined ? undefined : parseGroupBy(document.groupBy, aliases, schema);
-  const having = document.having === undefined ? undefined : parseHaving(document.having, aliases, schema);
+  const having = document.having === undefined ? undefined : parseHaving(document.having, aliases, schema, columnAliases);
   const money = document.money === undefined ? undefined : parseMoney(document.money);
   if (money !== undefined && !hasRelationModel) fail("money requires an aliased or joined relation model");
   if (columns !== undefined && !hasRelationModel) fail("columns require an aliased or joined relation model");
   if ((groupBy !== undefined || having !== undefined) && !hasRelationModel) fail("groupBy and having require an aliased or joined relation model");
   if (limit === undefined && !hasRelationModel) fail("limit must be a positive safe integer");
+  if (hasRelationModel) validateAggregation({ groupBy, columns, having, orders: orders as readonly DTQLQueryOrder[] });
 
   const query = {
     source: { kind: "collection", name: tableIdentity(table) },
@@ -442,6 +450,7 @@ function parseOrders(
   joined: boolean,
   hasRelationModel: boolean,
   schema: DTQLSchema,
+  selectAliasMap: ReadonlyMap<string, DTQLExpression>,
 ): readonly (QueryOrder<Record<string, unknown>> | DTQLQueryOrder)[] {
   if (!Array.isArray(value)) fail("orderBy must be an array");
   return value.map((entry, index) => {
@@ -449,6 +458,11 @@ function parseOrders(
     const order = object(entry, location);
     if (!Object.hasOwn(order, "field")) return parseExpressionOrder(order, location, hasRelationModel, aliases, schema);
     assertOnlyKeys(order, orderKeys, location);
+    if (order.desc !== undefined && typeof order.desc !== "boolean") fail(`${location}.desc must be boolean`);
+    const direction = order.desc === true ? "desc" : "asc";
+    // A key without a source that names a SELECT alias orders by that column.
+    const selected = typeof order.field === "string" && order.source === undefined ? selectAliasMap.get(order.field) : undefined;
+    if (selected !== undefined) return selected.kind === "field" ? { field: selected.field, direction } : { expression: selected, direction };
     const field = parseScopedField(
       order.source === undefined ? { field: order.field } : { field: order.field, source: order.source },
       fields,
@@ -457,13 +471,15 @@ function parseOrders(
       location,
       schema,
     );
-    if (order.desc !== undefined && typeof order.desc !== "boolean") fail(`${location}.desc must be boolean`);
-    const direction = order.desc === true ? "desc" : "asc";
     return typeof field === "string" ? { field, direction } : { field, direction };
   });
 }
 
-/** Any non-field order key is a DTQL expression plus an optional `desc`, as in the Go engine. */
+/**
+ * Any non-field order key is a DTQL expression plus an optional `desc`, as in
+ * the Go engine. Unknown properties are rejected rather than ignored, so a
+ * misspelt `desc` (`descending`, `direction`) cannot silently sort ascending.
+ */
 function parseExpressionOrder(
   order: ObjectValue,
   location: string,
@@ -472,9 +488,20 @@ function parseExpressionOrder(
   schema: DTQLSchema,
 ): DTQLQueryOrder {
   if (!hasRelationModel) fail("orderBy expressions require an aliased or joined relation model");
+  if (Object.hasOwn(order, "source")) fail(`${location}: source is valid only with field`);
+  assertOnlyKeys(order, expressionOrderKeys, location);
   const { desc, ...expression } = order;
   if (desc !== undefined && typeof desc !== "boolean") fail(`${location}.desc must be boolean`);
-  return { expression: parseExpression(expression, location, aliases, schema), direction: desc === true ? "desc" : "asc" };
+  const parsed = parseExpression(expression, location, aliases, schema);
+  if (parsed.kind === "star" || parsed.kind === "param") fail(`join_shape at ${location}: ${parsed.kind === "star" ? "star is only valid as an aggregate argument" : "parameters are not bound in an order key"}`);
+  return { expression: parsed, direction: desc === true ? "desc" : "asc" };
+}
+
+/** Maps each explicit column alias to the expression it names. */
+function selectAliases(columns: readonly QueryColumn[] | undefined): ReadonlyMap<string, DTQLExpression> {
+  const result = new Map<string, DTQLExpression>();
+  for (const column of columns ?? []) if (column.as !== undefined && column.expression !== undefined) result.set(column.as, column.expression);
+  return result;
 }
 
 function parseColumns(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): readonly QueryColumn[] {
@@ -495,14 +522,11 @@ function parseColumns(value: unknown, aliases: ReadonlyMap<string, QueryRelation
       if (!Array.isArray(wildcard.exclude) || wildcard.exclude.length === 0 || !wildcard.exclude.every((field) => typeof field === "string" && field.length > 0)) fail(`join_shape at ${path}.wildcard.exclude: must be a non-empty string array`);
       return { wildcard: { ...(source === undefined ? {} : { source }), exclude: wildcard.exclude as string[] } };
     }
-    return { expression: parseColumnExpression(column, path, aliases, schema), ...(as === undefined ? {} : { as }) };
+    return { expression: parseExpression(column, path, aliases, schema, columnExtraKeys), ...(as === undefined ? {} : { as }) };
   });
 }
 
-function parseColumnExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLExpression {
-  const aggregate = value.aggregate;
-  if (aggregate === undefined) return parseExpression(value, path, aliases, schema);
-  const encoded = object(aggregate, `${path}.aggregate`);
+function parseAggregate(encoded: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLExpression {
   assertOnlyKeys(encoded, aggregateKeys, `${path}.aggregate`);
   const functionName = requiredString(encoded, "function");
   if (!aggregateNames.has(functionName)) fail(`join_shape at ${path}.aggregate.function: unsupported aggregate`);
@@ -516,9 +540,15 @@ function parseColumnExpression(value: ObjectValue, path: string, aliases: Readon
   };
 }
 
-function parseExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLExpression {
+/**
+ * Parses one expression object. It must set exactly one form, and no property
+ * outside that form (plus `extraKeys`, for example a column's `as`) is allowed.
+ */
+function parseExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema, extraKeys: ReadonlySet<string> = noKeys): DTQLExpression {
   const forms = ["field", "value", "values", "param", "star", "aggregate", "binary"].filter((key) => Object.hasOwn(value, key));
   if (forms.length !== 1) fail(`join_shape at ${path}: expression must set exactly one form`);
+  const allowed = new Set([...(forms[0] === "field" ? ["field", "source"] : forms), ...extraKeys]);
+  assertOnlyKeys(value, allowed, path);
   if (value.star === true) return { kind: "star" };
   if (value.value !== undefined || Object.hasOwn(value, "value")) {
     if (!isPortableScalar(value.value)) fail(`${path}.value must be a portable scalar`);
@@ -529,7 +559,7 @@ function parseExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<
     return { kind: "values", values: value.values };
   }
   if (value.param !== undefined) return { kind: "param", name: requiredString(value, "param") };
-  if (value.aggregate !== undefined) return parseColumnExpression({ ...value, as: "_" }, path, aliases, schema);
+  if (value.aggregate !== undefined) return parseAggregate(object(value.aggregate, `${path}.aggregate`), path, aliases, schema);
   if (value.binary !== undefined) {
     const binary = object(value.binary, `${path}.binary`);
     assertOnlyKeys(binary, new Set(["op", "left", "right"]), `${path}.binary`);
@@ -542,7 +572,7 @@ function parseExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<
       right: parseExpression(requiredObject(binary, "right"), `${path}.binary.right`, aliases, schema),
     };
   }
-  return { kind: "field", field: parseKnownQualifiedField(value, path, aliases, schema) };
+  return { kind: "field", field: parseKnownQualifiedField(value, path, aliases, schema, allowed) };
 }
 
 function parseGroupBy(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): readonly DTQLExpression[] {
@@ -550,26 +580,28 @@ function parseGroupBy(value: unknown, aliases: ReadonlyMap<string, QueryRelation
   return value.map((entry, index) => ({ kind: "field", field: parseKnownQualifiedField(object(entry, `groupBy[${index.toString()}]`), `groupBy[${index.toString()}]`, aliases, schema) }));
 }
 
-function parseHaving(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLHaving {
+function parseHaving(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema, selectAliasMap: ReadonlyMap<string, DTQLExpression>): DTQLHaving {
   const having = object(value, "having");
   assertOnlyKeys(having, whereKeys, "having");
   const operator = requiredString(having, "op");
   if (!operators.has(operator) || operator === "In" || operator === "NotIn") fail(`unsupported having operator ${operator}`);
   return {
-    left: parseHavingExpression(requiredObject(having, "left"), "having.left", aliases, schema),
+    left: parseHavingExpression(requiredObject(having, "left"), "having.left", aliases, schema, selectAliasMap),
     operator: toQueryOperator(operator),
-    right: parseHavingExpression(requiredObject(having, "right"), "having.right", aliases, schema),
+    right: parseHavingExpression(requiredObject(having, "right"), "having.right", aliases, schema, selectAliasMap),
   };
 }
 
-function parseHavingExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLExpression {
-  if ("value" in value) {
-    assertOnlyKeys(value, valueKeys, path);
-    if (!isPortableScalar(value.value)) fail(`${path}.value must be a portable scalar`);
-    return { kind: "literal", value: value.value };
+/** A HAVING operand is any expression, or the alias of a SELECT column (a field without a source). */
+function parseHavingExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema, selectAliasMap: ReadonlyMap<string, DTQLExpression>): DTQLExpression {
+  if (typeof value.field === "string" && value.source === undefined) {
+    const selected = selectAliasMap.get(value.field);
+    if (selected !== undefined) {
+      assertOnlyKeys(value, fieldKeys, path);
+      return selected;
+    }
   }
-  if ("aggregate" in value) return parseColumnExpression({ ...value, as: "_" }, path, aliases, schema);
-  return { kind: "field", field: parseKnownQualifiedField(value, path, aliases, schema) };
+  return parseExpression(value, path, aliases, schema);
 }
 
 function parseScopedField(
@@ -601,8 +633,9 @@ function parseKnownQualifiedField(
   path: string,
   aliases: ReadonlyMap<string, QueryRelation>,
   schema: DTQLSchema,
+  allowed: ReadonlySet<string> = qualifiedFieldKeys,
 ): QueryFieldReference {
-  assertOnlyKeys(value, columnKeys, path);
+  assertOnlyKeys(value, allowed, path);
   const field = requiredString(value, "field");
   const source = optionalString(value, "source");
   if (source === undefined) return resolveUniqueField(field, aliases, schema, path);
