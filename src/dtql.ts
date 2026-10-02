@@ -71,7 +71,7 @@ export function parseDTQL(
   const hasRelationModel = relation.database !== undefined || relation.alias !== undefined || relation.joins.length > 0;
   const requiresQualifiedFields = relation.joins.length > 0;
   const where = document.where === undefined ? undefined : parseWhere(document.where, fields, aliases, requiresQualifiedFields, schema);
-  const orders = document.orderBy === undefined ? [] : parseOrders(document.orderBy, fields, aliases, requiresQualifiedFields, schema);
+  const orders = document.orderBy === undefined ? [] : parseOrders(document.orderBy, fields, aliases, requiresQualifiedFields, hasRelationModel, schema);
   const columns = document.columns === undefined ? undefined : parseColumns(document.columns, aliases, schema);
   const limit = document.limit === undefined ? undefined : parseLimit(document.limit, options.maxLimit ?? defaultMaxLimit);
   const offset = document.offset === undefined ? undefined : parseOffset(document.offset);
@@ -113,7 +113,7 @@ export function serializeJoinedDTQL(query: JoinedDTQLQuery): ObjectValue {
   return {
     from: serializeRelation(query.from),
     ...(query.filters.length === 0 ? {} : { where: serializeFilter(firstFilter(query.filters)) }),
-    ...(query.orders.length === 0 ? {} : { orderBy: query.orders.map((order) => ({ field: order.field.field, source: order.field.source, ...(order.direction === "desc" ? { desc: true } : {}) })) }),
+    ...(query.orders.length === 0 ? {} : { orderBy: query.orders.map(serializeOrder) }),
     ...(query.limit === undefined ? {} : { limit: query.limit }),
     ...(query.offset === undefined ? {} : { offset: query.offset }),
     ...(query.columns === undefined ? {} : { columns: query.columns.map(serializeColumn) }),
@@ -162,6 +162,11 @@ function serializeFilter(filter: DTQLQueryFilter): ObjectValue {
     left: { field: filter.field.field, source: filter.field.source },
     right: isMembership ? { values: filter.value } : { value: filter.value },
   };
+}
+
+function serializeOrder(order: DTQLQueryOrder): ObjectValue {
+  const key = order.expression === undefined ? { field: order.field.field, source: order.field.source } : serializeExpression(order.expression);
+  return { ...key, ...(order.direction === "desc" ? { desc: true } : {}) };
 }
 
 function serializeExpression(expression: DTQLExpression): ObjectValue {
@@ -435,12 +440,14 @@ function parseOrders(
   fields: ReadonlySet<string>,
   aliases: ReadonlyMap<string, QueryRelation>,
   joined: boolean,
+  hasRelationModel: boolean,
   schema: DTQLSchema,
 ): readonly (QueryOrder<Record<string, unknown>> | DTQLQueryOrder)[] {
   if (!Array.isArray(value)) fail("orderBy must be an array");
   return value.map((entry, index) => {
     const location = `orderBy[${index.toString()}]`;
     const order = object(entry, location);
+    if (!Object.hasOwn(order, "field")) return parseExpressionOrder(order, location, hasRelationModel, aliases, schema);
     assertOnlyKeys(order, orderKeys, location);
     const field = parseScopedField(
       order.source === undefined ? { field: order.field } : { field: order.field, source: order.source },
@@ -454,6 +461,20 @@ function parseOrders(
     const direction = order.desc === true ? "desc" : "asc";
     return typeof field === "string" ? { field, direction } : { field, direction };
   });
+}
+
+/** Any non-field order key is a DTQL expression plus an optional `desc`, as in the Go engine. */
+function parseExpressionOrder(
+  order: ObjectValue,
+  location: string,
+  hasRelationModel: boolean,
+  aliases: ReadonlyMap<string, QueryRelation>,
+  schema: DTQLSchema,
+): DTQLQueryOrder {
+  if (!hasRelationModel) fail("orderBy expressions require an aliased or joined relation model");
+  const { desc, ...expression } = order;
+  if (desc !== undefined && typeof desc !== "boolean") fail(`${location}.desc must be boolean`);
+  return { expression: parseExpression(expression, location, aliases, schema), direction: desc === true ? "desc" : "asc" };
 }
 
 function parseColumns(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): readonly QueryColumn[] {

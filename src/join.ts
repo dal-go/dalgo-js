@@ -225,7 +225,10 @@ function validateClauseSources(query: JoinedDTQLQuery, aliases: ReadonlyMap<stri
     }
   };
   query.filters.forEach((filter, index) => { field(filter.field, `where[${index.toString()}].left`); });
-  query.orders.forEach((order, index) => { field(order.field, `orderBy[${index.toString()}]`); });
+  query.orders.forEach((order, index) => {
+    if (order.expression === undefined) field(order.field, `orderBy[${index.toString()}]`);
+    else expression(order.expression, `orderBy[${index.toString()}]`);
+  });
   query.columns?.forEach((column, index) => {
     if (column.expression !== undefined) expression(column.expression, `columns[${index.toString()}]`);
   });
@@ -504,7 +507,7 @@ function matchesFilter(row: JoinedRow, filter: DTQLQueryFilter): boolean {
 }
 
 function materialize(rows: readonly JoinedRow[], query: JoinedDTQLQuery, limits: ExecutionLimits): MaterializedRow[] {
-  const aggregate = (query.columns ?? []).some((column) => column.expression !== undefined && containsAggregate(column.expression)) || (query.having !== undefined && (containsAggregate(query.having.left) || containsAggregate(query.having.right)));
+  const aggregate = (query.columns ?? []).some((column) => column.expression !== undefined && containsAggregate(column.expression)) || query.orders.some((order) => order.expression !== undefined && containsAggregate(order.expression)) || (query.having !== undefined && (containsAggregate(query.having.left) || containsAggregate(query.having.right)));
   if (query.groupBy === undefined && !aggregate) return rows.map((row) => ({ row, group: [row] }));
   const groups = new Map<string, JoinedRow[]>();
   if (rows.length === 0 && query.groupBy === undefined) groups.set("all", []);
@@ -556,9 +559,11 @@ function matchesHaving(value: MaterializedRow, having: NonNullable<JoinedDTQLQue
 }
 
 function stableOrder(rows: readonly MaterializedRow[], query: JoinedDTQLQuery): MaterializedRow[] {
-  return rows.map((row, index) => ({ row, index })).sort((a, b) => {
-    for (const order of query.orders) {
-      const result = compare(fieldValue(a.row.row, order.field), fieldValue(b.row.row, order.field));
+  // Keys are resolved once per row, before sorting, so an evaluation error
+  // surfaces deterministically instead of depending on comparison order.
+  return rows.map((row, index) => ({ row, index, keys: query.orders.map((order) => order.expression === undefined ? fieldValue(row.row, order.field) : expressionValue(row.row, row.group, order.expression)) })).sort((a, b) => {
+    for (const [position, order] of query.orders.entries()) {
+      const result = compare(a.keys[position], b.keys[position]);
       if (result !== 0) return order.direction === "desc" ? -result : result;
     }
     return a.index - b.index;
@@ -658,6 +663,7 @@ function binary(operator: "+" | "-" | "*" | "/", left: unknown, right: unknown):
   if (left === null || left === undefined || right === null || right === undefined) return null;
   const leftNumber = finiteNumber(left, "binary");
   const rightNumber = finiteNumber(right, "binary");
+  if (operator === "/" && rightNumber === 0) return null;
   return operator === "+" ? leftNumber + rightNumber : operator === "-" ? leftNumber - rightNumber : operator === "*" ? leftNumber * rightNumber : leftNumber / rightNumber;
 }
 
@@ -931,6 +937,11 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
   };
   effective.columns?.forEach((column) => { if (column.expression !== undefined) collect(column.expression); });
   if (effective.having !== undefined) { collect(effective.having.left); collect(effective.having.right); }
+  for (const order of effective.orders) {
+    if (order.expression === undefined) continue;
+    if (options.money !== undefined) planError("orderBy", "expression order keys are not supported in exact money mode");
+    collect(order.expression);
+  }
   const dimension = new Map<string, StoredRow[]>();
   const childQuery: StructuredQuery<Data> = { source: relationSource(child, options.resolveSource), filters: [], orders: child.scan?.orderBy ?? [], ...(child.scan?.limit === undefined ? {} : { limit: child.scan.limit }) };
   let downloaded = 0;
@@ -978,19 +989,24 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
     }
     options.onProgress?.({ phase: "process", rows: processed });
   }
-  const projected = [...groups.values()].filter((group) => effective.having === undefined || streamHaving(group, effective.having, options.money)).map((group) => ({
+  const kept = [...groups.values()].filter((group) => effective.having === undefined || streamHaving(group, effective.having, options.money));
+  const projected = kept.map((group) => ({
     key: group.first.root.key,
     exists: true as const,
     data: streamProject(group, effective, [rootAlias, childAlias], options.money),
+    // Field keys keep reading the projected column; expression keys are evaluated over the group.
+    sortKeys: effective.orders.map((order) => order.expression === undefined ? undefined : streamExpression(group, order.expression, options.money)),
   }));
   const start = effective.offset ?? 0;
   const ordered = effective.orders.length === 0 ? projected : projected.sort((left, right) => {
-    for (const order of effective.orders) {
-      const cmp = compare(left.data[order.field.field], right.data[order.field.field]);
+    for (const [position, order] of effective.orders.entries()) {
+      const cmp = order.expression === undefined
+        ? compare(left.data[order.field.field], right.data[order.field.field])
+        : compare(left.sortKeys[position], right.sortKeys[position]);
       if (cmp !== 0) return order.direction === "desc" ? -cmp : cmp;
     }
     return 0;
-  });
+  }).map(({ key, exists, data }) => ({ key, exists, data }));
   return { records: ordered.slice(start, effective.limit === undefined ? undefined : start + effective.limit) };
 }
 

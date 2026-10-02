@@ -116,11 +116,26 @@ export interface DTQLHaving {
   readonly right: DTQLExpression;
 }
 
-/** An ordering term in a join-aware DTQL query. */
-export interface DTQLQueryOrder {
+/** An ordering term on a plain field of a join-aware DTQL query. */
+export interface DTQLFieldOrder {
   readonly field: QueryFieldReference;
+  readonly expression?: undefined;
   readonly direction: OrderDirection;
 }
+
+/**
+ * An ordering term on an arbitrary expression (for example a binary `/` over
+ * aggregates), as the Go DTQL engine accepts. Plain field keys keep the
+ * `DTQLFieldOrder` shape.
+ */
+export interface DTQLExpressionOrder {
+  readonly expression: DTQLExpression;
+  readonly field?: undefined;
+  readonly direction: OrderDirection;
+}
+
+/** An ordering term in a join-aware DTQL query. */
+export type DTQLQueryOrder = DTQLFieldOrder | DTQLExpressionOrder;
 
 export interface QueryFilter<T> {
   readonly field: FieldPath<T>;
@@ -179,7 +194,7 @@ export interface RecursiveDTQLQuery {
   readonly as?: string;
   readonly from: RecursiveDTQLRelation;
   readonly where?: RecursiveDTQLCondition;
-  readonly orderBy?: readonly DTQLQueryOrder[];
+  readonly orderBy?: readonly DTQLFieldOrder[];
   readonly limit?: number;
   readonly offset?: number;
   readonly columns?: readonly RecursiveDTQLColumn[];
