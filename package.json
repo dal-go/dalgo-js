@@ -1,6 +1,6 @@
 {
   "name": "@dalgo/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Database abstraction layer for TypeScript and browser applications",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
