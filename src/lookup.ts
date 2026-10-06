@@ -1,5 +1,6 @@
 import type { ExistingRecord } from "./record.js";
 import type { QueryPage } from "./query.js";
+import { snapshotQueryMetadata } from "./source-rights.js";
 
 export interface LookupProgress {
   readonly rowsLoaded: number;
@@ -76,6 +77,7 @@ export async function* executeRecordLookupPages<T, V>(pages: AsyncIterable<Query
     options.signal?.throwIfAborted();
     if (page.records.length > 1000) throw new RangeError("lookup source page exceeds 1000 rows");
     loaded += page.records.length;
+    const metadata = snapshotQueryMetadata(page);
     const enriched = await executeRecordLookups(page.records, {
       ...options,
       onProgress: (item) => options.onProgress?.({
@@ -86,6 +88,6 @@ export async function* executeRecordLookupPages<T, V>(pages: AsyncIterable<Query
       }),
     });
     completed += enriched.length;
-    yield { records: enriched, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
+    yield { ...metadata, records: enriched, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
   }
 }

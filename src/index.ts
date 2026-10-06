@@ -8,3 +8,4 @@ export * from "./lookup.js";
 export * from "./query.js";
 export * from "./record.js";
 export * from "./recursive.js";
+export * from "./source-rights.js";

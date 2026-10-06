@@ -420,3 +420,35 @@ marker under `.changeset/releases/`.
 ## License
 
 MIT
+
+## Optional source data rights
+
+Adapters may expose `sourceRights` on `CollectionMetadata` for tables/views and
+on `QueryPage<T>`, with `usedSourceIds` on query pages. Each `SourceRight`
+identifies a provider-defined source, its declaration (name/SPDX/URL/text), the
+true authored scope and optional evidence/credits. Providers that do not know
+source terms can omit these fields. Absence is unknown, not permission.
+
+`sourceRights` is the authorized planned source inventory, not a licence of the
+derived result. `usedSourceIds` records inputs actually read or considered,
+including empty inputs and joins projected out of the output. It must not be
+inferred from output rows. A known-empty array differs from an omitted array.
+Inheritance, term validation, source admission, access control and evidence
+budgets remain the provider's responsibility. IDs, scopes and evidence origins
+are opaque and do not require OVDB.
+
+Rights-aware adapters capture the complete immutable inventory before the first
+page and retain it across pagination. `snapshotQueryMetadata` detaches metadata
+from mutable configuration and rejects runtime null inventories or missing/null
+required pins/transformations arrays; `executeRecordLookupPages` preserves that captured
+metadata and each cursor, including on empty pages. The caller's secured lookup
+executor must preflight its lookup sources and supply their inventory and actual
+use; a lookup callback's arbitrary return value cannot establish source rights.
+
+Generic joined/recursive DTQL execution currently lacks source-rights preflight.
+It fails with `UnsupportedError("source-rights-preflight")` when a scanned input
+has either metadata field, rather than returning results without provenance.
+For compliant adapters this refusal occurs before any joined result. A transport
+that adds metadata only on a later page violates the first-page contract: that
+page refuses, but already emitted rows cannot be undone. Use a provider executor
+that preflights source rights for rights-bearing joins and aggregations.
