@@ -3,6 +3,16 @@ name: Release @dalgo/core
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      version-pr:
+        description: Original merged version pull request number
+        required: true
+        type: string
+      version-merge-sha:
+        description: Full merge commit SHA of that version pull request
+        required: true
+        type: string
 
 concurrency:
   group: release-core
@@ -11,6 +21,7 @@ concurrency:
 jobs:
   version-pr:
     name: Update version pull request
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -72,7 +83,7 @@ jobs:
               --json number \
               --jq '.[0].number // empty')
           fi
-          [[ -n "$pr_number" ]]
+          [[ -n "$pr_number" ]] || exit 1
           echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
           gh workflow run ci.yml --ref changeset-release/main
 
@@ -96,13 +107,36 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          VERSION_PR: ${{ inputs.version-pr }}
+          VERSION_MERGE_SHA: ${{ inputs.version-merge-sha }}
         run: |
           set -euo pipefail
           printf 'eligible=false\n' > "$GITHUB_OUTPUT"
 
+          [[ "$REF" == 'refs/heads/main' ]] || exit 1
+          if [[ "$EVENT" == 'workflow_dispatch' ]]; then
+            [[ "$VERSION_PR" =~ ^[1-9][0-9]*$ ]] || exit 1
+            [[ "$VERSION_MERGE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+            [[ "$(gh api "/repos/$REPOSITORY/branches/main" --jq '.commit.sha')" == "$SHA" ]] || exit 1
+            git merge-base --is-ancestor "$VERSION_MERGE_SHA" "$SHA"
+            # All tracked inputs must match the reviewed release, including build scripts,
+            # lockfile and documentation. Only this release workflow may be repaired.
+            git diff --exit-code "$VERSION_MERGE_SHA" "$SHA" -- . ':!.github/workflows/release.yml'
+            release_sha=$VERSION_MERGE_SHA
+          else
+            [[ "$EVENT" == 'push' ]] || exit 1
+            release_sha=$SHA
+          fi
+
           version=$(node -p "require('./package.json').version")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || exit 1
           marker=".changeset/releases/core@v${version}.json"
-          [[ -f "$marker" ]] || exit 0
+          if [[ ! -f "$marker" ]]; then
+            [[ "$EVENT" == 'push' ]] && exit 0
+            exit 1
+          fi
           jq -e --arg version "$version" '
             .schemaVersion == 1 and
             .package == "@dalgo/core" and
@@ -111,23 +145,43 @@ jobs:
             (.previousVersion | type == "string")
           ' "$marker" >/dev/null
 
-          prs=$(gh api "/repos/$REPOSITORY/commits/$SHA/pulls")
-          pr=$(jq -c '[.[] | select(
+          if [[ "$EVENT" == 'workflow_dispatch' ]]; then
+            prs=$(gh api "/repos/$REPOSITORY/pulls/$VERSION_PR" | jq '[.]')
+          else
+            prs=$(gh api "/repos/$REPOSITORY/commits/$release_sha/pulls")
+          fi
+          pr=$(jq -c --arg repository "$REPOSITORY" --arg sha "$release_sha" '[.[] | select(
             .merged_at != null and
+            .merge_commit_sha == $sha and
+            .base.repo.full_name == $repository and
+            .head.repo.full_name == $repository and
             .base.ref == "main" and
             .head.ref == "changeset-release/main" and
             .title == "chore: version @dalgo/core"
           )] | if length == 1 then .[0] else empty end' <<< "$prs")
-          [[ -n "$pr" ]] || exit 0
+          if [[ -z "$pr" ]]; then
+            [[ "$EVENT" == 'push' ]] && exit 0
+            exit 1
+          fi
 
           pr_number=$(jq -r '.number' <<< "$pr")
           files=$(gh api --paginate --slurp "/repos/$REPOSITORY/pulls/$pr_number/files")
           jq -e --arg marker "$marker" '
-            flatten | map(.filename) as $files |
+            flatten as $entries | $entries | map(.filename) as $files |
             ($files | index("package.json")) != null and
             ($files | index("CHANGELOG.md")) != null and
-            ($files | index($marker)) != null
+            any($entries[]; .filename == $marker and .status == "added")
           ' <<< "$files" >/dev/null
+
+          # Prove the generated marker describes the actual version transition.
+          before=$(git show "$release_sha^:package.json")
+          after=$(git show "$release_sha:package.json")
+          original_marker=$(git show "$release_sha:$marker")
+          [[ "$(jq -r '.name' <<< "$after")" == '@dalgo/core' ]] || exit 1
+          [[ "$(jq -r '.version' <<< "$after")" == "$version" ]] || exit 1
+          [[ "$(jq -r '.previousVersion' <<< "$original_marker")" == "$(jq -r '.version' <<< "$before")" ]] || exit 1
+          [[ "$(jq -cS 'del(.version)' <<< "$before")" == "$(jq -cS 'del(.version)' <<< "$after")" ]] || exit 1
+          [[ "$(jq -cS . <<< "$original_marker")" == "$(jq -cS . "$marker")" ]] || exit 1
 
           {
             echo "eligible=true"
@@ -164,21 +218,37 @@ jobs:
         env:
           VERSION: ${{ needs.authorize-release.outputs.version }}
           SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          [[ "$(node -p "require('./package.json').name")" == '@dalgo/core' ]]
-          [[ "$(node -p "require('./package.json').version")" == "$VERSION" ]]
-          [[ "$(git rev-parse HEAD)" == "$SHA" ]]
+          [[ "$(node -p "require('./package.json').name")" == '@dalgo/core' ]] || exit 1
+          [[ "$(node -p "require('./package.json').version")" == "$VERSION" ]] || exit 1
+          [[ "$(git rev-parse HEAD)" == "$SHA" ]] || exit 1
+          if [[ "$EVENT" == 'workflow_dispatch' ]]; then
+            [[ "$(gh api "/repos/$REPOSITORY/branches/main" --jq '.commit.sha')" == "$SHA" ]] || exit 1
+          fi
           npm_version=$(npm --version)
-          [[ "$(printf '%s\n' '11.5.1' "$npm_version" | sort -V | head -n1)" == '11.5.1' ]]
-          metadata=$(npm view "@dalgo/core@$VERSION" name version gitHead --json 2>/dev/null || true)
-          if [[ -n "$(jq -r '.version // empty' <<< "$metadata")" ]]; then
-            [[ "$(jq -r '.name' <<< "$metadata")" == '@dalgo/core' ]]
-            [[ "$(jq -r '.version' <<< "$metadata")" == "$VERSION" ]]
-            [[ "$(jq -r '.gitHead' <<< "$metadata")" == "$SHA" ]]
+          [[ "$(printf '%s\n' '11.5.1' "$npm_version" | sort -V | head -n1)" == '11.5.1' ]] || exit 1
+          # Network/auth/server errors are never evidence that a version is absent.
+          metadata_file=$(mktemp)
+          trap 'rm -f "$metadata_file"' EXIT
+          http_status=$(curl --silent --show-error --retry 2 --output "$metadata_file" \
+            --write-out '%{http_code}' "https://registry.npmjs.org/@dalgo%2fcore/$VERSION")
+          metadata=$(cat "$metadata_file")
+          if [[ "$http_status" == '200' ]]; then
+            [[ "$EVENT" != 'workflow_dispatch' ]] || exit 1 # A retry only publishes an absent version.
+            [[ "$(jq -r '.name' <<< "$metadata")" == '@dalgo/core' ]] || exit 1
+            [[ "$(jq -r '.version' <<< "$metadata")" == "$VERSION" ]] || exit 1
+            [[ "$(jq -r '.gitHead' <<< "$metadata")" == "$SHA" ]] || exit 1
             echo 'publish=false' >> "$GITHUB_OUTPUT"
-          else
+          elif [[ "$http_status" == '404' ]]; then
+            jq -e --arg error "version not found: $VERSION" '. == $error' <<< "$metadata" >/dev/null
             echo 'publish=true' >> "$GITHUB_OUTPUT"
+          else
+            echo "Registry lookup failed with HTTP $http_status" >&2
+            exit 1
           fi
       - name: Publish with npm trusted publishing
         if: steps.registry.outputs.publish == 'true'
@@ -201,10 +271,10 @@ jobs:
             fi
             sleep 10
           done
-          [[ "$(jq -r '.name' <<< "$metadata")" == '@dalgo/core' ]]
-          [[ "$(jq -r '.version' <<< "$metadata")" == "$VERSION" ]]
+          [[ "$(jq -r '.name' <<< "$metadata")" == '@dalgo/core' ]] || exit 1
+          [[ "$(jq -r '.version' <<< "$metadata")" == "$VERSION" ]] || exit 1
           if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null; then
-            [[ "$(git rev-list -n 1 "$TAG")" == "$SHA" ]]
+            [[ "$(git rev-list -n 1 "$TAG")" == "$SHA" ]] || exit 1
             exit 0
           fi
           git config user.name 'github-actions[bot]'
