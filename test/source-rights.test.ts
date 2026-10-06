@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import fixture from "./testdata/source-rights-wire.json" with { type: "json" };
 import {
   executeJoinedDTQLQuery, executeJoinedDTQLQueryPages, executeRecordLookupPages,
   executeRecursiveDTQLQuery, isJoinedDTQLQuery, key, parseDTQL, parseRecursiveDTQL,
@@ -31,6 +32,17 @@ function page(name: string, metadata: QueryMetadata = {}): QueryPage<Record<stri
 }
 
 describe("optional source data rights", () => {
+  it("matches the shared wire fixture and rejects explicit null arrays", () => {
+    expect(snapshotQueryMetadata(fixture)).toEqual(fixture);
+    for (const invalid of [
+      { sourceRights: null }, { usedSourceIds: null }, { sourceRights: "invalid" },
+      { sourceRights: [{ ...right("a"), pins: null }] },
+      { sourceRights: [{ ...right("a"), transformations: null }] },
+    ]) {
+      expect(() => snapshotQueryMetadata(invalid as unknown as QueryMetadata)).toThrow(TypeError);
+    }
+  });
+
   it("keeps legacy pages and collection descriptors valid with omitted fields", () => {
     const legacy: QueryPage<unknown> = { records: [] };
     const table: CollectionMetadata = { name: "legacy" };

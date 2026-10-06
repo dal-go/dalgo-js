@@ -439,7 +439,8 @@ are opaque and do not require OVDB.
 
 Rights-aware adapters capture the complete immutable inventory before the first
 page and retain it across pagination. `snapshotQueryMetadata` detaches metadata
-from mutable configuration; `executeRecordLookupPages` preserves that captured
+from mutable configuration and rejects runtime null inventories or missing/null
+required pins/transformations arrays; `executeRecordLookupPages` preserves that captured
 metadata and each cursor, including on empty pages. The caller's secured lookup
 executor must preflight its lookup sources and supply their inventory and actual
 use; a lookup callback's arbitrary return value cannot establish source rights.

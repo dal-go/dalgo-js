@@ -73,6 +73,14 @@ export interface QueryMetadata {
 
 /** Detaches a captured inventory from mutable provider/configuration objects. */
 export function snapshotQueryMetadata(metadata: QueryMetadata): QueryMetadata {
+  if (metadata.sourceRights !== undefined) {
+    requireArray(metadata.sourceRights, "sourceRights");
+    for (const right of metadata.sourceRights) {
+      requireArray(right.pins, "source rights pins");
+      requireArray(right.transformations, "source rights transformations");
+    }
+  }
+  if (metadata.usedSourceIds !== undefined) requireArray(metadata.usedSourceIds, "usedSourceIds");
   return {
     ...(metadata.sourceRights === undefined ? {} : { sourceRights: structuredClone(metadata.sourceRights) }),
     ...(metadata.usedSourceIds === undefined ? {} : { usedSourceIds: [...metadata.usedSourceIds] }),
@@ -87,4 +95,8 @@ export function requireUnannotatedQueryInput(metadata: QueryMetadata): void {
   if (metadata.sourceRights !== undefined || metadata.usedSourceIds !== undefined) {
     throw new UnsupportedError("source-rights-preflight");
   }
+}
+
+function requireArray(value: unknown, name: string): void {
+  if (!Array.isArray(value)) throw new TypeError(`${name} must be an array`);
 }
