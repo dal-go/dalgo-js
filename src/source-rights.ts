@@ -1,4 +1,5 @@
 import { UnsupportedError } from "./errors.js";
+import { snapshotProviderReads, type ProviderReads } from "./provider-reads.js";
 
 /** Provider-declared source terms, never an inferred licence of query output. */
 export interface SourceDeclaration {
@@ -69,21 +70,32 @@ export interface CollectionMetadata {
 export interface QueryMetadata {
   readonly sourceRights?: readonly SourceRight[];
   readonly usedSourceIds?: readonly string[];
+  /** Optional live observations; absence is unknown, never historical proof. */
+  readonly providerReads?: ProviderReads;
 }
 
 /** Detaches a captured inventory from mutable provider/configuration objects. */
 export function snapshotQueryMetadata(metadata: QueryMetadata): QueryMetadata {
-  if (metadata.sourceRights !== undefined) {
-    requireArray(metadata.sourceRights, "sourceRights");
-    for (const right of metadata.sourceRights) {
+  // Read only these three caller properties, once. Never clone QueryPage rows.
+  const sourceRights = metadata.sourceRights;
+  const usedSourceIds = metadata.usedSourceIds;
+  const providerReads = metadata.providerReads;
+  const captured: QueryMetadata = structuredClone({
+    ...(sourceRights === undefined ? {} : { sourceRights }),
+    ...(usedSourceIds === undefined ? {} : { usedSourceIds }),
+    ...(providerReads === undefined ? {} : { providerReads }),
+  });
+  if (captured.sourceRights !== undefined) {
+    requireArray(captured.sourceRights, "sourceRights");
+    for (const right of captured.sourceRights) {
       requireArray(right.pins, "source rights pins");
       requireArray(right.transformations, "source rights transformations");
     }
   }
-  if (metadata.usedSourceIds !== undefined) requireArray(metadata.usedSourceIds, "usedSourceIds");
+  if (captured.usedSourceIds !== undefined) requireArray(captured.usedSourceIds, "usedSourceIds");
   return {
-    ...(metadata.sourceRights === undefined ? {} : { sourceRights: structuredClone(metadata.sourceRights) }),
-    ...(metadata.usedSourceIds === undefined ? {} : { usedSourceIds: [...metadata.usedSourceIds] }),
+    ...captured,
+    ...(captured.providerReads === undefined ? {} : { providerReads: snapshotProviderReads(captured) }),
   };
 }
 
@@ -92,7 +104,7 @@ export function snapshotQueryMetadata(metadata: QueryMetadata): QueryMetadata {
  * They refuse annotated inputs rather than silently discarding evidence.
  */
 export function requireUnannotatedQueryInput(metadata: QueryMetadata): void {
-  if (metadata.sourceRights !== undefined || metadata.usedSourceIds !== undefined) {
+  if (metadata.sourceRights !== undefined || metadata.usedSourceIds !== undefined || metadata.providerReads !== undefined) {
     throw new UnsupportedError("source-rights-preflight");
   }
 }
