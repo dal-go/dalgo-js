@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalProviderEvidence, providerEvidenceDigest, requireUnannotatedQueryInput,
-  snapshotQueryMetadata, validateProviderReads,
+  snapshotProviderReads, snapshotQueryMetadata, validateProviderReads,
   type ProviderReadPlan, type ProviderReads,
   type QueryMetadata, type QueryPage, type SourceRight,
 } from "../src/index.js";
@@ -56,7 +56,7 @@ describe("providerReads v1 consumer", () => {
     const { plan } = await fixture();
     expect(snapshotQueryMetadata({})).toEqual({});
     expect(snapshotQueryMetadata({ usedSourceIds: [] })).toEqual({ usedSourceIds: [] });
-    await expect(validateProviderReads({}, plan)).rejects.toThrow("plain JSON object");
+    await expect(validateProviderReads({}, plan)).rejects.toThrow("required metadata missing");
   });
 
   it("verifies both authorities without conflating provider identity or attestations", async () => {
@@ -89,6 +89,109 @@ describe("providerReads v1 consumer", () => {
     const snapshot = snapshotQueryMetadata(captured);
     Object.assign(first(evidence(captured).reads), { bytes: 700 });
     expect(evidence(snapshot).reads[0]?.bytes).toBe(42);
+  });
+
+  it("captures parent evidence getters once and never accesses page rows", async () => {
+    for (const operation of ["snapshot", "provider snapshot", "validate"] as const) {
+      const { metadata, plan } = await fixture();
+      const calls = { sourceRights: 0, usedSourceIds: 0, providerReads: 0 };
+      const malicious = structuredClone(evidence(metadata));
+      Object.assign(first(malicious.reads), { body: "synthetic forbidden body", credentials: "synthetic secret", rows: [] });
+      const parent: QueryMetadata = {};
+      for (const key of ["sourceRights", "usedSourceIds", "providerReads"] as const) Object.defineProperty(parent, key, {
+        enumerable: true,
+        get() {
+          calls[key]++;
+          if (key === "providerReads" && calls[key] > 1) return malicious;
+          return metadata[key];
+        },
+      });
+      Object.defineProperty(parent, "records", { enumerable: true, get() { throw new Error("result rows must never be accessed"); } });
+      if (operation === "validate") expect(await validateProviderReads(parent, plan)).toEqual(metadata);
+      else if (operation === "snapshot") expect(snapshotQueryMetadata(parent)).toEqual(metadata);
+      else expect(snapshotProviderReads(parent)).toEqual(evidence(metadata));
+      expect(calls).toEqual({ sourceRights: 1, usedSourceIds: 1, providerReads: 1 });
+    }
+  });
+
+  it("captures a proxy parent once and rejects nested proxy envelopes", async () => {
+    for (const operation of ["snapshot", "validate"] as const) {
+      const { metadata, plan } = await fixture();
+      let calls = 0;
+      const malicious = { ...evidence(metadata), rows: [] };
+      const parent = new Proxy(metadata, {
+        get(target, key) {
+          if (key === "providerReads") return ++calls === 1 ? target.providerReads : malicious;
+          if (key === "sourceRights") return target.sourceRights;
+          if (key === "usedSourceIds") return target.usedSourceIds;
+          throw new Error("only evidence properties may be read");
+        },
+      });
+      if (operation === "validate") expect(await validateProviderReads(parent, plan)).toEqual(metadata);
+      else expect(snapshotQueryMetadata(parent)).toEqual(metadata);
+      expect(calls).toBe(1);
+      const nested = { ...metadata, providerReads: new Proxy(evidence(metadata), {}) };
+      expect(() => snapshotQueryMetadata(nested)).toThrow();
+      await expect(validateProviderReads(nested, plan)).rejects.toThrow();
+    }
+  });
+
+  it("validates the detached capture after side effects, refusing forbidden fields", async () => {
+    for (const field of ["body", "rows", "credentials"] as const) {
+      const { metadata, plan } = await fixture();
+      const read = first(evidence(metadata).reads);
+      const parent = Object.defineProperty({ ...metadata }, "usedSourceIds", {
+        enumerable: true,
+        get() { Object.assign(read, { [field]: "synthetic forbidden value" }); return metadata.usedSourceIds; },
+      });
+      expect(() => snapshotQueryMetadata(parent)).toThrow(`unknown ${field}`);
+      await expect(validateProviderReads(parent, plan)).rejects.toThrow(`unknown ${field}`);
+    }
+  });
+
+  it("preserves Go-compatible multiline rights and HTTPS fragments with exact digests", async () => {
+    const { metadata, plan } = await fixture();
+    const sourceRight = first(metadata.sourceRights ?? []);
+    const terms = "First line\nSecond line\r\n\tIndented line";
+    Object.assign(sourceRight.declaration, { text: terms, url: "https://EXAMPLE.com/terms#reuse" });
+    Object.assign(sourceRight.attribution ?? {}, { text: "Synthetic provider\nCredit", url: "https://example.com/about#source" });
+    Object.assign(sourceRight.freeSource ?? {}, { url: "https://example.com/original.xml#free" });
+    await rebindRights(metadata);
+    const captured = await validateProviderReads(metadata, plan);
+    expect(first(captured.sourceRights ?? []).declaration.text).toBe(terms);
+    expect(first(captured.sourceRights ?? []).declaration.url).toBe("https://EXAMPLE.com/terms#reuse");
+    expect(captured).toEqual(metadata);
+    expect(first(evidence(captured).bindings).rightsDigest).toBe(await providerEvidenceDigest({ format: "ovdb-rights-binding/1", right: sourceRight }));
+    Object.assign(sourceRight.declaration, { text: terms.replace("\r\n", "\n") });
+    await expect(validateProviderReads(metadata, plan)).rejects.toThrow("rights digest");
+  });
+
+  it("accepts unchanged multiline terms on mixed non-live sources without fabricating observations", async () => {
+    const { metadata, plan } = await fixture();
+    const legacy = { ...structuredClone(right), sourceId: "ovdb:gateway/legacy/table", declaration: { text: "Legacy terms\n\tSecond line", url: "https://example.com/legacy#terms" } };
+    const mixed = { ...metadata, sourceRights: [...(metadata.sourceRights ?? []), legacy], usedSourceIds: [...(metadata.usedSourceIds ?? []), legacy.sourceId] };
+    const admitted = { ...plan, sourceRights: mixed.sourceRights, usedSourceIds: mixed.usedSourceIds };
+    const result = await validateProviderReads(mixed, admitted);
+    expect(result.sourceRights).toHaveLength(2);
+    expect(evidence(result).usage).toHaveLength(1);
+    expect(evidence(result).reads).toHaveLength(1);
+    expect(result).toEqual(mixed);
+  });
+
+  it("rejects forbidden rights controls and unsafe terms links, retaining strict upstream URLs", async () => {
+    for (const declaration of [
+      { text: "unsafe\u0000terms" }, { text: "unsafe\u0085terms" },
+      { url: "https://synthetic-secret@example.com/terms#reuse" },
+      { url: "https://@example.com/terms#reuse" }, { url: "https://example.com/terms\u0085#reuse" },
+      { url: "https://example.com/terms\\path#reuse" }, { url: "http://example.com/terms#reuse" },
+    ]) {
+      const { metadata, plan } = await fixture();
+      Object.assign(first(metadata.sourceRights ?? []).declaration, declaration);
+      await expect(validateProviderReads(metadata, plan)).rejects.toThrow();
+    }
+    const { metadata, plan } = await fixture();
+    Object.assign(first(evidence(metadata).reads), { upstreamUrl: `${url}#fragment` });
+    await expect(validateProviderReads(metadata, plan)).rejects.toThrow("unsafe or noncanonical URL");
   });
 
   it("deduplicates identical self-join observations and usage; conflicts refuse", async () => {
@@ -198,4 +301,17 @@ function first<T>(items: readonly T[]): T {
   const value = items[0];
   if (value === undefined) throw new Error("missing fixture item");
   return value;
+}
+
+async function rebindRights(metadata: QueryMetadata): Promise<void> {
+  const envelope = evidence(metadata);
+  const binding = first(envelope.bindings);
+  const sourceRight = first(metadata.sourceRights ?? []);
+  Object.assign(binding, { rightsDigest: await providerEvidenceDigest({ format: "ovdb-rights-binding/1", right: sourceRight }) });
+  const observation = first(envelope.reads);
+  const { observationId, ...read } = observation;
+  expect(observationId).toHaveLength(64);
+  const nextId = await providerEvidenceDigest({ format: "ovdb-read-observation-id/1", execution: envelope.execution, binding, read });
+  Object.assign(observation, { observationId: nextId });
+  Object.assign(first(envelope.usage), { observationIds: [nextId] });
 }

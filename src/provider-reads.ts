@@ -1,4 +1,4 @@
-import type { QueryMetadata, SourceRight } from "./source-rights.js";
+import { snapshotQueryMetadata, type QueryMetadata, type SourceRight } from "./source-rights.js";
 
 /** Consumer capability only: does not authorize reads, copies or activation. */
 export const PROVIDER_READS_FORMAT = "ovdb-provider-read/1" as const;
@@ -78,9 +78,17 @@ export interface ProviderReadPlan {
 
 /** Structural transport check. Digest/admission verification requires validateProviderReads. */
 export function snapshotProviderReads(metadata: QueryMetadata): ProviderReads {
-  validateStructure(metadata);
+  const sourceRights = metadata.sourceRights;
+  const usedSourceIds = metadata.usedSourceIds;
+  const providerReads = metadata.providerReads;
+  const captured: QueryMetadata = structuredClone({
+    ...(sourceRights === undefined ? {} : { sourceRights }),
+    ...(usedSourceIds === undefined ? {} : { usedSourceIds }),
+    ...(providerReads === undefined ? {} : { providerReads }),
+  });
+  validateStructure(captured);
   // Normalize identical repeated read IDs and self-join usage without retaining bytes.
-  const envelope = structuredClone(present(metadata.providerReads));
+  const envelope = present(captured.providerReads);
   return {
     ...envelope,
     reads: uniqueObjects(envelope.reads, (read) => read.observationId),
@@ -98,12 +106,8 @@ export function snapshotProviderReads(metadata: QueryMetadata): ProviderReads {
  */
 export async function validateProviderReads(metadata: QueryMetadata, plan: ProviderReadPlan): Promise<QueryMetadata> {
   // Detach both before the first await so callers cannot race admission checks.
-  const reads = snapshotProviderReads(metadata);
-  const captured: QueryMetadata = {
-    sourceRights: structuredClone(present(metadata.sourceRights)),
-    usedSourceIds: [...(present(metadata.usedSourceIds))],
-    providerReads: reads,
-  };
+  const captured = snapshotQueryMetadata(metadata);
+  const reads = present(captured.providerReads);
   const admitted = structuredClone(plan);
   validatePlan(admitted);
   equal(reads.execution, admitted.execution, "execution authority");
@@ -298,8 +302,9 @@ function validateRights(raw: unknown): Map<string, SourceRight> {
       for (const field of Object.values(value)) text(field);
     }
     const declaration = closed(right.declaration, [], ["name", "spdx", "url", "text"]);
-    for (const field of Object.values(declaration)) text(field);
-    if (declaration.url !== undefined) safeUrl(declaration.url);
+    for (const field of ["name", "spdx"] as const) if (declaration[field] !== undefined) text(declaration[field]);
+    if (declaration.text !== undefined) rightsText(declaration.text);
+    if (declaration.url !== undefined) rightsUrl(declaration.url);
     for (const pin of items(right.pins)) {
       const value = closed(pin, ["role", "repository", "revision", "path", "sha256", "bytes"]);
       for (const key of ["role", "repository", "revision", "path"]) text(value[key]);
@@ -308,8 +313,8 @@ function validateRights(raw: unknown): Map<string, SourceRight> {
     for (const transformation of items(right.transformations)) text(transformation);
     for (const field of ["attribution", "freeSource"] as const) if (right[field] !== undefined) {
       const notice = closed(right[field], field === "freeSource" ? ["text", "url"] : ["text"], field === "attribution" ? ["url"] : []);
-      text(notice.text);
-      if (notice.url !== undefined) safeUrl(notice.url);
+      rightsText(notice.text);
+      if (notice.url !== undefined) rightsUrl(notice.url);
     }
     const id = right.sourceId as string;
     if (rights.has(id)) fail("duplicate rights source");
@@ -352,7 +357,7 @@ function ids(raw: unknown): readonly string[] {
   return values as readonly string[];
 }
 function text(raw: unknown, allowEmpty = false): void {
-  if (typeof raw !== "string" || (!allowEmpty && raw.length === 0) || raw.length > MAX_TEXT || Array.from(raw).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) fail("invalid or overbound text");
+  if (typeof raw !== "string" || (!allowEmpty && raw.length === 0) || raw.length > MAX_TEXT || /\p{Cc}/u.test(raw)) fail("invalid or overbound text");
   unicode(raw);
 }
 function unicode(value: string): void {
@@ -369,6 +374,22 @@ function safeUrl(raw: unknown): void {
   let url: URL;
   try { url = new URL(raw as string); } catch { fail("invalid upstream URL"); }
   if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.hash !== "" || url.href !== raw) fail("unsafe or noncanonical URL");
+}
+/** Terms/notices preserve multiline whitespace and bytes; header rules differ. */
+function rightsText(raw: unknown): void {
+  if (typeof raw !== "string" || raw.trim().length === 0 || raw.length > MAX_TEXT) fail("invalid or overbound rights text");
+  unicode(raw);
+  for (const character of raw) if (/\p{Cc}/u.test(character) && character !== "\n" && character !== "\r" && character !== "\t") fail("invalid rights text control");
+}
+/** Go-compatible HTTPS terms/notice links allow fragments without rewriting. */
+function rightsUrl(raw: unknown): void {
+  if (typeof raw !== "string") fail("invalid rights URL");
+  text(raw);
+  if (raw.trim() !== raw || raw.includes("\\") || raw.includes(" ") || new TextEncoder().encode(raw).byteLength > 2048) fail("invalid rights URL");
+  let url: URL;
+  try { url = new URL(raw); } catch { fail("invalid rights URL"); }
+  const authority = raw.slice("https://".length).split(/[/?#]/u)[0] ?? "";
+  if (!raw.startsWith("https://") || url.protocol !== "https:" || url.hostname === "" || url.username !== "" || url.password !== "" || authority.includes("@")) fail("unsafe rights URL");
 }
 function usageKey(usage: ProviderReadUsage): string {
   return canonicalProviderEvidence([usage.providerSourceId, usage.rightsSourceId]);

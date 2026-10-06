@@ -76,19 +76,26 @@ export interface QueryMetadata {
 
 /** Detaches a captured inventory from mutable provider/configuration objects. */
 export function snapshotQueryMetadata(metadata: QueryMetadata): QueryMetadata {
-  if (metadata.sourceRights !== undefined) {
-    requireArray(metadata.sourceRights, "sourceRights");
-    for (const right of metadata.sourceRights) {
+  // Read only these three caller properties, once. Never clone QueryPage rows.
+  const sourceRights = metadata.sourceRights;
+  const usedSourceIds = metadata.usedSourceIds;
+  const providerReads = metadata.providerReads;
+  const captured: QueryMetadata = structuredClone({
+    ...(sourceRights === undefined ? {} : { sourceRights }),
+    ...(usedSourceIds === undefined ? {} : { usedSourceIds }),
+    ...(providerReads === undefined ? {} : { providerReads }),
+  });
+  if (captured.sourceRights !== undefined) {
+    requireArray(captured.sourceRights, "sourceRights");
+    for (const right of captured.sourceRights) {
       requireArray(right.pins, "source rights pins");
       requireArray(right.transformations, "source rights transformations");
     }
   }
-  if (metadata.usedSourceIds !== undefined) requireArray(metadata.usedSourceIds, "usedSourceIds");
-  const providerReads = metadata.providerReads === undefined ? undefined : snapshotProviderReads(metadata);
+  if (captured.usedSourceIds !== undefined) requireArray(captured.usedSourceIds, "usedSourceIds");
   return {
-    ...(metadata.sourceRights === undefined ? {} : { sourceRights: structuredClone(metadata.sourceRights) }),
-    ...(metadata.usedSourceIds === undefined ? {} : { usedSourceIds: [...metadata.usedSourceIds] }),
-    ...(providerReads === undefined ? {} : { providerReads }),
+    ...captured,
+    ...(captured.providerReads === undefined ? {} : { providerReads: snapshotProviderReads(captured) }),
   };
 }
 
