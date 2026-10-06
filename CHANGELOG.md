@@ -1,5 +1,14 @@
 # @dalgo/core
 
+## 0.5.0
+
+### Minor Changes
+
+- cd6fab3: Add optional providerReads v1 metadata transport and a strict plan-aware consumer
+  gate for bounded live provider observations. Preserve legacy omission and refuse
+  unplanned or conflicting evidence before output. This does not enable producers
+  or source activation.
+
 ## 0.4.0
 
 ### Minor Changes
