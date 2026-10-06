@@ -70,12 +70,24 @@ jobs:
             --state open \
             --json number \
             --jq '.[0].number // empty')
+          manual_pr=false
           if [[ -z "$pr_number" ]]; then
-            gh pr create \
+            create_error=$(mktemp)
+            trap 'rm -f "$create_error"' EXIT
+            if gh pr create \
               --base main \
               --head changeset-release/main \
               --title 'chore: version @dalgo/core' \
-              --body 'Automated Changesets version pull request for @dalgo/core.'
+              --body 'Automated Changesets version pull request for @dalgo/core.' 2>"$create_error"; then
+              :
+            elif grep -Fq 'GitHub Actions is not permitted to create or approve pull requests' "$create_error"; then
+              # Repository/organization policy is separate from pull-requests: write.
+              # Preserve the generated branch for an authorized local WB PR route.
+              manual_pr=true
+            else
+              cat "$create_error" >&2
+              exit 1
+            fi
             pr_number=$(gh pr list \
               --base main \
               --head changeset-release/main \
@@ -83,8 +95,26 @@ jobs:
               --json number \
               --jq '.[0].number // empty')
           fi
-          [[ -n "$pr_number" ]] || exit 1
-          echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
+          if [[ -n "$pr_number" ]]; then
+            echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
+            echo 'manual-pr-required=false' >> "$GITHUB_OUTPUT"
+          elif [[ "$manual_pr" == true ]]; then
+            echo '::warning::Actions PR creation is disabled. The generated version branch requires an authorized local WB pull request.'
+            echo 'manual-pr-required=true' >> "$GITHUB_OUTPUT"
+            {
+              echo '### Version pull request requires a local maintainer'
+              echo
+              echo "Generated branch: changeset-release/main at $(git rev-parse HEAD)."
+              echo "Review the existing branch: https://github.com/$GITHUB_REPOSITORY/compare/main...changeset-release/main"
+              echo
+              echo 'Open or adopt that exact branch through wb pr create with base main and title chore: version @dalgo/core. Do not regenerate or duplicate it.'
+              echo 'The repository or organization disables Allow GitHub Actions to create and approve pull requests. No setting or credential change was attempted.'
+              echo 'Branch CI is dispatched below. This handoff does not authorize npm publication or resolve npm trusted publisher permissions.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Version pull request creation did not produce an open pull request.' >&2
+            exit 1
+          fi
           gh workflow run ci.yml --ref changeset-release/main
 
   authorize-release:
