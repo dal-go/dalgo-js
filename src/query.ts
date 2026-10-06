@@ -1,5 +1,6 @@
 import type { Codec, ExistingRecord } from "./record.js";
 import type { Key } from "./key.js";
+import type { QueryMetadata } from "./source-rights.js";
 
 export const DOCUMENT_ID = "__name__" as const;
 
@@ -274,7 +275,7 @@ export function isRecursiveDTQLQuery<T>(query: AnyParsedDTQLQuery<T>): query is 
   return "kind" in query && query.kind === "recursive-dtql";
 }
 
-export interface QueryPage<T> {
+export interface QueryPage<T> extends QueryMetadata {
   readonly records: readonly ExistingRecord<T>[];
   readonly nextCursor?: QueryCursor;
 }

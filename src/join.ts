@@ -1,3 +1,4 @@
+import { requireUnannotatedQueryInput } from "./source-rights.js";
 import { containsAggregate, effectiveColumns, expressionText, hasAggregation, hasDistinctAggregate } from "./aggregation.js";
 import { evaluateCondition, isMembership, nullTestTruth, toCondition, walkConditionExpressions, type DTQLLeaf, type Truth } from "./condition.js";
 import type { QueryExecutor } from "./database.js";
@@ -343,6 +344,7 @@ async function scanRelations(
     };
     if (relation.database !== undefined && resolveExecutor === undefined) planError(aliasOf(relation), "database-qualified relation requires resolveExecutor");
     const page = await (resolveExecutor?.(relation) ?? executor).query(source);
+    requireUnannotatedQueryInput(page);
     if (page.nextCursor !== undefined && relation.scan === undefined) planError(aliasOf(relation), "relation scan is paginated");
     const records = page.records;
     fetched += records.length;
@@ -1009,6 +1011,7 @@ export async function* executeJoinedDTQLQueryPages(
   let downloaded = 0;
   let retained = 0;
   for await (const page of scanPages(child, childQuery)) {
+    requireUnannotatedQueryInput(page);
     for (const record of page.records) {
       downloaded++;
       retained += bytes(record.data);
@@ -1025,6 +1028,7 @@ export async function* executeJoinedDTQLQueryPages(
   let emitted = 0;
   let output: StoredRow[] = [];
   for await (const page of scanPages(root, rootQuery)) {
+    requireUnannotatedQueryInput(page);
     scanned += page.records.length;
     if (root.scan !== undefined && scanned > root.scan.limit) planError(rootAlias, "source exceeded its scan limit");
     downloaded += page.records.length;
@@ -1110,6 +1114,7 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
   let downloaded = 0;
   let dimensionBytes = 0;
   for await (const page of scanPages(child, childQuery)) {
+    requireUnannotatedQueryInput(page);
     for (const record of page.records) {
       downloaded += 1;
       dimensionBytes += bytes(record.data);
@@ -1125,6 +1130,7 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
   let processed = 0;
   let factRows = 0;
   for await (const page of scanPages(root, rootQuery)) {
+    requireUnannotatedQueryInput(page);
     factRows += page.records.length;
     if (root.scan !== undefined && factRows > root.scan.limit) planError(rootAlias, "source exceeded its scan limit");
     downloaded += page.records.length;

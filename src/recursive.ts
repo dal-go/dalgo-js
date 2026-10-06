@@ -1,3 +1,4 @@
+import { requireUnannotatedQueryInput } from "./source-rights.js";
 import type { QueryExecutor } from "./database.js";
 import type { DTQLSchema } from "./dtql.js";
 import { nullOperandProblem } from "./condition.js";
@@ -152,6 +153,7 @@ async function evaluateRelation(executor: QueryExecutor, relation: RecursiveDTQL
     cancelled(budget, path);
     const page = await executor.query<Data>({ source, filters: [], orders: [], limit: budget.maxFetchedRows + 1 });
     cancelled(budget, path);
+    requireUnannotatedQueryInput(page);
     if (page.nextCursor !== undefined) shape(path, "leaf relation scan is paginated");
     records = page.records;
     budget.fetched += records.length;
