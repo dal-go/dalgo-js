@@ -1,4 +1,5 @@
 import { UnsupportedError } from "./errors.js";
+import { snapshotProviderReads, type ProviderReads } from "./provider-reads.js";
 
 /** Provider-declared source terms, never an inferred licence of query output. */
 export interface SourceDeclaration {
@@ -69,6 +70,8 @@ export interface CollectionMetadata {
 export interface QueryMetadata {
   readonly sourceRights?: readonly SourceRight[];
   readonly usedSourceIds?: readonly string[];
+  /** Optional live observations; absence is unknown, never historical proof. */
+  readonly providerReads?: ProviderReads;
 }
 
 /** Detaches a captured inventory from mutable provider/configuration objects. */
@@ -81,9 +84,11 @@ export function snapshotQueryMetadata(metadata: QueryMetadata): QueryMetadata {
     }
   }
   if (metadata.usedSourceIds !== undefined) requireArray(metadata.usedSourceIds, "usedSourceIds");
+  const providerReads = metadata.providerReads === undefined ? undefined : snapshotProviderReads(metadata);
   return {
     ...(metadata.sourceRights === undefined ? {} : { sourceRights: structuredClone(metadata.sourceRights) }),
     ...(metadata.usedSourceIds === undefined ? {} : { usedSourceIds: [...metadata.usedSourceIds] }),
+    ...(providerReads === undefined ? {} : { providerReads }),
   };
 }
 
@@ -92,7 +97,7 @@ export function snapshotQueryMetadata(metadata: QueryMetadata): QueryMetadata {
  * They refuse annotated inputs rather than silently discarding evidence.
  */
 export function requireUnannotatedQueryInput(metadata: QueryMetadata): void {
-  if (metadata.sourceRights !== undefined || metadata.usedSourceIds !== undefined) {
+  if (metadata.sourceRights !== undefined || metadata.usedSourceIds !== undefined || metadata.providerReads !== undefined) {
     throw new UnsupportedError("source-rights-preflight");
   }
 }
