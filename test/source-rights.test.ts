@@ -11,7 +11,8 @@ function right(id: string): SourceRight {
   return { sourceId: id, source: { serverId: "custom-provider", databaseId: "db", recordset: id },
     declaration: { url: "https://example.com/terms", text: "source conditions" },
     declarationScope: "database", declaredAt: { serverId: "custom-provider", databaseId: "db" },
-    evidenceOrigin: "provider-policy", pins: [], transformations: [], attribution: { text: "source credit" } };
+    evidenceOrigin: "provider-policy", pins: [], transformations: [], attribution: { text: "source credit" },
+    freeSource: { text: "Original free source", url: "https://example.com/source" } };
 }
 
 const schema = { tables: [{ name: "A", fields: ["id"] }, { name: "B", fields: ["id"] }] };
@@ -49,6 +50,8 @@ describe("optional source data rights", () => {
     expect(snapshotQueryMetadata({ usedSourceIds: [] })).toEqual({ usedSourceIds: [] });
     expect(JSON.parse(JSON.stringify(captured))).toEqual(captured);
     expect(captured).not.toHaveProperty("license");
+    expect(captured.sourceRights?.[0]?.freeSource).toEqual({ text: "Original free source", url: "https://example.com/source" });
+    expect(captured.sourceRights?.[0]?.attribution).toEqual({ text: "source credit" });
   });
 
   it("forwards captured terms and cursors through paged lookups including empty rows", async () => {

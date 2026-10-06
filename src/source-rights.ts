@@ -30,6 +30,11 @@ export interface SourceNotice {
   readonly url?: string;
 }
 
+/** Required canonical HTTPS free-source link; providers validate URL safety. */
+export interface SourceLinkNotice extends SourceNotice {
+  readonly url: string;
+}
+
 export interface SourceRight {
   readonly sourceId: string;
   readonly source: SourceIdentity;
@@ -41,7 +46,7 @@ export interface SourceRight {
   readonly evidenceOrigin: string;
   readonly pins: readonly SourceEvidencePin[];
   readonly attribution?: SourceNotice;
-  readonly freeSource?: SourceNotice;
+  readonly freeSource?: SourceLinkNotice;
   readonly transformations: readonly string[];
 }
 
