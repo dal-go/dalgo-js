@@ -1,4 +1,12 @@
 import { requireUnannotatedQueryInput } from "./source-rights.js";
+import type { SourceIdentity } from "./source-rights.js";
+import { canonicalProviderEvidence } from "./provider-reads.js";
+import {
+  captureSourceLeaf, compositionSize, MAX_COMPOSITION_INPUTS, SOURCE_COMPOSITION_FORMAT,
+  snapshotSourceComposition, snapshotSourceLeafAdmission, validateSourceLeafAdmission, validateSourceScanScope,
+  type SourceComposition, type SourceCompositionInput, type SourceLeafAdmission, type SourceScanScope,
+} from "./source-composition.js";
+import { declarationId, validateSourceIdentity } from "./source-declarations.js";
 import { containsAggregate, effectiveColumns, expressionText, hasAggregation, hasDistinctAggregate } from "./aggregation.js";
 import { evaluateCondition, isMembership, nullTestTruth, toCondition, walkConditionExpressions, type DTQLLeaf, type Truth } from "./condition.js";
 import type { QueryExecutor } from "./database.js";
@@ -64,6 +72,37 @@ export interface JoinedQueryProgress {
   readonly rows: number;
 }
 
+export interface AdmittedMaterializedJoinInput {
+  /** Exact secured executor retained before any source I/O. */
+  readonly executor: QueryExecutor;
+  readonly source: SourceIdentity;
+  readonly semanticRef: string;
+  /** Exact independently admitted query, including its source and scan bound. */
+  readonly scanQuery: StructuredQuery<Data>;
+  readonly scope: SourceScanScope;
+  readonly admission: SourceLeafAdmission;
+}
+
+export interface SourceCompositionJoinOptions extends Omit<JoinedQueryExecutionOptions, "resolveExecutor" | "scanPages" | "money" | "pageSize"> {
+  readonly compositionId: string;
+  readonly maxMetadataBytes?: number;
+  /** All callbacks run synchronously before the first await or source query. */
+  readonly resolveInput: (relation: QueryRelation, relationPath: string) => AdmittedMaterializedJoinInput;
+}
+
+interface PreparedCompositionScan extends Omit<AdmittedMaterializedJoinInput, "scanQuery"> {
+  readonly execute: QueryExecutor["query"];
+  readonly query: StructuredQuery<Data>;
+  readonly scanId: string;
+  readonly relationPath: string;
+}
+interface CompositionExecution {
+  readonly options: SourceCompositionJoinOptions;
+  readonly inputs: SourceCompositionInput[];
+  metadataBytes: number;
+  prepared?: ReadonlyMap<QueryRelation, PreparedCompositionScan>;
+}
+
 type ExecutionLimits = Required<Omit<JoinedQueryExecutionOptions, "schema" | "resolveSource" | "resolveExecutor" | "scanPages" | "onProgress" | "money" | "pageSize">>;
 
 const defaults: ExecutionLimits = {
@@ -86,6 +125,38 @@ export async function executeJoinedDTQLQuery(
   executor: QueryExecutor,
   query: JoinedDTQLQuery,
   options: JoinedQueryExecutionOptions = {},
+): Promise<QueryPage<Data>> {
+  return executeMaterializedJoin(executor, query, options);
+}
+
+/**
+ * Explicit JS-local, materialized-only rights route. No recursive, streaming,
+ * composed-leaf, Go/OVDB, persistence or export capability is implied.
+ */
+export async function executeSourceComposedJoinedDTQLQuery(
+  query: JoinedDTQLQuery,
+  options: SourceCompositionJoinOptions,
+): Promise<QueryPage<Data>> {
+  for (const unsupported of ["scanPages", "money", "pageSize", "resolveExecutor"]) {
+    if (unsupported in options) planError(unsupported, "unsupported composed join option");
+  }
+  // Read and detach caller structures before resolvers or I/O can mutate them.
+  const capturedQuery = structuredClone(query);
+  if (capturedQuery.money !== undefined) planError("money", "unsupported composed join option");
+  const capturedOptions: SourceCompositionJoinOptions = { ...options };
+  if (capturedOptions.schema !== undefined) Object.assign(capturedOptions, { schema: structuredClone(capturedOptions.schema) });
+  declarationId(capturedOptions.compositionId);
+  compositionSize({}, capturedOptions.maxMetadataBytes);
+  const composition: CompositionExecution = { options: capturedOptions, inputs: [], metadataBytes: 0 };
+  const unreachable: QueryExecutor = { query: () => { throw new Error("unadmitted executor"); } };
+  return executeMaterializedJoin(unreachable, capturedQuery, capturedOptions, composition);
+}
+
+async function executeMaterializedJoin(
+  executor: QueryExecutor,
+  query: JoinedDTQLQuery,
+  options: JoinedQueryExecutionOptions,
+  composition?: CompositionExecution,
 ): Promise<QueryPage<Data>> {
   const money = options.money ?? query.money;
   if (money !== undefined) {
@@ -110,20 +181,83 @@ export async function executeJoinedDTQLQuery(
   validateClauseSources(expandedQuery, aliases);
   const effectiveQuery = withDerivedColumns(expandedQuery);
   const keyReferences = collectKeyReferences(from, aliases);
-  const cached = await scanRelations(executor, nodes, keyReferences, limits, options.resolveSource, options.resolveExecutor, options.onProgress);
+  if (composition !== undefined) {
+    composition.prepared = prepareCompositionScans(from, nodes, limits, composition.options);
+    for (const scan of composition.prepared.values()) await validateSourceLeafAdmission(scan.admission);
+  }
+  const cached = await scanRelations(executor, nodes, keyReferences, limits, options.resolveSource, options.resolveExecutor, options.onProgress, composition);
+  // Reserve the actual envelope for every subsequent materialization stage.
+  const rowLimits = composition === undefined ? limits : { ...limits, maxRetainedBytes: limits.maxRetainedBytes - composition.metadataBytes };
   const relationAliases = aliasesFor(from);
-  let rows = await evaluateRelation(from, new Map(), cached, limits, { candidates: 0 }, undefined, "from");
+  let rows = await evaluateRelation(from, new Map(), cached, rowLimits, { candidates: 0 }, undefined, "from");
   rows = rows.filter((row) => effectiveQuery.filters.every((filter) => matchesWhere(row, filter)));
   options.onProgress?.({ phase: "process", rows: rows.length });
 
-  const materialized = materialize(rows, effectiveQuery, limits);
+  const materialized = materialize(rows, effectiveQuery, rowLimits);
   const ordered = stableOrder(materialized, effectiveQuery);
   const start = effectiveQuery.offset ?? 0;
   const end = effectiveQuery.limit === undefined ? undefined : start + effectiveQuery.limit;
   const toRecord = (item: MaterializedRow): ExistingRecord<Data> => ({ key: item.row.root.key, exists: true as const, data: project(item, effectiveQuery, relationAliases) });
   // Go finishes every group before it applies OFFSET and LIMIT, so an error in a group's output is not hidden by paging.
   const page = hasAggregation(effectiveQuery) ? ordered.map(toRecord).slice(start, end) : ordered.slice(start, end).map(toRecord);
-  return { records: page };
+  if (composition !== undefined && page.reduce((total, record) => total + bytes(record.data), 0) > rowLimits.maxRetainedBytes) planError("output", "retained-byte bound exceeded");
+  return { records: page, ...(composition === undefined ? {} : { sourceComposition: finishComposition(composition) }) };
+}
+
+function finishComposition(composition: CompositionExecution, snapshot = true): SourceComposition {
+  const envelope: SourceComposition = {
+    format: SOURCE_COMPOSITION_FORMAT, operation: "join", compositionId: composition.options.compositionId, inputs: composition.inputs,
+  };
+  composition.metadataBytes = compositionSize(envelope, composition.options.maxMetadataBytes);
+  return snapshot ? snapshotSourceComposition(envelope) : envelope;
+}
+
+function prepareCompositionScans(
+  from: QueryRelation,
+  nodes: readonly QueryRelation[],
+  limits: ExecutionLimits,
+  options: SourceCompositionJoinOptions,
+): ReadonlyMap<QueryRelation, PreparedCompositionScan> {
+  if (nodes.length > MAX_COMPOSITION_INPUTS) planError("from", "composition input bound exceeded");
+  const paths = new Map<QueryRelation, string>();
+  const visit = (relation: QueryRelation, path: string): void => {
+    paths.set(relation, path);
+    relation.joins.forEach((join, index) => { visit(join.from, `${path}.joins[${index.toString()}].from`); });
+  };
+  visit(from, "from");
+  const scans = new Map<QueryRelation, PreparedCompositionScan>();
+  const preflights: unknown[] = [];
+  for (const [index, relation] of nodes.entries()) {
+    const path = paths.get(relation);
+    if (path === undefined) throw new Error("missing relation path");
+    // Give callbacks detached ASTs; capture resolved source before the callback.
+    const source = structuredClone(relationSource(structuredClone(relation), options.resolveSource));
+    const raw = options.resolveInput(structuredClone(relation), path);
+    const executor = raw.executor;
+    const execute = executor.query.bind(executor);
+    const captured = structuredClone({ source: raw.source, semanticRef: raw.semanticRef, scanQuery: raw.scanQuery, scope: raw.scope, admission: raw.admission });
+    preflights.push(captured);
+    compositionSize(preflights, options.maxMetadataBytes);
+    validateSourceIdentity(captured.source); declarationId(captured.semanticRef); validateSourceScanScope(captured.scope);
+    if (typeof execute !== "function") planError(path, "missing admitted executor");
+    const admission = snapshotSourceLeafAdmission(captured.admission);
+    const scope = captured.scope;
+    if (scope.requestedLimit > limits.maxFetchedRows) planError(path, "scan bound exceeds fetched-row budget");
+    if (scope.kind === "bounded") {
+      if (relation.scan?.limit !== scope.requestedLimit) planError(path, "bounded semantics require explicit relation scan");
+      if (scope.ordering !== ((relation.scan.orderBy.length === 0) ? "unspecified" : "specified")) planError(path, "bounded ordering mismatch");
+    } else {
+      if (relation.scan !== undefined) planError(path, "complete scan cannot replace explicit bounded relation");
+      if (scope.proof === "ecb-full-decoded-feed" && admission.kind !== "provider-get") planError(path, "ECB scan requires GET admission");
+      if (scope.proof === "immutable-local-array" && admission.kind === "provider-get") planError(path, "local array cannot use live GET admission");
+      if (admission.kind === "unknown-local" && scope.proof !== "immutable-local-array") planError(path, "unknown rights only admitted for local array");
+    }
+    const expected: StructuredQuery<Data> = { source, filters: [], orders: relation.scan?.orderBy ?? [], limit: scope.requestedLimit };
+    if (canonicalProviderEvidence(captured.scanQuery) !== canonicalProviderEvidence(expected)) planError(path, "scan query admission mismatch");
+    scans.set(relation, { executor, execute, source: captured.source, semanticRef: captured.semanticRef, scope, admission,
+      query: captured.scanQuery, scanId: `scan-${index.toString()}`, relationPath: path });
+  }
+  return scans;
 }
 
 function expandQueryColumns(query: JoinedDTQLQuery, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema | undefined): JoinedDTQLQuery {
@@ -331,27 +465,47 @@ async function scanRelations(
   resolveSource: JoinedQueryExecutionOptions["resolveSource"],
   resolveExecutor: JoinedQueryExecutionOptions["resolveExecutor"],
   onProgress: JoinedQueryExecutionOptions["onProgress"],
+  composition?: CompositionExecution,
 ): Promise<ReadonlyMap<QueryRelation, readonly StoredRow[]>> {
   const result = new Map<QueryRelation, readonly StoredRow[]>();
   let fetched = 0;
   let retained = 0;
   for (const relation of relations) {
-    const source: StructuredQuery<Data> = {
+    const prepared = composition?.prepared?.get(relation);
+    if (composition !== undefined && prepared === undefined) throw new Error("missing prepared scan");
+    const source: StructuredQuery<Data> = prepared?.query ?? {
       source: relationSource(relation, resolveSource),
       filters: [],
       orders: relation.scan?.orderBy ?? [],
       limit: relation.scan?.limit ?? limits.maxFetchedRows + 1,
     };
-    if (relation.database !== undefined && resolveExecutor === undefined) planError(aliasOf(relation), "database-qualified relation requires resolveExecutor");
-    const page = await (resolveExecutor?.(relation) ?? executor).query(source);
-    requireUnannotatedQueryInput(page);
-    if (page.nextCursor !== undefined && relation.scan === undefined) planError(aliasOf(relation), "relation scan is paginated");
+    if (prepared === undefined && relation.database !== undefined && resolveExecutor === undefined) planError(aliasOf(relation), "database-qualified relation requires resolveExecutor");
+    const page = prepared === undefined
+      ? await (resolveExecutor?.(relation) ?? executor).query(source)
+      : await prepared.execute(structuredClone(source));
+    if (prepared === undefined) requireUnannotatedQueryInput(page);
+    else {
+      const metadata = await captureSourceLeaf(page, prepared.admission);
+      // Refuse before record getters; cursors imply unsupported paged transport.
+      if (page.nextCursor !== undefined) planError(aliasOf(relation), "composed scan is paginated");
+      const input: SourceCompositionInput = { scanId: prepared.scanId, relationPath: prepared.relationPath,
+        source: prepared.source, semanticRef: prepared.semanticRef, scope: prepared.scope,
+        rightsStatus: metadata.sourceRights === undefined ? "unknown" : "provided", metadata };
+      composition?.inputs.push(input);
+      if (composition !== undefined) finishComposition(composition, false);
+      if (retained + (composition?.metadataBytes ?? 0) > limits.maxRetainedBytes) planError(aliasOf(relation), "retained-byte bound exceeded");
+    }
+    if (prepared === undefined && page.nextCursor !== undefined && relation.scan === undefined) planError(aliasOf(relation), "relation scan is paginated");
     const records = page.records;
+    if (prepared !== undefined) {
+      if (records.length > prepared.scope.requestedLimit) planError(aliasOf(relation), "admitted scan row bound exceeded");
+      if (prepared.scope.kind === "complete" && prepared.scope.proof === "immutable-local-array" && records.length !== prepared.scope.maxRows) planError(aliasOf(relation), "immutable array completeness mismatch");
+    }
     fetched += records.length;
     retained += records.reduce((total, record) => total + bytes(record.data), 0);
     for (const record of records) for (const reference of keyReferences.get(relation) ?? []) joinKey(record.data[reference.field], reference.path);
     if (fetched > limits.maxFetchedRows) planError(aliasOf(relation), "fetched-row bound exceeded");
-    if (retained > limits.maxRetainedBytes) planError(aliasOf(relation), "retained-byte bound exceeded");
+    if (retained + (composition?.metadataBytes ?? 0) > limits.maxRetainedBytes) planError(aliasOf(relation), "retained-byte bound exceeded");
     result.set(relation, records);
     onProgress?.({ phase: "download", ...(relation.database === undefined ? {} : { database: relation.database }), rows: fetched });
   }

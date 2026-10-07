@@ -10,3 +10,4 @@ export * from "./record.js";
 export * from "./recursive.js";
 export * from "./source-rights.js";
 export * from "./provider-reads.js";
+export * from "./source-composition.js";

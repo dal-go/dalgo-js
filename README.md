@@ -445,10 +445,19 @@ metadata and each cursor, including on empty pages. The caller's secured lookup
 executor must preflight its lookup sources and supply their inventory and actual
 use; a lookup callback's arbitrary return value cannot establish source rights.
 
-Generic joined/recursive DTQL execution currently lacks source-rights preflight.
+Legacy joined/recursive DTQL execution lacks source-rights preflight.
 It fails with `UnsupportedError("source-rights-preflight")` when a scanned input
-has either metadata field, rather than returning results without provenance.
+has source rights, used IDs, provider reads or a composition envelope.
 For compliant adapters this refusal occurs before any joined result. A transport
 that adds metadata only on a later page violates the first-page contract: that
 page refuses, but already emitted rows cannot be undone. Use a provider executor
 that preflights source rights for rights-bearing joins and aggregations.
+
+The explicit JS-local `executeSourceComposedJoinedDTQLQuery` route adds bounded
+materialized joins with independently admitted scans and a versioned
+`sourceComposition` envelope. Each leaf retains its original declarations and
+GET evidence, including empty and projected-away inputs; omitted rights stay
+labelled unknown. It supports a transient in-memory viewer and refuses
+composed leaves, paged/recursive transport, generic enrichment and unsupported
+sinks. See [source composition](docs/source-composition.md) for its contracts,
+bounds and separate adapter/browser acceptance gates.
