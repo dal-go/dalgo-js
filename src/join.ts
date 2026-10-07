@@ -230,11 +230,12 @@ function prepareCompositionScans(
     const source = structuredClone(relationSource(structuredClone(relation), options.resolveSource));
     const raw = options.resolveInput(structuredClone(relation), path);
     const executor = raw.executor;
+    const execute = executor.query;
     const captured = structuredClone({ source: raw.source, semanticRef: raw.semanticRef, scanQuery: raw.scanQuery, scope: raw.scope, admission: raw.admission });
     preflights.push(captured);
     compositionSize(preflights, options.maxMetadataBytes);
     validateSourceIdentity(captured.source); declarationId(captured.semanticRef); validateSourceScanScope(captured.scope);
-    if (typeof executor.query !== "function") planError(path, "missing admitted executor");
+    if (typeof execute !== "function") planError(path, "missing admitted executor");
     const admission = snapshotSourceLeafAdmission(captured.admission);
     const scope = captured.scope;
     if (scope.requestedLimit > limits.maxFetchedRows) planError(path, "scan bound exceeds fetched-row budget");
@@ -249,7 +250,7 @@ function prepareCompositionScans(
     }
     const expected: StructuredQuery<Data> = { source, filters: [], orders: relation.scan?.orderBy ?? [], limit: scope.requestedLimit };
     if (canonicalProviderEvidence(captured.scanQuery) !== canonicalProviderEvidence(expected)) planError(path, "scan query admission mismatch");
-    scans.set(relation, { executor, execute: executor.query.bind(executor), source: captured.source, semanticRef: captured.semanticRef, scope, admission,
+    scans.set(relation, { executor, execute: execute.bind(executor), source: captured.source, semanticRef: captured.semanticRef, scope, admission,
       query: captured.scanQuery, scanId: `scan-${index.toString()}`, relationPath: path });
   }
   return scans;

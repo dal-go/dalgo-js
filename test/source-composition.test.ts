@@ -211,6 +211,16 @@ describe("JS-local materialized source composition", () => {
     expect(a.calls).toHaveLength(0);
   });
 
+  it("captures each admitted executor's query getter exactly once", async () => {
+    const a = new FixtureExecutor([{ currency: "USD" }]); const b = new FixtureExecutor([{ currency: "USD", name: "Captured" }]);
+    const method = b.query; let calls = 0;
+    Object.defineProperty(b, "query", { get() {
+      calls++; return calls === 1 ? method : () => { throw new Error("racing method getter"); };
+    } });
+    const result = await executeSourceComposedJoinedDTQLQuery(joined(), options(a, b));
+    expect(result.records[0]?.data.name).toBe("Captured"); expect(calls).toBe(1);
+  });
+
   it("requires explicit bounded relation semantics and preserves ordering instead of claiming exhaustion", async () => {
     const a = new FixtureExecutor([{ currency: "USD" }]); const b = new FixtureExecutor([{ currency: "USD", name: "Prefix" }]);
     const query = joined(); const bounded = { ...query, from: { ...query.from, scan: { orderBy: [], limit: 1 } } };
