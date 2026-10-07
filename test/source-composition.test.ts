@@ -213,7 +213,7 @@ describe("JS-local materialized source composition", () => {
 
   it("captures each admitted executor's query getter exactly once", async () => {
     const a = new FixtureExecutor([{ currency: "USD" }]); const b = new FixtureExecutor([{ currency: "USD", name: "Captured" }]);
-    const method = b.query; let calls = 0;
+    const method = b.query.bind(b); let calls = 0;
     Object.defineProperty(b, "query", { get() {
       calls++; return calls === 1 ? method : () => { throw new Error("racing method getter"); };
     } });
