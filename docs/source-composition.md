@@ -118,9 +118,14 @@ metadata bound; terms, notice whitespace and URL fragments are preserved.
 Live GET metadata retains its existing tighter field limits.
 
 Existing execution bounds still apply: 10,000 fetched rows, 10,000 result rows,
-100,000 candidate evaluations and 16 MiB retained row data by default. Per-scan
+100,000 candidate evaluations and 16 MiB retained row data plus composition
+metadata by default. Per-scan
 limits cannot exceed the admitted fetched-row budget. Cumulative row and data
-bounds are checked before evaluating the join. All leaf scans execute even when
+bounds are checked before evaluating the join. The actual UTF-8 envelope size is
+charged together with cumulative fetched row data, including empty-input evidence.
+That metadata allocation remains reserved during joined-row materialization and
+the final projected-output check; the separate metadata ceiling also applies.
+All leaf scans execute even when
 an earlier leaf is empty, so the final empty result retains all actual scans.
 
 The initial supported consumer is a transient **in-memory viewer** using this

@@ -99,6 +99,7 @@ interface PreparedCompositionScan extends Omit<AdmittedMaterializedJoinInput, "s
 interface CompositionExecution {
   readonly options: SourceCompositionJoinOptions;
   readonly inputs: SourceCompositionInput[];
+  metadataBytes: number;
   prepared?: ReadonlyMap<QueryRelation, PreparedCompositionScan>;
 }
 
@@ -146,7 +147,7 @@ export async function executeSourceComposedJoinedDTQLQuery(
   if (capturedOptions.schema !== undefined) Object.assign(capturedOptions, { schema: structuredClone(capturedOptions.schema) });
   declarationId(capturedOptions.compositionId);
   compositionSize({}, capturedOptions.maxMetadataBytes);
-  const composition: CompositionExecution = { options: capturedOptions, inputs: [] };
+  const composition: CompositionExecution = { options: capturedOptions, inputs: [], metadataBytes: 0 };
   const unreachable: QueryExecutor = { query: () => { throw new Error("unadmitted executor"); } };
   return executeMaterializedJoin(unreachable, capturedQuery, capturedOptions, composition);
 }
@@ -185,18 +186,21 @@ async function executeMaterializedJoin(
     for (const scan of composition.prepared.values()) await validateSourceLeafAdmission(scan.admission);
   }
   const cached = await scanRelations(executor, nodes, keyReferences, limits, options.resolveSource, options.resolveExecutor, options.onProgress, composition);
+  // Reserve the actual envelope for every subsequent materialization stage.
+  const rowLimits = composition === undefined ? limits : { ...limits, maxRetainedBytes: limits.maxRetainedBytes - composition.metadataBytes };
   const relationAliases = aliasesFor(from);
-  let rows = await evaluateRelation(from, new Map(), cached, limits, { candidates: 0 }, undefined, "from");
+  let rows = await evaluateRelation(from, new Map(), cached, rowLimits, { candidates: 0 }, undefined, "from");
   rows = rows.filter((row) => effectiveQuery.filters.every((filter) => matchesWhere(row, filter)));
   options.onProgress?.({ phase: "process", rows: rows.length });
 
-  const materialized = materialize(rows, effectiveQuery, limits);
+  const materialized = materialize(rows, effectiveQuery, rowLimits);
   const ordered = stableOrder(materialized, effectiveQuery);
   const start = effectiveQuery.offset ?? 0;
   const end = effectiveQuery.limit === undefined ? undefined : start + effectiveQuery.limit;
   const toRecord = (item: MaterializedRow): ExistingRecord<Data> => ({ key: item.row.root.key, exists: true as const, data: project(item, effectiveQuery, relationAliases) });
   // Go finishes every group before it applies OFFSET and LIMIT, so an error in a group's output is not hidden by paging.
   const page = hasAggregation(effectiveQuery) ? ordered.map(toRecord).slice(start, end) : ordered.slice(start, end).map(toRecord);
+  if (composition !== undefined && page.reduce((total, record) => total + bytes(record.data), 0) > rowLimits.maxRetainedBytes) planError("output", "retained-byte bound exceeded");
   return { records: page, ...(composition === undefined ? {} : { sourceComposition: finishComposition(composition) }) };
 }
 
@@ -204,7 +208,7 @@ function finishComposition(composition: CompositionExecution, snapshot = true): 
   const envelope: SourceComposition = {
     format: SOURCE_COMPOSITION_FORMAT, operation: "join", compositionId: composition.options.compositionId, inputs: composition.inputs,
   };
-  compositionSize(envelope, composition.options.maxMetadataBytes);
+  composition.metadataBytes = compositionSize(envelope, composition.options.maxMetadataBytes);
   return snapshot ? snapshotSourceComposition(envelope) : envelope;
 }
 
@@ -489,8 +493,9 @@ async function scanRelations(
         rightsStatus: metadata.sourceRights === undefined ? "unknown" : "provided", metadata };
       composition?.inputs.push(input);
       if (composition !== undefined) finishComposition(composition, false);
+      if (retained + (composition?.metadataBytes ?? 0) > limits.maxRetainedBytes) planError(aliasOf(relation), "retained-byte bound exceeded");
     }
-    if (page.nextCursor !== undefined && relation.scan === undefined) planError(aliasOf(relation), "relation scan is paginated");
+    if (prepared === undefined && page.nextCursor !== undefined && relation.scan === undefined) planError(aliasOf(relation), "relation scan is paginated");
     const records = page.records;
     if (prepared !== undefined) {
       if (records.length > prepared.scope.requestedLimit) planError(aliasOf(relation), "admitted scan row bound exceeded");
@@ -500,7 +505,7 @@ async function scanRelations(
     retained += records.reduce((total, record) => total + bytes(record.data), 0);
     for (const record of records) for (const reference of keyReferences.get(relation) ?? []) joinKey(record.data[reference.field], reference.path);
     if (fetched > limits.maxFetchedRows) planError(aliasOf(relation), "fetched-row bound exceeded");
-    if (retained > limits.maxRetainedBytes) planError(aliasOf(relation), "retained-byte bound exceeded");
+    if (retained + (composition?.metadataBytes ?? 0) > limits.maxRetainedBytes) planError(aliasOf(relation), "retained-byte bound exceeded");
     result.set(relation, records);
     onProgress?.({ phase: "download", ...(relation.database === undefined ? {} : { database: relation.database }), rows: fetched });
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  captureSourceLeaf, executeJoinedDTQLQuery, executeJoinedDTQLQueryPages, executeRecordLookupPages,
+  canonicalProviderEvidence, captureSourceLeaf, executeJoinedDTQLQuery, executeJoinedDTQLQueryPages, executeRecordLookupPages,
   executeRecursiveDTQLQuery, executeSourceComposedJoinedDTQLQuery, isJoinedDTQLQuery, key,
   parseDTQL, parseRecursiveDTQL, providerEvidenceDigest, requireNoSourceComposition,
   requireSourceCompositionConsumer, snapshotQueryMetadata, snapshotSourceComposition, snapshotSourceLeafAdmission,
@@ -248,6 +248,54 @@ describe("JS-local materialized source composition", () => {
     await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(a, b), maxRetainedBytes: 10 })).rejects.toThrow("retained-byte bound");
     await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(a, b), maxMetadataBytes: 10 })).rejects.toThrow("metadata budget");
     await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(a, b), maxMetadataBytes: 262145 })).rejects.toThrow("invalid metadata bound");
+  });
+
+  it("charges long declaration metadata to the retained-byte budget even with empty inputs", async () => {
+    const metadata = { sourceRights: [{ ...sourceRight, declaration: { text: "x".repeat(6000) } }], usedSourceIds: ["a"] };
+    const empty = new FixtureExecutor([], metadata);
+    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { compositionId: "empty-budget", maxRetainedBytes: 1,
+      resolveInput: (relation) => localInput(relation, empty, { kind: "declaration", ...metadata }),
+    })).rejects.toThrow("retained-byte bound");
+  });
+
+  it("charges cumulative row data and composition metadata together before processing the join", async () => {
+    const a = new FixtureExecutor([{ currency: "USD", name: "x".repeat(100) }]); const b = new FixtureExecutor([{ currency: "USD", name: "Fabricated" }]);
+    const result = await executeSourceComposedJoinedDTQLQuery(joined(), options(a, b));
+    const metadataBytes = new TextEncoder().encode(canonicalProviderEvidence(composition(result))).length;
+    const rowBytes = [...a.rows, ...b.rows].reduce((total, row) => total + new TextEncoder().encode(JSON.stringify(row)).length, 0);
+    const phases: string[] = [];
+    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(a, b), maxRetainedBytes: metadataBytes + rowBytes - 1,
+      onProgress: (progress) => { phases.push(progress.phase); },
+    })).rejects.toThrow("retained-byte bound");
+    expect(phases).not.toContain("process");
+  });
+
+  it("reserves composition metadata through projected output and admits an exact empty metadata budget", async () => {
+    const empty = new FixtureExecutor([]);
+    const first = await executeSourceComposedJoinedDTQLQuery(joined(), options(empty, empty));
+    const metadataBytes = new TextEncoder().encode(canonicalProviderEvidence(composition(first))).length;
+    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(empty, empty), maxRetainedBytes: metadataBytes })).resolves.toEqual(first);
+    const a = new FixtureExecutor([{ currency: "USD" }]); const b = new FixtureExecutor([{ currency: "USD", name: "x".repeat(1000) }]);
+    const original = joined();
+    const column = original.columns?.[0];
+    if (column === undefined) throw new Error("missing projected column");
+    const columns = Array.from({ length: 20 }, (_, index) => ({ ...column, as: `repeated${index.toString()}` }));
+    const query = { ...original, columns };
+    await expect(executeSourceComposedJoinedDTQLQuery(query, { ...options(a, b), maxRetainedBytes: 5000 })).rejects.toThrow("retained-byte bound");
+  });
+
+  it("captures a composed scan cursor getter once even for explicitly bounded relations", async () => {
+    const a = new FixtureExecutor([{ currency: "USD" }]); const b = new FixtureExecutor([{ currency: "USD", name: "Fabricated" }]);
+    let cursorReads = 0;
+    const page = { records: [{ key: key("A", "0"), exists: true as const, data: { currency: "USD" } }] };
+    Object.defineProperty(page, "nextCursor", { get() { cursorReads++; return cursorReads === 1 ? undefined : { values: ["more"] }; } });
+    a.query = <T>() => Promise.resolve(page as QueryPage<T>);
+    const original = joined(); const query = { ...original, from: { ...original.from, scan: { orderBy: [], limit: 1 } } };
+    const result = await executeSourceComposedJoinedDTQLQuery(query, { compositionId: "cursor-once", resolveInput: (relation) => {
+      const input = localInput(relation, relation.name === "A" ? a : b);
+      return relation.name === "A" ? { ...input, scope: { kind: "bounded", requestedLimit: 1, contractRef: "fixture-prefix/1", ordering: "unspecified" } } : input;
+    } });
+    expect(result.records[0]?.data.name).toBe("Fabricated"); expect(cursorReads).toBe(1);
   });
 
   it("rejects changed rights, unexpected evidence and invalid declared usage before result rows are accessed", async () => {
