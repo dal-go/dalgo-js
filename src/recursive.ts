@@ -350,8 +350,17 @@ function legacyExpression(value: DTQLExpression, row: Environment, group: readon
       const rawValues = arg.kind === "star" ? group.map(() => 1) : group.map((item) => legacyExpression(arg, item, [item])).filter((item) => item !== null && item !== undefined);
       const values = value.distinct === true ? rawValues.filter((item, index) => rawValues.findIndex((candidate) => equal(candidate, item)) === index) : rawValues;
       if (value.function === "count") return values.length;
-      if (value.function === "sum") return values.reduce<number>((sum, item) => sum + (typeof item === "number" ? item : 0), 0);
-      if (value.function === "avg") return values.length === 0 ? null : values.reduce<number>((sum, item) => sum + (typeof item === "number" ? item : 0), 0) / values.length;
+      if (value.function === "sum" || value.function === "avg") {
+        const numericValues = values.filter((item): item is number => typeof item === "number");
+        if (numericValues.length === 0) return null;
+        let total = 0;
+        for (const item of numericValues) {
+          if (!Number.isFinite(item)) throw new Error(`${value.function.toUpperCase()} produced a non-finite value`);
+          total += item;
+          if (!Number.isFinite(total)) throw new Error(`${value.function.toUpperCase()} numeric overflow`);
+        }
+        return value.function === "sum" ? total : total / numericValues.length;
+      }
       if (value.function === "first") return values[0] ?? null;
       if (value.function === "last") return values.at(-1) ?? null;
       if (value.function === "min") return values.length === 0 ? null : values.reduce((best, item) => compare(item, best) < 0 ? item : best);
@@ -684,13 +693,26 @@ function parseExpression(value: unknown, schema: DTQLSchema, path: string): Recu
   if (Object.prototype.hasOwnProperty.call(expression, "value")) { keys(expression, new Set(["value"]), path); return { kind: "literal", value: expression.value as string | number | boolean | null }; }
   if (expression.values !== undefined) { keys(expression, new Set(["values"]), path); return { kind: "values", values: list(expression.values, `${path}.values`) as (string | number | boolean | null)[] }; }
   if (expression.star === true) { keys(expression, new Set(["star"]), path); return { kind: "star" }; }
+  if (expression.binary !== undefined) {
+    keys(expression, new Set(["binary"]), path);
+    const binary = raw(expression.binary, `${path}.binary`);
+    keys(binary, new Set(["op", "left", "right"]), `${path}.binary`);
+    const operator = text(requireValue(binary, "op", `${path}.binary`), `${path}.binary.op`);
+    if (operator !== "+" && operator !== "-" && operator !== "*" && operator !== "/") shape(`${path}.binary.op`, `unsupported operator ${operator}`);
+    return {
+      kind: "binary",
+      operator,
+      left: parseExpression(requireValue(binary, "left", `${path}.binary`), schema, `${path}.binary.left`) as DTQLExpression,
+      right: parseExpression(requireValue(binary, "right", `${path}.binary`), schema, `${path}.binary.right`) as DTQLExpression,
+    };
+  }
   if (expression.aggregate !== undefined) { keys(expression, new Set(["aggregate"]), path); const aggregate = raw(expression.aggregate, `${path}.aggregate`); keys(aggregate, new Set(["function", "args", "distinct"]), `${path}.aggregate`); const functionName = text(requireValue(aggregate, "function", `${path}.aggregate`), `${path}.aggregate.function`); if (!aggregateFunctions.has(functionName)) shape(`${path}.aggregate.function`, `unsupported aggregate ${functionName}`); if (aggregate.distinct !== undefined && aggregate.distinct !== true && aggregate.distinct !== false) shape(`${path}.aggregate.distinct`, "must be boolean"); return { kind: "aggregate", function: functionName as never, args: list(requireValue(aggregate, "args", `${path}.aggregate`), `${path}.aggregate.args`).map((item, index) => parseExpression(item, schema, `${path}.aggregate.args[${index.toString()}]`) as DTQLExpression), ...(aggregate.distinct === true ? { distinct: true } : {}) }; }
   shape(path, "unknown expression");
 }
 
 function writeRelation(value: RecursiveDTQLRelation): Record<string, unknown> { const joins = value.joins.length === 0 ? {} : { joins: value.joins.map((join) => ({ ...(join.type === "inner" ? {} : { type: join.type }), from: writeRelation(join.from), on: join.on.map((item) => ({ left: item.left, op: "==", right: item.right })), ...(join.hints === undefined ? {} : { hints: { algorithms: [...join.hints.algorithms] } }) })) }; return value.kind === "table" ? { ...(value.schema === undefined ? {} : { schema: value.schema }), name: value.name, ...(value.alias === undefined ? {} : { alias: value.alias }), ...joins } : { query: serializeRecursiveDTQL(value.query ?? shape("relation", "query relation needs query")), ...joins }; }
 function writeCondition(value: RecursiveDTQLCondition): Record<string, unknown> { if (value.kind === "exists") return { exists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "not-exists") return { notExists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "and" || value.kind === "or") return { [value.kind]: value.conditions.map(writeCondition) }; if (value.kind === "is-null" || value.kind === "is-not-null") return { [value.kind === "is-null" ? "isNull" : "isNotNull"]: writeExpression(value.operand) }; const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>; return { left: writeExpression(comparison.left), op: comparison.operator === "in" ? "In" : comparison.operator === "not-in" ? "NotIn" : comparison.operator, right: writeExpression(comparison.right) }; }
-function writeExpression(value: RecursiveDTQLExpression): Record<string, unknown> { if (value.kind === "query") return { query: serializeRecursiveDTQL(value.query) }; if (value.kind === "field") return { field: value.field.field, ...(value.field.source === "" ? {} : { source: value.field.source }) }; if (value.kind === "literal") return { value: value.value }; if (value.kind === "values") return { values: value.values }; if (value.kind === "star") return { star: true }; if (value.kind === "aggregate") return { aggregate: { function: value.function, args: value.args.map(writeExpression), ...(value.distinct === true ? { distinct: true } : {}) } }; shape("expression", `cannot serialize ${value.kind}`); }
+function writeExpression(value: RecursiveDTQLExpression): Record<string, unknown> { if (value.kind === "query") return { query: serializeRecursiveDTQL(value.query) }; if (value.kind === "field") return { field: value.field.field, ...(value.field.source === "" ? {} : { source: value.field.source }) }; if (value.kind === "literal") return { value: value.value }; if (value.kind === "values") return { values: value.values }; if (value.kind === "star") return { star: true }; if (value.kind === "binary") return { binary: { op: value.operator, left: writeExpression(value.left), right: writeExpression(value.right) } }; if (value.kind === "aggregate") return { aggregate: { function: value.function, args: value.args.map(writeExpression), ...(value.distinct === true ? { distinct: true } : {}) } }; shape("expression", `cannot serialize ${value.kind}`); }
 function raw(value: unknown, path: string): Record<string, unknown> { if (typeof value === "string") { const parsed = parseYamlDocument(value, { prettyErrors: false, strict: true, uniqueKeys: true }); if (parsed.errors.length > 0) shape(path, "invalid YAML"); return raw(parsed.toJS(), path); } if (value === null || Array.isArray(value) || typeof value !== "object") shape(path, "must be object"); return { ...(value as Record<string, unknown>) }; }
 function rejectObjectCycles(value: unknown, path: string, ancestors: WeakSet<object>): void {
   if (value === null || typeof value !== "object") return;

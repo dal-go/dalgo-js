@@ -51,6 +51,15 @@ having: {left: {aggregate: {function: count, args: [{star: true}]}}, op: '==', r
     expect((await executeRecursiveDTQLQuery(emptyExecutor, empty)).records.map((record) => record.data)).toEqual([{}]);
   });
 
+  it("returns null for empty numeric SUM/AVG inputs and averages numeric contributors only", async () => {
+    const aggregateSchema: DTQLSchema = { tables: [{ name: "T", fields: ["Value"] }] };
+    const query = parseRecursiveDTQL(`from: {name: T, alias: t}\ncolumns:\n  - {aggregate: {function: sum, args: [{field: Value, source: t}]}, as: Total}\n  - {aggregate: {function: avg, args: [{field: Value, source: t}]}, as: Mean}\n`, aggregateSchema);
+    const nullOnly: QueryExecutor = { async query<T>(source: StructuredQuery<T>) { return { records: [{ key: key(source.source.name, "0"), exists: true as const, data: { Value: null } as T }] }; } };
+    expect((await executeRecursiveDTQLQuery(nullOnly, query)).records.map((record) => record.data)).toEqual([{ Total: null, Mean: null }]);
+    const mixed: QueryExecutor = { async query<T>(source: StructuredQuery<T>) { return { records: [4, "x"].map((Value, index) => ({ key: key(source.source.name, index.toString()), exists: true as const, data: { Value } as T })) }; } };
+    expect((await executeRecursiveDTQLQuery(mixed, query)).records.map((record) => record.data)).toEqual([{ Total: 4, Mean: 4 }]);
+  });
+
   it("rejects a recursive YAML alias at its nested path", () => {
     expect(() => parseRecursiveDTQL("from: &r\n  query:\n    as: x\n    from: *r\n", schema))
       .toThrow("shape at root.from.query.from: recursive YAML alias or object cycle");
