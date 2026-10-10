@@ -1,5 +1,11 @@
 # @dalgo/core
 
+## 0.7.1
+
+### Patch Changes
+
+- 62ee8eb: Reject out-of-order TugQL clauses, including HAVING before GROUP BY or after ORDER BY.
+
 ## 0.7.0
 
 ### Minor Changes
