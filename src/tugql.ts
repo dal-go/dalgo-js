@@ -344,6 +344,13 @@ interface Clause {
   readonly span: TugQLSpan;
 }
 
+function requiresMultilineSelectBlock(clause: Clause): boolean {
+  if (clause.span.start.line === clause.span.end.line) return false;
+  const opening = clause.tokens[0];
+  if (opening?.text !== "(" || opening.span.start.line !== clause.span.start.line) return true;
+  return clause.tokens.slice(1).some((token) => token.span.start.line === clause.span.start.line);
+}
+
 const lowerKeywords = new Set([
   "from", "join", "left", "on", "where", "group", "by", "having", "order", "limit", "offset", "select", "as", "and", "or", "not", "is", "null", "asc", "desc", "true", "false", "with", "parameters", "required", "default", "using", "inner", "outer", "cross", "distinct", "exists",
   ...["integer", "int", "decimal", "numeric", "float", "real", "text", "string", "boolean", "bool", "date", "datetime", "timestamp", "time", "json", "uuid"],
@@ -849,7 +856,9 @@ function parseQuery(source: string): { readonly query?: TugQLQueryDocument; read
           if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${clause.name.toUpperCase()} is outside the supported range`);
           query[clause.name] = value; break;
         }
-        case "select": query.columns = parseColumns(clause.tokens, source); break;
+        case "select":
+          if (requiresMultilineSelectBlock(clause)) throw new Error("multiline SELECT requires '(' on the SELECT header line");
+          query.columns = parseColumns(clause.tokens, source); break;
         default: break;
       }
       spans.push({ path: `query.${clause.name.replaceAll(" ", "_")}`, span: clause.span });
