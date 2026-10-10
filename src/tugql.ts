@@ -288,7 +288,14 @@ function tokenizeTugQL(source: string): { readonly tokens: readonly Token[]; rea
       const quote = advance();
       let value = "";
       let closed = false;
+      let stoppedAtNewline = false;
       while (offset < source.length) {
+        const currentPoint = String.fromCodePoint(source.codePointAt(offset) ?? 0);
+        if (currentPoint === "\r" || currentPoint === "\n") {
+          diagnostics.push({ code: "unterminated_quote", message: "quoted value cannot continue across lines", span: spanFrom(startLine, startColumn) });
+          stoppedAtNewline = true;
+          break;
+        }
         const point = advance();
         if (point === quote) {
           const next = String.fromCodePoint(source.codePointAt(offset) ?? 0);
@@ -297,9 +304,11 @@ function tokenizeTugQL(source: string): { readonly tokens: readonly Token[]; rea
         }
         value += point;
       }
-      const kind = quote === "'" ? "string" : "quoted-identifier";
-      push(kind, start, startLine, startColumn, value);
-      if (!closed) diagnostics.push({ code: "unterminated_quote", message: "quoted value is not terminated", span: spanFrom(startLine, startColumn) });
+      if (!stoppedAtNewline) {
+        const kind = quote === "'" ? "string" : "quoted-identifier";
+        push(kind, start, startLine, startColumn, value);
+        if (!closed) diagnostics.push({ code: "unterminated_quote", message: "quoted value is not terminated", span: spanFrom(startLine, startColumn) });
+      }
       continue;
     }
     if (/[\p{L}_]/u.test(current)) {
@@ -997,6 +1006,12 @@ function shiftSpan(span: TugQLSpan, lines: number, columns: number): TugQLSpan {
 
 function parseDocumentInner(source: string, allowParameters: boolean, depth: number): TugQLParseResult {
   const lexed = tokenizeTugQL(source);
+  if (lexed.diagnostics.length > 0) {
+    return {
+      document: { source, sourceMetadata: { format: TUGQL_SOURCE_FORMAT, version: TUGQL_VERSION } },
+      diagnostics: lexed.diagnostics,
+    };
+  }
   const lines = linesFromTokens(source, lexed.tokens);
   const rawLines = source.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
   const indentation = structuralIndentUnit(lines);
@@ -1109,7 +1124,7 @@ export function formatTugQL(input: string | TugQLDocument, options: TugQLFormatO
   const source = typeof input === "string" ? input : input.source;
   if (source === undefined) return { source: "", diagnostics: [diagnostic("source_unavailable", "TugQL formatting requires original source text", zeroSpan)] };
   const lexed = tokenizeTugQL(source);
-  if (lexed.tokens.length === 0 && lexed.diagnostics.length > 0) return { source, diagnostics: lexed.diagnostics };
+  if (lexed.diagnostics.length > 0) return { source, diagnostics: lexed.diagnostics };
   const sourceParse = parseTugQL(source);
   if (sourceParse.diagnostics.some((item) => item.code === "invalid_select" && item.message.endsWith(MULTILINE_SELECT_BLOCK_DIAGNOSTIC))) {
     return { source, diagnostics: sourceParse.diagnostics };
@@ -2549,7 +2564,7 @@ function reindentTugQL(source: string, options: TugQLFormatOptions, originalToke
       blocks.pop();
       if (closing.kind === "cte") queryDepth = Math.max(0, closing.level - scalarDepth);
       if (closing.kind === "scalar" || closing.kind === "select-items") scalarDepth = Math.max(0, scalarDepth - 1);
-    } else if (keyword(tokens[0], "select") && tokens[1]?.text === "(") {
+    } else if (keyword(tokens[0], "select") && tokens.length === 2 && tokens[1]?.text === "(") {
       level = queryDepth + scalarDepth;
       blocks.push({ kind: "select-items", level });
       scalarDepth += 1;
