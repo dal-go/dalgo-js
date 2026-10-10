@@ -8,6 +8,7 @@ import type { RecursiveDTQLQuery } from "./query.js";
 export const TUGQL_VERSION = 1 as const;
 const TUGQL_TREE_FORMAT = "tugqtree" as const;
 const TUGQL_SOURCE_FORMAT = "tugql" as const;
+const MULTILINE_SELECT_BLOCK_DIAGNOSTIC = "multiline SELECT requires '(' on the SELECT header line";
 
 export interface TugQLPosition {
   readonly line: number;
@@ -342,6 +343,13 @@ interface Clause {
   readonly name: string;
   readonly tokens: readonly Token[];
   readonly span: TugQLSpan;
+}
+
+function requiresMultilineSelectBlock(clause: Clause): boolean {
+  if (clause.span.start.line === clause.span.end.line) return false;
+  const opening = clause.tokens[0];
+  if (opening?.text !== "(" || opening.span.start.line !== clause.span.start.line) return true;
+  return clause.tokens.slice(1).some((token) => token.span.start.line === clause.span.start.line);
 }
 
 const lowerKeywords = new Set([
@@ -849,7 +857,9 @@ function parseQuery(source: string): { readonly query?: TugQLQueryDocument; read
           if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${clause.name.toUpperCase()} is outside the supported range`);
           query[clause.name] = value; break;
         }
-        case "select": query.columns = parseColumns(clause.tokens, source); break;
+        case "select":
+          if (requiresMultilineSelectBlock(clause)) throw new Error(MULTILINE_SELECT_BLOCK_DIAGNOSTIC);
+          query.columns = parseColumns(clause.tokens, source); break;
         default: break;
       }
       spans.push({ path: `query.${clause.name.replaceAll(" ", "_")}`, span: clause.span });
@@ -1100,6 +1110,10 @@ export function formatTugQL(input: string | TugQLDocument, options: TugQLFormatO
   if (source === undefined) return { source: "", diagnostics: [diagnostic("source_unavailable", "TugQL formatting requires original source text", zeroSpan)] };
   const lexed = tokenizeTugQL(source);
   if (lexed.tokens.length === 0 && lexed.diagnostics.length > 0) return { source, diagnostics: lexed.diagnostics };
+  const sourceParse = parseTugQL(source);
+  if (sourceParse.diagnostics.some((item) => item.code === "invalid_select" && item.message.endsWith(MULTILINE_SELECT_BLOCK_DIAGNOSTIC))) {
+    return { source, diagnostics: sourceParse.diagnostics };
+  }
   const keywordCase = resolveKeywordCase(lexed.tokens, options);
   let formatted = rewriteKeywordCase(source, lexed.tokens, keywordCase);
   const sourceWasValid = parseTugQL(source).diagnostics.length === 0;
