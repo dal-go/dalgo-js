@@ -792,12 +792,17 @@ function parseQuery(source: string): { readonly query?: TugQLQueryDocument; read
   diagnostics.push(...validateInlineSyntax(lines));
   diagnostics.push(...validateQueryIndentation(lines, clauses));
   const allowed = new Set(["from", "join", "left join", "on", "where", "group by", "having", "order by", "limit", "offset", "select"]);
+  const orderRank = new Map([["from", 0], ["join", 1], ["left join", 1], ["on", 1], ["where", 2], ["group by", 3], ["having", 4], ["order by", 5], ["limit", 6], ["offset", 6], ["select", 7]]);
   const seen = new Set<string>();
+  let lastRank = 0;
   for (let i = 0; i < clauses.length; i += 1) {
     const clause = clauses[i]!;
     if (!allowed.has(clause.name)) diagnostics.push(diagnostic("unsupported_clause", `unsupported TugQL clause ${clause.name.toUpperCase()}`, clause.span));
     if (!new Set(["join", "left join", "on"]).has(clause.name) && seen.has(clause.name)) diagnostics.push(diagnostic("duplicate_clause", `clause appears more than once: ${clause.name.toUpperCase()}`, clause.span));
     seen.add(clause.name);
+    const rank = orderRank.get(clause.name);
+    if (rank !== undefined && i > 0 && rank < lastRank) diagnostics.push(diagnostic("clause_order", "query clauses are out of order", clause.span));
+    if (rank !== undefined) lastRank = rank;
     if (clause.name === "select" && i !== clauses.length - 1) diagnostics.push(diagnostic("select_must_be_last", "SELECT must be the final clause", clause.span));
     if (i > 0 && clause.name === "from") diagnostics.push(diagnostic("multiple_statements", "a TugQL query may contain only one FROM body", clause.span));
   }

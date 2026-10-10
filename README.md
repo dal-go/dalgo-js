@@ -179,6 +179,28 @@ uppercase; identifiers retain their spelling. `as` is mandatory for aliases
 and CTEs. Ordinary fields use `expression as Alias`; scalar subqueries use
 `Name as (`. End-of-line `--` comments are preserved by formatting.
 
+`WHERE` filters invoice rows before grouping; `HAVING` filters the completed
+groups. The clause order is `FROM`, optional `WHERE`, optional `GROUP BY`,
+optional `HAVING`, optional `ORDER BY` and `LIMIT`, then optional final `SELECT`:
+
+```sql
+parameters (
+  @MinInvoices integer default 2
+)
+from Invoice as i
+where i.InvoiceId > 1
+group by i.CustomerId
+having COUNT(*) >= @MinInvoices
+order by i.CustomerId asc
+select i.CustomerId, COUNT(*) as InvoiceCount
+```
+
+Resolve this source with an authorized `InvoiceId`/`CustomerId` schema, then
+pass the resolved query to `executeRecursiveDTQLQuery`. It removes rows with
+`InvoiceId <= 1`, counts each remaining customer's invoices, keeps groups with
+at least two invoices, and only then orders and projects the output. This
+example uses integer counts and does not rely on money arithmetic.
+
 Imports use `with Saved from './saved.tql'` and an indented `using (` block for
 explicit parameter or scalar literal mappings. An omitted JOIN `on`, or
 `on CustomerId`, requires one complete caller-authorized matching relationship.
