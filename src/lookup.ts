@@ -1,6 +1,7 @@
 import type { ExistingRecord } from "./record.js";
 import type { QueryPage } from "./query.js";
 import { snapshotQueryMetadata } from "./source-rights.js";
+import { requireNoSourceComposition } from "./source-composition.js";
 
 export interface LookupProgress {
   readonly rowsLoaded: number;
@@ -74,6 +75,7 @@ export async function* executeRecordLookupPages<T, V>(pages: AsyncIterable<Query
   let loaded = 0;
   let completed = 0;
   for await (const page of pages) {
+    requireNoSourceComposition(page);
     options.signal?.throwIfAborted();
     if (page.records.length > 1000) throw new RangeError("lookup source page exceeds 1000 rows");
     loaded += page.records.length;

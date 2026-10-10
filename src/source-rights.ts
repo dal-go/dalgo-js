@@ -1,3 +1,4 @@
+import { snapshotSourceComposition, type SourceComposition } from "./source-composition.js";
 import { UnsupportedError } from "./errors.js";
 import { snapshotProviderReads, type ProviderReads } from "./provider-reads.js";
 
@@ -72,19 +73,28 @@ export interface QueryMetadata {
   readonly usedSourceIds?: readonly string[];
   /** Optional live observations; absence is unknown, never historical proof. */
   readonly providerReads?: ProviderReads;
+  /** JS-local materialized composition; each input retains its original namespace. */
+  readonly sourceComposition?: SourceComposition;
 }
 
 /** Detaches a captured inventory from mutable provider/configuration objects. */
 export function snapshotQueryMetadata(metadata: QueryMetadata): QueryMetadata {
-  // Read only these three caller properties, once. Never clone QueryPage rows.
+  // Read only these four caller properties, once. Never clone QueryPage rows.
   const sourceRights = metadata.sourceRights;
   const usedSourceIds = metadata.usedSourceIds;
   const providerReads = metadata.providerReads;
+  const sourceComposition = metadata.sourceComposition;
+  if ("sourceComposition" in metadata && sourceComposition === undefined) throw new TypeError("source composition must be a supported envelope");
   const captured: QueryMetadata = structuredClone({
     ...(sourceRights === undefined ? {} : { sourceRights }),
     ...(usedSourceIds === undefined ? {} : { usedSourceIds }),
     ...(providerReads === undefined ? {} : { providerReads }),
+    ...(sourceComposition === undefined ? {} : { sourceComposition }),
   });
+  if (captured.sourceComposition !== undefined) {
+    if (captured.sourceRights !== undefined || captured.usedSourceIds !== undefined || captured.providerReads !== undefined) throw new TypeError("source composition cannot be mixed with legacy metadata");
+    return { sourceComposition: snapshotSourceComposition(captured.sourceComposition) };
+  }
   if (captured.sourceRights !== undefined) {
     requireArray(captured.sourceRights, "sourceRights");
     for (const right of captured.sourceRights) {
@@ -104,7 +114,7 @@ export function snapshotQueryMetadata(metadata: QueryMetadata): QueryMetadata {
  * They refuse annotated inputs rather than silently discarding evidence.
  */
 export function requireUnannotatedQueryInput(metadata: QueryMetadata): void {
-  if (metadata.sourceRights !== undefined || metadata.usedSourceIds !== undefined || metadata.providerReads !== undefined) {
+  if ("sourceComposition" in metadata || metadata.sourceRights !== undefined || metadata.usedSourceIds !== undefined || metadata.providerReads !== undefined) {
     throw new UnsupportedError("source-rights-preflight");
   }
 }

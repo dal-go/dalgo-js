@@ -1,3 +1,5 @@
+import { validateSourceRightsInventory } from "./source-declarations.js";
+import { requireNoSourceComposition } from "./source-composition.js";
 import { snapshotQueryMetadata, type QueryMetadata, type SourceRight } from "./source-rights.js";
 
 /** Consumer capability only: does not authorize reads, copies or activation. */
@@ -78,6 +80,7 @@ export interface ProviderReadPlan {
 
 /** Structural transport check. Digest/admission verification requires validateProviderReads. */
 export function snapshotProviderReads(metadata: QueryMetadata): ProviderReads {
+  requireNoSourceComposition(metadata);
   const sourceRights = metadata.sourceRights;
   const usedSourceIds = metadata.usedSourceIds;
   const providerReads = metadata.providerReads;
@@ -106,10 +109,11 @@ export function snapshotProviderReads(metadata: QueryMetadata): ProviderReads {
  */
 export async function validateProviderReads(metadata: QueryMetadata, plan: ProviderReadPlan): Promise<QueryMetadata> {
   // Detach both before the first await so callers cannot race admission checks.
+  requireNoSourceComposition(metadata);
   const captured = snapshotQueryMetadata(metadata);
   const reads = present(captured.providerReads);
   const admitted = structuredClone(plan);
-  validatePlan(admitted);
+  validateProviderReadPlan(admitted);
   equal(reads.execution, admitted.execution, "execution authority");
   equal(captured.sourceRights, admitted.sourceRights, "source rights preflight");
   equal(captured.usedSourceIds, admitted.usedSourceIds, "used sources preflight");
@@ -230,7 +234,8 @@ function validateStructure(metadata: QueryMetadata): void {
   }
 }
 
-function validatePlan(plan: ProviderReadPlan): void {
+/** Closed structural preflight check; digest verification remains asynchronous. */
+export function validateProviderReadPlan(plan: ProviderReadPlan): void {
   closed(plan, ["execution", "bindings", "requests", "sourceRights", "usedSourceIds"], ["maxReads", "maxMetadataBytes"]);
   validateExecution(plan.execution);
   validateRights(plan.sourceRights);
@@ -293,34 +298,7 @@ function validateObservation(raw: unknown, mode: ProviderExecution["mode"]): Pro
 }
 
 function validateRights(raw: unknown): Map<string, SourceRight> {
-  const rights = new Map<string, SourceRight>();
-  for (const item of items(raw)) {
-    const right = closed(item, ["sourceId", "source", "declaration", "declarationScope", "declaredAt", "evidenceOrigin", "pins", "transformations"], ["attribution", "freeSource"]);
-    text(right.sourceId); text(right.declarationScope); text(right.evidenceOrigin);
-    for (const identity of [right.source, right.declaredAt]) {
-      const value = closed(identity, ["serverId"], ["databaseId", "recordset"]);
-      for (const field of Object.values(value)) text(field);
-    }
-    const declaration = closed(right.declaration, [], ["name", "spdx", "url", "text"]);
-    for (const field of ["name", "spdx"] as const) if (declaration[field] !== undefined) text(declaration[field]);
-    if (declaration.text !== undefined) rightsText(declaration.text);
-    if (declaration.url !== undefined) rightsUrl(declaration.url);
-    for (const pin of items(right.pins)) {
-      const value = closed(pin, ["role", "repository", "revision", "path", "sha256", "bytes"]);
-      for (const key of ["role", "repository", "revision", "path"]) text(value[key]);
-      digest(value.sha256); count(value.bytes, 0, Number.MAX_SAFE_INTEGER);
-    }
-    for (const transformation of items(right.transformations)) text(transformation);
-    for (const field of ["attribution", "freeSource"] as const) if (right[field] !== undefined) {
-      const notice = closed(right[field], field === "freeSource" ? ["text", "url"] : ["text"], field === "attribution" ? ["url"] : []);
-      rightsText(notice.text);
-      if (notice.url !== undefined) rightsUrl(notice.url);
-    }
-    const id = right.sourceId as string;
-    if (rights.has(id)) fail("duplicate rights source");
-    rights.set(id, right as unknown as SourceRight);
-  }
-  return rights;
+  return validateSourceRightsInventory(raw, MAX_TEXT);
 }
 
 function requestValue(value: unknown): void {
@@ -375,22 +353,7 @@ function safeUrl(raw: unknown): void {
   try { url = new URL(raw as string); } catch { fail("invalid upstream URL"); }
   if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.hash !== "" || url.href !== raw) fail("unsafe or noncanonical URL");
 }
-/** Terms/notices preserve multiline whitespace and bytes; header rules differ. */
-function rightsText(raw: unknown): void {
-  if (typeof raw !== "string" || raw.trim().length === 0 || raw.length > MAX_TEXT) fail("invalid or overbound rights text");
-  unicode(raw);
-  for (const character of raw) if (/\p{Cc}/u.test(character) && character !== "\n" && character !== "\r" && character !== "\t") fail("invalid rights text control");
-}
-/** Go-compatible HTTPS terms/notice links allow fragments without rewriting. */
-function rightsUrl(raw: unknown): void {
-  if (typeof raw !== "string") fail("invalid rights URL");
-  text(raw);
-  if (raw.trim() !== raw || raw.includes("\\") || raw.includes(" ") || new TextEncoder().encode(raw).byteLength > 2048) fail("invalid rights URL");
-  let url: URL;
-  try { url = new URL(raw); } catch { fail("invalid rights URL"); }
-  const authority = raw.slice("https://".length).split(/[/?#]/u)[0] ?? "";
-  if (!raw.startsWith("https://") || url.protocol !== "https:" || url.hostname === "" || url.username !== "" || url.password !== "" || authority.includes("@")) fail("unsafe rights URL");
-}
+
 function usageKey(usage: ProviderReadUsage): string {
   return canonicalProviderEvidence([usage.providerSourceId, usage.rightsSourceId]);
 }

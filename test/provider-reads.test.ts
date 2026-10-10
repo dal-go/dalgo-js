@@ -124,6 +124,7 @@ describe("providerReads v1 consumer", () => {
           if (key === "providerReads") return ++calls === 1 ? target.providerReads : malicious;
           if (key === "sourceRights") return target.sourceRights;
           if (key === "usedSourceIds") return target.usedSourceIds;
+          if (key === "sourceComposition") return target.sourceComposition;
           throw new Error("only evidence properties may be read");
         },
       });
