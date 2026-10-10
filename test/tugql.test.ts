@@ -667,6 +667,19 @@ describe("TugQL syntax adapter", () => {
     expect(formatTugQL(formatted.source, { keywordCase: "lowercase", indentation: "two-spaces" }).source).toBe(formatted.source);
   });
 
+  it("preserves invalid multiline quoted tokens with Go-compatible diagnostics", () => {
+    const source = "FrOm Invoice as i\r\nWhErE i.Note = 'first\r\n  second\rthird'\rSeLeCt i.InvoiceId";
+    const formatted = formatTugQL(source, { keywordCase: "lowercase", indentation: "two-spaces" });
+    expect(formatted.source).toBe(source);
+    expect(formatted.diagnostics).toEqual(parseTugQL(source).diagnostics);
+    expect(formatted.diagnostics.map((item) => item.code)).toContain("unterminated_quote");
+
+    const withEscapedQuotes = "from \"In\"\"voice\n  Archive\" as i\nwhere i.Note = 'first''\n  second'\nselect i.InvoiceId";
+    const escaped = formatTugQL(withEscapedQuotes, { keywordCase: "uppercase", indentation: "tab" });
+    expect(escaped.source).toBe(withEscapedQuotes);
+    expect(escaped.diagnostics).toEqual(parseTugQL(withEscapedQuotes).diagnostics);
+  });
+
   it("selects formatter styles by project, user, source, then application precedence", () => {
     const source = "-- SELECT in a comment is ignored\nWITH X AS (\n\tFROM Invoice\n\tSELECT InvoiceId\n)\nFROM X\n";
     expect(formatTugQL(source, { projectTeamKeywordCase: "uppercase", userKeywordCase: "lowercase", projectTeamIndentation: "tab", userIndentation: "two-spaces" }).source)
