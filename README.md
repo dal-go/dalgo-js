@@ -135,6 +135,73 @@ in this repository; each adapter migration needs its own test. Without
 `resolveSource`, a schema-qualified query fails with `join_plan` before any
 output is returned.
 
+## TugQL query authoring
+
+`parseTugQL`, `formatTugQL`, and `resolveTugQL` provide the version-1
+SQL-like authoring adapter. Parsing is schema-independent and returns the
+preserved source, a versioned TugQTree, and positioned diagnostics. Resolution
+requires caller-supplied authorized schemas and pinned import contents; it
+lowers to the existing recursive query model and does not add another executor.
+Saved imports are resolved only from the caller's project-relative pinned
+revision, with no ambient filesystem or network reads.
+
+TugQL puts parameters first and the optional projection last. A named CTE and
+correlated scalar subquery look like this:
+
+```sql
+parameters (
+  @CustomerId integer required
+)
+with Invoices as (
+  from Invoice as i -- billing records
+  where i.CustomerId = @CustomerId
+  select (
+    i.InvoiceId
+    i.CustomerId
+  )
+)
+from Invoices as i
+select (
+  i.InvoiceId as ID
+  CustomerName as (
+    from Customer as c
+    where c.CustomerId = i.CustomerId
+    select c.LastName
+  )
+)
+```
+
+Parameters and multiline projection items occupy one line each, without commas;
+compact `select i.InvoiceId, i.CustomerId` remains available. Block openers stay
+on the header line and closers have their own aligned line. Indent consistently
+with two spaces or one tab. Reserved words are consistently lowercase or
+uppercase; identifiers retain their spelling. `as` is mandatory for aliases
+and CTEs. Ordinary fields use `expression as Alias`; scalar subqueries use
+`Name as (`. End-of-line `--` comments are preserved by formatting.
+
+Imports use `with Saved from './saved.tql'` and an indented `using (` block for
+explicit parameter or scalar literal mappings. An omitted JOIN `on`, or
+`on CustomerId`, requires one complete caller-authorized matching relationship.
+An omitted `select` expands authorized fields in order and merges guaranteed
+equal INNER-join keys while retaining both fields' lineage.
+
+The built-in parameter type names are `integer`, `decimal`, `string`,
+`boolean`, `date`, `datetime`, and `timestamp`. Names such as `int`, `text`, and
+`bool` are not aliases. Dates use real `YYYY-MM-DD` calendar dates; datetimes
+and timestamps use RFC 3339 values. Decimal text is preserved exactly. The
+current query engine cannot guarantee exact decimal or timestamp comparison
+semantics, so resolution rejects those parameter types explicitly while their
+authoring syntax and values remain representable.
+
+The shared Go/TypeScript fixture files are byte-identical and are checked
+against their SHA-256 manifest and a pinned Go provider commit in CI. Query
+YAML parity compares parsed mappings, not serializer bytes: key ordering and
+quoting are serializer details. At the executable boundary, the only
+documented shape normalization moves a scalar subquery alias between the
+column expression and the containing query item, matching the existing
+recursive engine representation; the authored TugQTree keeps the alias on the
+scalar expression.
+
 ## DTQL conditions, order keys, aliases and aggregates
 
 A joined DTQL query follows the Go engine (`github.com/dal-go/dalgo`, `dtql`) for

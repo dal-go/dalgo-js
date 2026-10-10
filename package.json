@@ -21,12 +21,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "eslint . && vitest run && tsc -p tsconfig.build.json",
+    "check": "node tools/verify-tugql-fixtures.mjs --local-only && eslint . && vitest run && tsc -p tsconfig.build.json",
     "changeset": "changeset",
     "lint": "eslint .",
     "prepare": "npm run build",
     "release:publish": "npm publish --access public --provenance",
     "test": "vitest run",
+    "verify:tugql-fixtures": "node tools/verify-tugql-fixtures.mjs",
     "test:watch": "vitest",
     "version-packages": "node scripts/version-packages.mjs"
   },
