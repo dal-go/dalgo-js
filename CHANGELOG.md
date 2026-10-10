@@ -1,5 +1,11 @@
 # @dalgo/core
 
+## 0.7.0
+
+### Minor Changes
+
+- e755633: Add versioned TugQL parsing, formatting, and schema-authorized resolution APIs while preserving the existing recursive query execution model.
+
 ## 0.6.0
 
 ### Minor Changes
