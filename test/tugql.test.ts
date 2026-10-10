@@ -578,6 +578,19 @@ describe("TugQL syntax adapter", () => {
     expect(document.tree?.query.where).toEqual({ op: ">=", left: { field: "Total", source: "i" }, right: { param: "Minimum" } });
   });
 
+  it("rejects a long malformed exact decimal without excessive validation time", () => {
+    const document = { sourceMetadata: { format: "tugql", version: 1 }, tree: {
+      format: "tugqtree", version: 1,
+      parameters: [{ name: "Amount", type: "decimal", default: `${"0".repeat(100_000)}!` }],
+      query: { from: { name: "T" }, columns: [{ field: "Id" }] },
+    } } as const;
+    const start = performance.now();
+    const result = resolveTugQL(document, { schema: { sources: [{ name: "T", authorized: true, columns: [{ name: "Id", type: "integer", authorized: true }] }] } });
+    expect(result.diagnostics[0]?.code).toBe("invalid_parameter_default");
+    // A generous bound separates linear scanning from the former quadratic regex.
+    expect(performance.now() - start).toBeLessThan(1_000);
+  }, 15_000);
+
   it("preserves signed parameter defaults, validates real dates, and rejects unpaired surrogates", () => {
     const valid = parseTugQL("parameters (\n  @Count integer default -12\n  @Ratio decimal default +0.075\n  @Day date default '2024-02-29'\n)\nfrom Invoice\n");
     expect(valid.diagnostics).toEqual([]);

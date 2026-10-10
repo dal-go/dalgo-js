@@ -216,7 +216,20 @@ function isValidISODate(value: string): boolean {
 }
 
 function isValidExactDecimal(value: string): boolean {
-  return /^[+-]?(?:\d+\.?\d*|\.\d+)$/u.test(value);
+  let offset = value.startsWith("+") || value.startsWith("-") ? 1 : 0;
+  let digits = 0;
+  let dot = false;
+  for (; offset < value.length; offset += 1) {
+    const unit = value.charCodeAt(offset);
+    if (unit >= 48 && unit <= 57) {
+      digits += 1;
+    } else if (unit === 46 && !dot) {
+      dot = true;
+    } else {
+      return false;
+    }
+  }
+  return digits > 0;
 }
 
 function isValidRFC3339Nano(value: string): boolean {
