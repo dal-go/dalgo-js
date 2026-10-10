@@ -1,5 +1,11 @@
 # @dalgo/core
 
+## 0.7.2
+
+### Patch Changes
+
+- 0adfd60: Require explicit parenthesized blocks for multiline TugQL `SELECT` lists while preserving compact same-line projections.
+
 ## 0.7.1
 
 ### Patch Changes
