@@ -499,12 +499,13 @@ The npm trusted publisher must be configured for this repository, the
 `Release @dalgo/core` workflow, and the `npm` GitHub environment. Repository
 Actions settings must also allow GitHub Actions to create pull requests.
 
-The source manifest is currently `0.2.0`, while the last independently
-verified npm release and repository tag are `@dalgo/core@0.1.0` and
-`core@v0.1.0`. This setup deliberately does not publish that source-only
-`0.2.0` baseline: only a later Changesets-generated version pull request gets
-a release marker and can authorize publication. Do not hand-create or edit a
-marker under `.changeset/releases/`.
+Treat the source package version, the latest npm version, and the repository
+tag as separate facts. Read the source version from `package.json`; verify the
+published version from the npm registry and its matching `core@v<version>` tag
+before reporting a release. A source version alone does not prove publication.
+Only a Changesets-generated version pull request can add the release marker
+that authorizes publication. Do not hand-create or edit a marker under
+`.changeset/releases/`.
 
 ## License
 
