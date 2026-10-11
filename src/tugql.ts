@@ -1274,8 +1274,38 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
         if (cte !== undefined) {
           const nested = lowerBody(cte, visible, bindings, stack, currentPath, forwardNames);
           const alias = stringField(raw, "alias") || name;
-          const joins = raw.joins;
-          return { query: { ...nested.query, as: alias }, ...(joins === undefined ? {} : { joins }) };
+          const derivedQuery = { ...nested.query, as: alias };
+          const rawJoins = Array.isArray(raw.joins) ? raw.joins as Record<string, unknown>[] : [];
+          const joins: Record<string, unknown>[] = [];
+          for (const join of rawJoins) {
+            const joinedFrom = asRecord(join.from);
+            if (joinedFrom === undefined) throw new ResolveFailure("invalid_join", "JOIN requires a source");
+            const joinOn = Array.isArray(join.on) ? join.on as Record<string, unknown>[] : [];
+            if (joinOn.length === 1 && joinOn[0]?.op === "relationship") {
+              throw new ResolveFailure("relationship_required", "ON shorthand does not identify an authorized relationship");
+            }
+            if (joinOn.length === 0) {
+              throw new ResolveFailure("relationship_not_found", "no authorized exact relationship connects the joined sources");
+            }
+            const predicates = joinOn.flatMap((item) => flattenConditions(item)).map((item) => {
+              if (item.op !== "==" || !isFieldNode(item.left) || !isFieldNode(item.right)) {
+                throw new ResolveFailure("invalid_join_condition", "JOIN ON must contain field-to-field equality comparisons");
+              }
+              return { left: fieldToRecursive(item.left), op: "==", right: fieldToRecursive(item.right) };
+            });
+            joins.push({
+              ...(join.type === undefined ? {} : { type: join.type }),
+              from: relation(joinedFrom),
+              on: predicates.map((predicate) => ({
+                left: substituteExpression(predicate.left, bindings),
+                op: "==",
+                right: substituteExpression(predicate.right, bindings),
+              })),
+            });
+            // Keep composition bounded as each derived source is inserted.
+            countTugQLQueryNodes({ query: derivedQuery, joins }, maxSemanticNodes);
+          }
+          return { query: derivedQuery, ...(joins.length === 0 ? {} : { joins }) };
         }
         if (forwardNames.has(name)) throw new ResolveFailure("forward_cte_reference", `CTEs may reference only earlier definitions: ${name}`);
         const table = schemaTables.get(key) ?? [...schemaTables.entries()].find(([candidateKey, item]) => item.fields.size > 0 && item.schema === schema && item.database === database && candidateKey.endsWith(`\0${name}`))?.[1];
@@ -2246,12 +2276,16 @@ function tugqlQueryExpressionSources(
   const from = query.from as Record<string, unknown>;
   const sources = new Map<string, readonly TugQLInferredOutputColumn[]>();
   const fromName = stringField(from, "name");
-  sources.set(optionalStringField(from, "alias") ?? fromName, fieldsFor(from));
+  const fromQuery = asRecord(from.query);
+  const fromAlias = optionalStringField(from, "alias") ?? (fromQuery === undefined ? undefined : optionalStringField(fromQuery, "as")) ?? fromName;
+  sources.set(fromAlias, fieldsFor(from));
   const addJoinedSources = (relation: Readonly<Record<string, unknown>>): void => {
     for (const join of Array.isArray(relation.joins) ? relation.joins as Record<string, unknown>[] : []) {
       const joined = join.from as Record<string, unknown>;
       const name = stringField(joined, "name");
-      sources.set(optionalStringField(joined, "alias") ?? name, fieldsFor(joined));
+      const joinedQuery = asRecord(joined.query);
+      const alias = optionalStringField(joined, "alias") ?? (joinedQuery === undefined ? undefined : optionalStringField(joinedQuery, "as")) ?? name;
+      sources.set(alias, fieldsFor(joined));
       addJoinedSources(joined);
     }
   };
