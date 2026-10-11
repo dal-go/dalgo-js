@@ -2331,7 +2331,8 @@ function inferOutputColumns(query: TugQLQueryDocument, definitions: readonly Tug
     for (const join of Array.isArray(relation.joins) ? relation.joins as Record<string, unknown>[] : []) {
       const joinFrom = join.from as Record<string, unknown>;
       const joinName = stringField(joinFrom, "name");
-      const alias = optionalStringField(joinFrom, "alias") ?? joinName;
+      const joinedQuery = asRecord(joinFrom.query);
+      const alias = optionalStringField(joinFrom, "alias") ?? (joinedQuery === undefined ? undefined : optionalStringField(joinedQuery, "as")) ?? joinName;
       localSources.set(alias, fieldsFor(joinFrom));
       sources.set(alias, localSources.get(alias)!);
       addJoinedSources(joinFrom);
