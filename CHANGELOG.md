@@ -1,5 +1,11 @@
 # @dalgo/core
 
+## 0.7.4
+
+### Patch Changes
+
+- 8e685dc: Resolve joins that use a CTE as their root source.
+
 ## 0.7.3
 
 ### Patch Changes
