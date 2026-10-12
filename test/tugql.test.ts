@@ -101,13 +101,14 @@ describe("TugQL syntax adapter", () => {
   });
   it("matches the vendored Go parser semantic JSON and diagnostics byte-for-byte", () => {
     expect(createHash("sha256").update(tugqlSuiteText).digest("hex")).toBe(tugqlManifest.get("suite.json"));
-    const suite = JSON.parse(tugqlSuiteText) as { readonly format: string; readonly version: number; readonly cases: readonly { readonly name: string; readonly source: string; readonly expected: { readonly tree: unknown; readonly diagnostics: unknown } }[] };
+    const suite = JSON.parse(tugqlSuiteText) as { readonly format: string; readonly version: number; readonly cases: readonly { readonly name: string; readonly source: string; readonly expected: { readonly tree: unknown; readonly diagnostics: unknown; readonly sourceExact?: boolean } }[] };
     expect(suite.format).toBe("tugql-golden-suite");
     expect(suite.version).toBe(1);
     for (const item of suite.cases) {
       const actual = parseTugQL(item.source);
       expect(actual.document.tree ?? null, item.name).toEqual(item.expected.tree);
       expect(actual.diagnostics, item.name).toEqual(item.expected.diagnostics);
+      if (item.expected.sourceExact) expect(actual.document.source, `${item.name} source`).toBe(item.source);
     }
   });
   it("matches the shared Go resolver corpus after engine-shape normalization", () => {
