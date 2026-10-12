@@ -203,7 +203,7 @@ export interface StructuredQuery<T> {
  * `QueryExecutor.query(StructuredQuery)` implementations.
  */
 export interface JoinedDTQLQuery {
-  readonly kind: "joined-dtql";
+  readonly kind: "joined-dtql" | "joined-tugql";
   readonly money?: { readonly minorUnitScale: number; readonly divisionScale: number; readonly rounding: "halfEven" };
   readonly from: QueryRelation;
   /** Conditions that must all hold; the parser emits at most one (Go has a single `where`). */
@@ -219,12 +219,12 @@ export interface JoinedDTQLQuery {
 export type ParsedDTQLQuery<T> = StructuredQuery<T> | JoinedDTQLQuery;
 
 /**
- * Recursive DTQL is intentionally a separate query model.  It is executed by
+ * Recursive DTQL (TugQL) is intentionally a separate query model. It is executed by
  * `executeRecursiveDTQLQuery`, which only gives leaf StructuredQuery objects
  * to a provider's legacy QueryExecutor.
  */
 export interface RecursiveDTQLQuery {
-  readonly kind: "recursive-dtql";
+  readonly kind: "recursive-dtql" | "recursive-tugql";
   readonly as?: string;
   readonly from: RecursiveDTQLRelation;
   readonly where?: RecursiveDTQLCondition;
@@ -272,8 +272,22 @@ export function isJoinedDTQLQuery<T>(query: ParsedDTQLQuery<T>): query is Joined
 }
 
 export function isRecursiveDTQLQuery<T>(query: AnyParsedDTQLQuery<T>): query is RecursiveDTQLQuery {
-  return "kind" in query && query.kind === "recursive-dtql";
+  return "kind" in query && (query.kind === "recursive-dtql" || (query.kind as string) === "recursive-tugql");
 }
+
+// TugQL aliases for canonical rebranding
+export type JoinedTugQLQuery = JoinedDTQLQuery;
+export type ParsedTugQLQuery<T> = ParsedDTQLQuery<T>;
+export type RecursiveTugQLQuery = RecursiveDTQLQuery;
+export type RecursiveTugQLRelation = RecursiveDTQLRelation;
+export type RecursiveTugQLJoin = RecursiveDTQLJoin;
+export type RecursiveTugQLExpression = RecursiveDTQLExpression;
+export type RecursiveTugQLColumn = RecursiveDTQLColumn;
+export type RecursiveTugQLCondition = RecursiveDTQLCondition;
+export type AnyParsedTugQLQuery<T> = AnyParsedDTQLQuery<T>;
+
+export const isJoinedTugQLQuery = isJoinedDTQLQuery;
+export const isRecursiveTugQLQuery = isRecursiveDTQLQuery;
 
 export interface QueryPage<T> extends QueryMetadata {
   readonly records: readonly ExistingRecord<T>[];

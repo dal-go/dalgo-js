@@ -31,6 +31,13 @@ export interface DTQLSchema {
   }[];
 }
 
+// Canonical TugQL aliases
+export type TugQLSchema = DTQLSchema;
+export type TugQLQueryFilter = DTQLQueryFilter;
+export type TugQLQueryOrder = DTQLQueryOrder;
+export type TugQLExpression = DTQLExpression;
+export type TugQLCondition = DTQLCondition;
+
 type ObjectValue = Record<string, unknown>;
 
 const defaultMaxLimit = 1000;
@@ -158,6 +165,9 @@ function parseMoney(value: unknown): { readonly minorUnitScale: number; readonly
 export function stringifyJoinedDTQL(query: JoinedDTQLQuery): string {
   return stringifyYaml(serializeJoinedDTQL(query));
 }
+
+export const serializeJoinedTugQL = serializeJoinedDTQL;
+export const stringifyJoinedTugQL = stringifyJoinedDTQL;
 
 function serializeRelation(relation: QueryRelation): ObjectValue {
   return {
