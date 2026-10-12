@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { isJoinedDTQLQuery, parseDTQL, serializeJoinedDTQL, stringifyJoinedDTQL, type DTQLSchema } from "../src/index.js";
+import { isJoinedDTQLQuery, isJoinedTugQLQuery, parseDTQL, serializeJoinedDTQL, serializeJoinedTugQL, stringifyJoinedDTQL, stringifyJoinedTugQL, type DTQLSchema, type TugQLSchema } from "../src/index.js";
 
 const schema: DTQLSchema = {
   tables: [
@@ -272,5 +272,15 @@ describe("parseDTQL", () => {
     const cyclic: { name: string; joins: unknown[] } = { name: "A", joins: [] };
     cyclic.joins.push({ from: cyclic, on: [{ left: { field: "id", source: "A" }, op: "==", right: { field: "id", source: "A" } }] });
     expect(() => parseDTQL({ from: cyclic, limit: 1 }, schema)).toThrow("join_cycle at from.joins[0].from");
+  });
+
+  it("supports TugQL aliases and schemas identically to DTQL", () => {
+    const tugqlSchema: TugQLSchema = schema;
+    const query = parseDTQL({ from: { name: "A", joins: [{ from: { name: "B", as: "b" }, on: [{ left: { field: "id", source: "A" }, op: "==", right: { field: "aId", source: "b" } }] }] } }, tugqlSchema);
+    expect(isJoinedTugQLQuery(query)).toBe(true);
+    if (isJoinedTugQLQuery(query)) {
+      expect(serializeJoinedTugQL(query)).toEqual(serializeJoinedDTQL(query));
+      expect(stringifyJoinedTugQL(query)).toEqual(stringifyJoinedDTQL(query));
+    }
   });
 });

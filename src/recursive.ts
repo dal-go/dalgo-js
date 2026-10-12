@@ -1,6 +1,6 @@
 import { requireUnannotatedQueryInput } from "./source-rights.js";
 import type { QueryExecutor } from "./database.js";
-import type { DTQLSchema } from "./dtql.js";
+import type { DTQLSchema, TugQLSchema } from "./dtql.js";
 import { nullOperandProblem } from "./condition.js";
 import { Key } from "./key.js";
 import type { ExistingRecord } from "./record.js";
@@ -80,6 +80,10 @@ export function serializeRecursiveDTQL(query: RecursiveDTQLQuery): Record<string
 
 export function stringifyRecursiveDTQL(query: RecursiveDTQLQuery): string { return stringifyYaml(serializeRecursiveDTQL(query)); }
 
+export const parseRecursiveTugQL = parseRecursiveDTQL;
+export const serializeRecursiveTugQL = serializeRecursiveDTQL;
+export const stringifyRecursiveTugQL = stringifyRecursiveDTQL;
+
 /**
  * Executes nested DTQL by materializing only ordinary leaf scans through the
  * legacy executor.  A provider can therefore never receive a recursive AST
@@ -113,6 +117,8 @@ export async function executeRecursiveDTQLQuery(
   cancelled(budget, "root");
   return { records: rows.map((row, index) => ({ key: new Key("__dtql__", index.toString()), exists: true as const, data: row })) };
 }
+
+export const executeRecursiveTugQLQuery = executeRecursiveDTQLQuery;
 
 async function evaluateQuery(executor: QueryExecutor, query: RecursiveDTQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Data[]> {
   cancelled(budget, path);
@@ -732,4 +738,4 @@ function positive(value: unknown, path: string): number { if (typeof value !== "
 function offset(value: unknown, path: string): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) shape(path, "must be non-negative safe integer"); return value; }
 
 /** Parsed recursively by dtql.ts; exported here for a single public execution route. */
-export type { DTQLSchema };
+export type { DTQLSchema, TugQLSchema };
