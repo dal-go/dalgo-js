@@ -551,3 +551,12 @@ labelled unknown. It supports a transient in-memory viewer and refuses
 composed leaves, paged/recursive transport, generic enrichment and unsupported
 sinks. See [source composition](docs/source-composition.md) for its contracts,
 bounds and separate adapter/browser acceptance gates.
+
+## Optional database capabilities
+
+A database may implement `CapabilityAware` (`capabilities()` returning
+`DatabaseCapabilities`: `read`, `query`, `write`, `delete`, `reset`,
+`persistent`, optional `joins` and `aggregation`) and `Resettable` (`reset()`).
+Narrow with `isCapabilityAware(db)` and `isResettable(db)`. Consumers must
+discover capabilities at runtime and never hard-code them by engine; a database
+that implements neither interface makes no claim.

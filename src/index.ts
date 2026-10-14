@@ -1,3 +1,4 @@
+export * from "./capabilities.js";
 export * from "./collection.js";
 export * from "./database.js";
 export * from "./dtql.js";
