@@ -2,6 +2,11 @@
  * Capabilities a database reports about itself. Consumers must discover these
  * at runtime and never infer them from the engine name. Keys mirror the
  * `capabilities` map of an OVDB descriptor.
+ *
+ * Required: `read`, `query`, `write`, `delete`, `reset`, `persistent`.
+ * Optional: `joins`, `aggregation`, `dtql`, `dtqlStreaming`,
+ * `dtqlStreamingErrors`. An absent optional key means the database does not
+ * claim that capability; it is not a promise that the capability is missing.
  */
 export interface DatabaseCapabilities {
   readonly read: boolean;
@@ -12,6 +17,9 @@ export interface DatabaseCapabilities {
   readonly persistent: boolean;
   readonly joins?: boolean;
   readonly aggregation?: boolean;
+  readonly dtql?: boolean;
+  readonly dtqlStreaming?: boolean;
+  readonly dtqlStreamingErrors?: boolean;
 }
 
 /** Optional interface: a database that can describe its own capabilities. */
@@ -25,11 +33,13 @@ export interface Resettable {
 }
 
 function hasMethod(value: unknown, name: string): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as Record<string, unknown>)[name] === "function"
-  );
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) {
+    return false;
+  }
+  return typeof (value as Record<string, unknown>)[name] === "function";
 }
 
 export function isCapabilityAware<T>(db: T): db is T & CapabilityAware {
