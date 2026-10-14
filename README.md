@@ -551,3 +551,19 @@ labelled unknown. It supports a transient in-memory viewer and refuses
 composed leaves, paged/recursive transport, generic enrichment and unsupported
 sinks. See [source composition](docs/source-composition.md) for its contracts,
 bounds and separate adapter/browser acceptance gates.
+
+## Optional database capabilities
+
+A database may implement `CapabilityAware` (`capabilities()` returning
+`DatabaseCapabilities`) and `Resettable` (`reset()`). `DatabaseCapabilities`
+requires `read`, `query`, `write`, `delete`, `reset` and `persistent`; the
+optional keys are `joins`, `aggregation`, `dtql`, `dtqlStreaming` and
+`dtqlStreamingErrors`, and an absent optional key means the database makes no
+claim about it. Narrow with `isCapabilityAware(db)` and `isResettable(db)`. The
+guards accept objects, class instances and functions that carry the member.
+
+`isResettable(db)` only says that `reset()` exists. When `isResettable(db)` is
+true but `capabilities().reset` is `false`, the capability flag governs: callers
+must not offer reset. Consumers must discover capabilities at runtime and never
+hard-code them by engine; a database that implements neither interface makes no
+claim.
