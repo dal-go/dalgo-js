@@ -11,6 +11,12 @@ which uses Firebase's modular Web SDK and therefore works directly in browsers.
 The adapters are being migrated to the `@dalgo/*` scope separately; the
 `@dalgo/core` package does not connect to a database by itself.
 
+## Flagship ecosystem product
+
+DataTug’s current DALgo work uses the Go implementation; this TypeScript implementation is not the runtime integration described here.
+
+DataTug is the flagship ecosystem product. [Explore DataTug](https://datatug.app), and read [how we built its development tools](https://datatug.app/en/under-the-hood/tools-we-built/) for the open-source tools and standards behind it.
+
 ## Install
 
 Install the published core package:
