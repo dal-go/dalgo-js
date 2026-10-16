@@ -1,5 +1,11 @@
 # @dalgo/core
 
+## 0.8.0
+
+### Minor Changes
+
+- 426fac1: Add optional `DatabaseCapabilities`, `CapabilityAware` and `Resettable` interfaces with `isCapabilityAware` and `isResettable` type guards.
+
 ## 0.7.4
 
 ### Patch Changes
