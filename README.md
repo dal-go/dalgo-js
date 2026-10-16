@@ -13,7 +13,7 @@ The adapters are being migrated to the `@dalgo/*` scope separately; the
 
 ## DataTug and the Go implementation
 
-In [DataTug](https://datatug.app), current DALgo work uses the [Go implementation](https://github.com/dal-go/dalgo); this TypeScript implementation remains separate. Read [how DataTug’s development tools were built](https://datatug.app/en/under-the-hood/tools-we-built/).
+In [DataTug](https://datatug.app), current DALgo work uses the [Go implementation](https://github.com/dal-go/dalgo); this TypeScript implementation remains separate. Read [how DataTug’s development tools were built](https://datatug.app/en/under-the-hood/tools-we-built/#implement).
 
 ## Install
 
