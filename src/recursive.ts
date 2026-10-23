@@ -1,19 +1,19 @@
 import { requireUnannotatedQueryInput } from "./source-rights.js";
 import type { QueryExecutor } from "./database.js";
-import type { DTQLSchema, TugQLSchema } from "./dtql.js";
+import type { TugQLSchema } from "./tugql-yaml.js";
 import { nullOperandProblem } from "./condition.js";
 import { Key } from "./key.js";
 import type { ExistingRecord } from "./record.js";
 import type {
-  DTQLExpression,
+  TugQLExpression,
   QueryFieldReference,
   QueryJoinAlgorithm,
   QueryPage,
-  RecursiveDTQLColumn,
-  RecursiveDTQLCondition,
-  RecursiveDTQLExpression,
-  RecursiveDTQLQuery,
-  RecursiveDTQLRelation,
+  RecursiveTugQLColumn,
+  RecursiveTugQLCondition,
+  RecursiveTugQLExpression,
+  RecursiveTugQLQuery,
+  RecursiveTugQLRelation,
   StructuredQuery,
 } from "./query.js";
 import { parseDocument as parseYamlDocument, stringify as stringifyYaml } from "yaml";
@@ -29,9 +29,9 @@ export interface RecursiveQueryExecutionOptions {
   readonly maxCandidateEvaluations?: number;
   readonly maxRetainedBytes?: number;
   readonly signal?: AbortSignal;
-  readonly resolveSource?: (relation: RecursiveDTQLRelation) => StructuredQuery<Data>["source"];
+  readonly resolveSource?: (relation: RecursiveTugQLRelation) => StructuredQuery<Data>["source"];
   /** Required only for caller-constructed ASTs; parsed documents carry a private binding. */
-  readonly schema?: DTQLSchema;
+  readonly schema?: TugQLSchema;
 }
 
 interface Budget {
@@ -44,20 +44,20 @@ interface Budget {
   readonly maxCandidateEvaluations: number;
   readonly maxRetainedBytes: number;
   readonly signal?: AbortSignal;
-  readonly memo: WeakMap<RecursiveDTQLQuery, Map<string, Promise<Data[]>>>;
-  readonly existsMemo: WeakMap<RecursiveDTQLQuery, Map<string, Promise<boolean>>>;
+  readonly memo: WeakMap<RecursiveTugQLQuery, Map<string, Promise<Data[]>>>;
+  readonly existsMemo: WeakMap<RecursiveTugQLQuery, Map<string, Promise<boolean>>>;
   readonly rowIDs: WeakMap<object, number>;
   nextRowID: number;
 }
 
 const defaults = { maxFetchedRows: 10_000, maxResultRows: 10_000, maxCandidateEvaluations: 100_000, maxRetainedBytes: 16 * 1024 * 1024 };
-const boundSchemas = new WeakMap<RecursiveDTQLQuery, DTQLSchema>();
+const boundSchemas = new WeakMap<RecursiveTugQLQuery, TugQLSchema>();
 const aggregateFunctions = new Set(["count", "sum", "avg", "min", "max", "first", "last"]);
-const freeOuterBindings = new WeakMap<RecursiveDTQLQuery, boolean>();
-const bindingStack: RecursiveDTQLQuery[] = [];
+const freeOuterBindings = new WeakMap<RecursiveTugQLQuery, boolean>();
+const bindingStack: RecursiveTugQLQuery[] = [];
 
-/** Parses the additive recursive wire model. Legacy parseDTQL stays unchanged. */
-export function parseRecursiveDTQL(input: unknown, schema: DTQLSchema): RecursiveDTQLQuery {
+/** Parses the additive recursive wire model. Legacy parseTugQLYaml stays unchanged. */
+export function parseRecursiveTugQL(input: unknown, schema: TugQLSchema): RecursiveTugQLQuery {
   const root = raw(input, "root");
   rejectObjectCycles(root, "root", new WeakSet());
   const query = parseQuery(root, schema, "root");
@@ -66,7 +66,7 @@ export function parseRecursiveDTQL(input: unknown, schema: DTQLSchema): Recursiv
   return query;
 }
 
-export function serializeRecursiveDTQL(query: RecursiveDTQLQuery): Record<string, unknown> {
+export function serializeRecursiveTugQL(query: RecursiveTugQLQuery): Record<string, unknown> {
   return {
     ...(query.as === undefined ? {} : { as: query.as }), from: writeRelation(query.from),
     ...(query.where === undefined ? {} : { where: writeCondition(query.where) }),
@@ -78,21 +78,17 @@ export function serializeRecursiveDTQL(query: RecursiveDTQLQuery): Record<string
   };
 }
 
-export function stringifyRecursiveDTQL(query: RecursiveDTQLQuery): string { return stringifyYaml(serializeRecursiveDTQL(query)); }
-
-export const parseRecursiveTugQL = parseRecursiveDTQL;
-export const serializeRecursiveTugQL = serializeRecursiveDTQL;
-export const stringifyRecursiveTugQL = stringifyRecursiveDTQL;
+export function stringifyRecursiveTugQL(query: RecursiveTugQLQuery): string { return stringifyYaml(serializeRecursiveTugQL(query)); }
 
 /**
- * Executes nested DTQL by materializing only ordinary leaf scans through the
+ * Executes nested TugQL by materializing only ordinary leaf scans through the
  * legacy executor.  A provider can therefore never receive a recursive AST
  * through QueryExecutor.query().  AbortSignal is checked around every nested
  * step; an already in-flight legacy adapter scan cannot itself be interrupted.
  */
-export async function executeRecursiveDTQLQuery(
+export async function executeRecursiveTugQLQuery(
   executor: QueryExecutor,
-  query: RecursiveDTQLQuery,
+  query: RecursiveTugQLQuery,
   options: RecursiveQueryExecutionOptions = {},
 ): Promise<QueryPage<Data>> {
   validateProgram(query, new WeakSet(), "root");
@@ -115,12 +111,10 @@ export async function executeRecursiveDTQLQuery(
   }
   const rows = await evaluateQuery(executor, query, new Map(), budget, options, "root");
   cancelled(budget, "root");
-  return { records: rows.map((row, index) => ({ key: new Key("__dtql__", index.toString()), exists: true as const, data: row })) };
+  return { records: rows.map((row, index) => ({ key: new Key("__tugql__", index.toString()), exists: true as const, data: row })) };
 }
 
-export const executeRecursiveTugQLQuery = executeRecursiveDTQLQuery;
-
-async function evaluateQuery(executor: QueryExecutor, query: RecursiveDTQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Data[]> {
+async function evaluateQuery(executor: QueryExecutor, query: RecursiveTugQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Data[]> {
   cancelled(budget, path);
   let rows = await evaluateRelation(executor, query.from, outer, budget, options, `${path}.from`, query);
   if (query.where !== undefined) {
@@ -147,7 +141,7 @@ async function evaluateQuery(executor: QueryExecutor, query: RecursiveDTQLQuery,
   return output;
 }
 
-async function evaluateRelation(executor: QueryExecutor, relation: RecursiveDTQLRelation, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string, owner: RecursiveDTQLQuery): Promise<Environment[]> {
+async function evaluateRelation(executor: QueryExecutor, relation: RecursiveTugQLRelation, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string, owner: RecursiveTugQLQuery): Promise<Environment[]> {
   cancelled(budget, path);
   const alias = relation.alias ?? relation.name ?? relation.query?.as;
   if (alias === undefined || alias.length === 0) shape(path, "relation needs a name or query.as alias");
@@ -168,7 +162,7 @@ async function evaluateRelation(executor: QueryExecutor, relation: RecursiveDTQL
   } else {
     if (relation.query === undefined) shape(path, "query relation needs query");
     const data = await evaluateNested(executor, relation.query, outer, budget, options, `${path}.query`);
-    records = data.map((value, index) => ({ key: new Key("__dtql_derived__", index.toString()), exists: true, data: value }));
+    records = data.map((value, index) => ({ key: new Key("__tugql_derived__", index.toString()), exists: true, data: value }));
   }
   let rows: Environment[] = records.map((record) => new Map([...outer, [sourceKey(owner, alias), record]]));
   for (const [index, join] of relation.joins.entries()) {
@@ -197,7 +191,7 @@ async function evaluateRelation(executor: QueryExecutor, relation: RecursiveDTQL
 // EXISTS needs only the presence of the first row after the nested logical
 // pipeline.  Keep the fast path before projection so scalar expressions in an
 // EXISTS body never run, and so a qualifying WHERE row stops evaluation.
-async function queryExists(executor: QueryExecutor, query: RecursiveDTQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<boolean> {
+async function queryExists(executor: QueryExecutor, query: RecursiveTugQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<boolean> {
   let rows = await evaluateRelation(executor, query.from, outer, budget, options, `${path}.from`, query);
   const needsGroups = query.groupBy !== undefined || query.having !== undefined || (query.columns?.some((column) => containsAggregate(column.expression)) ?? false);
   // With no grouping/HAVING and offset zero, ordering cannot change whether a
@@ -225,7 +219,7 @@ async function queryExists(executor: QueryExecutor, query: RecursiveDTQLQuery, o
   return groups.slice(start, query.limit === undefined ? undefined : start + query.limit).length > 0;
 }
 
-async function evaluateExists(executor: QueryExecutor, query: RecursiveDTQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<boolean> {
+async function evaluateExists(executor: QueryExecutor, query: RecursiveTugQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<boolean> {
   const key = freeOuterBindings.get(query) === true ? bindingKey(outer, budget) : "uncorrelated";
   let entries = budget.existsMemo.get(query);
   if (entries === undefined) { entries = new Map(); budget.existsMemo.set(query, entries); }
@@ -240,7 +234,7 @@ async function evaluateExists(executor: QueryExecutor, query: RecursiveDTQLQuery
 // Cache nested scalar/set evaluations by the actual outer-row binding. The
 // binder resolves unqualified fields into resolvedSources, allowing this check
 // to prove that a node has no free outer binding and safely run it once.
-async function evaluateNested(executor: QueryExecutor, query: RecursiveDTQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Data[]> {
+async function evaluateNested(executor: QueryExecutor, query: RecursiveTugQLQuery, outer: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Data[]> {
   const key = freeOuterBindings.get(query) === true ? bindingKey(outer, budget) : "uncorrelated";
   let entries = budget.memo.get(query);
   if (entries === undefined) { entries = new Map(); budget.memo.set(query, entries); }
@@ -261,7 +255,7 @@ function bindingKey(outer: Environment, budget: Budget): string {
   }).join("|");
 }
 
-function groupsFor(query: RecursiveDTQLQuery, rows: readonly Environment[]): Environment[][] {
+function groupsFor(query: RecursiveTugQLQuery, rows: readonly Environment[]): Environment[][] {
   const aggregates = (query.columns?.some((column) => containsAggregate(column.expression)) ?? false)
     || (query.having !== undefined && containsAggregateCondition(query.having));
   const groups = new Map<string, Environment[]>();
@@ -275,7 +269,7 @@ function groupsFor(query: RecursiveDTQLQuery, rows: readonly Environment[]): Env
   return [...groups.values()];
 }
 
-async function projectGroups(executor: QueryExecutor, query: RecursiveDTQLQuery, groups: readonly (readonly Environment[])[], budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Data[]> {
+async function projectGroups(executor: QueryExecutor, query: RecursiveTugQLQuery, groups: readonly (readonly Environment[])[], budget: Budget, options: RecursiveQueryExecutionOptions, path: string): Promise<Data[]> {
   if (query.columns === undefined) return groups.map((group) => merge(group[0] ?? new Map()));
   const result: Data[] = [];
   for (const group of groups) {
@@ -290,7 +284,7 @@ async function projectGroups(executor: QueryExecutor, query: RecursiveDTQLQuery,
   return result;
 }
 
-async function condition(executor: QueryExecutor, value: RecursiveDTQLCondition, row: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string, group?: readonly Environment[]): Promise<Truth> {
+async function condition(executor: QueryExecutor, value: RecursiveTugQLCondition, row: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string, group?: readonly Environment[]): Promise<Truth> {
   if (value.kind === "and" || value.kind === "or") {
     let unknown = false;
     for (const [index, child] of value.conditions.entries()) {
@@ -310,7 +304,7 @@ async function condition(executor: QueryExecutor, value: RecursiveDTQLCondition,
     const operand = await expression(executor, value.operand, row, budget, options, `${path}.operand`, group);
     return (operand === null || operand === undefined) === (value.kind === "is-null");
   }
-  const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>;
+  const comparison = value as Extract<RecursiveTugQLCondition, { readonly kind: "comparison" }>;
   const left = await expression(executor, comparison.left, row, budget, options, `${path}.left`, group);
   if (comparison.operator === "in" || comparison.operator === "not-in") {
     const right = comparison.right.kind === "query"
@@ -331,7 +325,7 @@ async function condition(executor: QueryExecutor, value: RecursiveDTQLCondition,
   }
 }
 
-async function expression(executor: QueryExecutor, value: RecursiveDTQLExpression, row: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string, group?: readonly Environment[]): Promise<unknown> {
+async function expression(executor: QueryExecutor, value: RecursiveTugQLExpression, row: Environment, budget: Budget, options: RecursiveQueryExecutionOptions, path: string, group?: readonly Environment[]): Promise<unknown> {
   if (value.kind === "query") {
     const rows = await evaluateNested(executor, value.query, row, budget, options, `${path}.query`);
     if (rows.length > 1) cardinality(`${path}.query`, "scalar query returned more than one row");
@@ -344,7 +338,7 @@ async function expression(executor: QueryExecutor, value: RecursiveDTQLExpressio
   return legacyExpression(value, row, group);
 }
 
-function legacyExpression(value: DTQLExpression, row: Environment, group: readonly Environment[] = [row]): unknown {
+function legacyExpression(value: TugQLExpression, row: Environment, group: readonly Environment[] = [row]): unknown {
   switch (value.kind) {
     case "field": return field(row, value.field);
     case "literal": return value.value;
@@ -376,9 +370,9 @@ function legacyExpression(value: DTQLExpression, row: Environment, group: readon
   }
 }
 
-function containsAggregate(value: RecursiveDTQLExpression): boolean { return value.kind === "aggregate" || (value.kind === "binary" && (containsAggregate(value.left) || containsAggregate(value.right))); }
+function containsAggregate(value: RecursiveTugQLExpression): boolean { return value.kind === "aggregate" || (value.kind === "binary" && (containsAggregate(value.left) || containsAggregate(value.right))); }
 
-function containsAggregateCondition(value: RecursiveDTQLCondition): boolean {
+function containsAggregateCondition(value: RecursiveTugQLCondition): boolean {
   if (value.kind === "and" || value.kind === "or") return value.conditions.some(containsAggregateCondition);
   if (value.kind === "is-null" || value.kind === "is-not-null") return containsAggregate(value.operand);
   return value.kind === "comparison" && (containsAggregate(value.left) || containsAggregate(value.right));
@@ -398,7 +392,7 @@ function joinEqual(left: unknown, right: unknown): boolean {
 
 function field(row: Environment, reference: QueryFieldReference): unknown { return row.get(resolvedSources.get(reference) ?? reference.source)?.data[reference.field]; }
 function merge(row: Environment): Data { const value: Data = {}; for (const record of row.values()) if (record !== undefined) Object.assign(value, record.data); return value; }
-function fieldOutput(column: RecursiveDTQLColumn, path: string): string { if (column.expression.kind === "field") return column.expression.field.field; if (column.expression.kind === "aggregate") return column.expression.function; if (column.expression.kind === "query" && column.expression.query.as !== undefined) return column.expression.query.as; return shape(path, "non-field column requires as"); }
+function fieldOutput(column: RecursiveTugQLColumn, path: string): string { if (column.expression.kind === "field") return column.expression.field.field; if (column.expression.kind === "aggregate") return column.expression.function; if (column.expression.kind === "query" && column.expression.query.as !== undefined) return column.expression.query.as; return shape(path, "non-field column requires as"); }
 function equal(left: unknown, right: unknown): boolean { return typeof left === "number" && typeof right === "number" ? Number.isFinite(left) && Number.isFinite(right) && left === right : left === right; }
 function compare(left: unknown, right: unknown): number { return left === right ? 0 : left === null || left === undefined ? -1 : right === null || right === undefined ? 1 : left < right ? -1 : 1; }
 function compareEnvironment(left: Environment, right: Environment, orders: readonly { readonly field: QueryFieldReference; readonly direction: "asc" | "desc" }[]): number { for (const order of orders) { const result = compare(field(left, order.field), field(right, order.field)); if (result !== 0) return order.direction === "desc" ? -result : result; } return 0; }
@@ -412,10 +406,10 @@ function limit(path: string, counter: string): never { throw new RangeError(`que
 type BoundSource = ReadonlySet<string>;
 const resolvedSources = new WeakMap<QueryFieldReference, string>();
 const boundSourceKeys = new WeakMap<BoundSource, string>();
-const querySourceKeys = new WeakMap<RecursiveDTQLQuery, Map<string, string>>();
+const querySourceKeys = new WeakMap<RecursiveTugQLQuery, Map<string, string>>();
 let nextQuerySourceID = 0;
 
-function sourceKey(query: RecursiveDTQLQuery, alias: string): string {
+function sourceKey(query: RecursiveTugQLQuery, alias: string): string {
   let aliases = querySourceKeys.get(query);
   if (aliases === undefined) { aliases = new Map(); querySourceKeys.set(query, aliases); }
   let key = aliases.get(alias);
@@ -428,7 +422,7 @@ function at(path: string, suffix: string): string { return path === "" ? suffix 
 // Binding is deliberately separate from execution. It rejects missing and
 // forward aliases before a provider sees a leaf query, while retaining source
 // names in the public AST for canonical serialization.
-function bindQuery(query: RecursiveDTQLQuery, schema: DTQLSchema, outers: readonly ReadonlyMap<string, BoundSource>[], path: string, projectionRequired = true): BoundSource {
+function bindQuery(query: RecursiveTugQLQuery, schema: TugQLSchema, outers: readonly ReadonlyMap<string, BoundSource>[], path: string, projectionRequired = true): BoundSource {
   freeOuterBindings.set(query, false);
   bindingStack.push(query);
   try {
@@ -454,9 +448,9 @@ function bindQuery(query: RecursiveDTQLQuery, schema: DTQLSchema, outers: readon
   }
 }
 
-function bindRelation(relation: RecursiveDTQLRelation, schema: DTQLSchema, outers: readonly ReadonlyMap<string, BoundSource>[], path: string, reserved: ReadonlySet<string> = new Set()): ReadonlyMap<string, BoundSource> {
+function bindRelation(relation: RecursiveTugQLRelation, schema: TugQLSchema, outers: readonly ReadonlyMap<string, BoundSource>[], path: string, reserved: ReadonlySet<string> = new Set()): ReadonlyMap<string, BoundSource> {
   const visible = new Map<string, BoundSource>();
-  const bindOne = (value: RecursiveDTQLRelation, sourcePath: string, root = false): void => {
+  const bindOne = (value: RecursiveTugQLRelation, sourcePath: string, root = false): void => {
     const alias = value.alias ?? value.name ?? value.query?.as;
     if (alias === undefined || alias.length === 0) shape(sourcePath, "relation needs a name or query.as alias");
     if (!root && reserved.has(alias)) shape(sourcePath, `duplicate source alias ${alias}`);
@@ -531,7 +525,7 @@ function markOuterBinding(scopeIndex: number): void {
   for (const query of bindingStack.slice(-(scopeIndex + 1))) freeOuterBindings.set(query, true);
 }
 
-function bindExpression(value: RecursiveDTQLExpression, schema: DTQLSchema, local: ReadonlyMap<string, BoundSource>, outers: readonly ReadonlyMap<string, BoundSource>[], path: string, context: "ordinary" | "column" | "membership" = "ordinary"): void {
+function bindExpression(value: RecursiveTugQLExpression, schema: TugQLSchema, local: ReadonlyMap<string, BoundSource>, outers: readonly ReadonlyMap<string, BoundSource>[], path: string, context: "ordinary" | "column" | "membership" = "ordinary"): void {
   if (value.kind === "field") { bindField(value.field, local, outers, path); return; }
   if (value.kind === "query") {
     if (context !== "column" && context !== "membership") shape(path, "query expression is not valid here");
@@ -542,12 +536,12 @@ function bindExpression(value: RecursiveDTQLExpression, schema: DTQLSchema, loca
   if (value.kind === "binary") { bindExpression(value.left, schema, local, outers, `${path}.binary.left`); bindExpression(value.right, schema, local, outers, `${path}.binary.right`); }
 }
 
-function bindCondition(value: RecursiveDTQLCondition | undefined, schema: DTQLSchema, local: ReadonlyMap<string, BoundSource>, outers: readonly ReadonlyMap<string, BoundSource>[], path: string): void {
+function bindCondition(value: RecursiveTugQLCondition | undefined, schema: TugQLSchema, local: ReadonlyMap<string, BoundSource>, outers: readonly ReadonlyMap<string, BoundSource>[], path: string): void {
   if (value === undefined) return;
   if (value.kind === "and" || value.kind === "or") { value.conditions.forEach((child, index) => { bindCondition(child, schema, local, outers, `${path}.${value.kind}[${index.toString()}]`); }); return; }
   if (value.kind === "exists" || value.kind === "not-exists") { bindQuery(value.query, schema, [local, ...outers], `${path}.query`, false); return; }
   if (value.kind === "is-null" || value.kind === "is-not-null") { bindExpression(value.operand, schema, local, outers, `${path}.operand`, "column"); return; }
-  const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>;
+  const comparison = value as Extract<RecursiveTugQLCondition, { readonly kind: "comparison" }>;
   bindExpression(comparison.left, schema, local, outers, `${path}.left`);
   const membership = comparison.operator === "in" || comparison.operator === "not-in";
   bindExpression(comparison.right, schema, local, outers, `${path}.right`, membership ? "membership" : "ordinary");
@@ -558,11 +552,11 @@ function bindCondition(value: RecursiveDTQLCondition | undefined, schema: DTQLSc
   if (comparison.left.kind === "query") shape(`${path}.left`, "query expressions are not valid as comparison left operands");
 }
 
-function scalarShape(query: RecursiveDTQLQuery, path: string): void {
+function scalarShape(query: RecursiveTugQLQuery, path: string): void {
   if (query.columns?.length !== 1) shape(`${path}.columns`, "scalar query requires exactly one column");
 }
 
-function outputFields(query: RecursiveDTQLQuery, local: ReadonlyMap<string, BoundSource>, path: string): BoundSource {
+function outputFields(query: RecursiveTugQLQuery, local: ReadonlyMap<string, BoundSource>, path: string): BoundSource {
   if (query.columns === undefined) {
     const output = new Set<string>();
     for (const fields of local.values()) for (const field of fields) {
@@ -581,7 +575,7 @@ function outputFields(query: RecursiveDTQLQuery, local: ReadonlyMap<string, Boun
   return output;
 }
 
-function validateProgram(query: RecursiveDTQLQuery, ancestors: WeakSet<object>, path: string): void {
+function validateProgram(query: RecursiveTugQLQuery, ancestors: WeakSet<object>, path: string): void {
   if (ancestors.has(query)) shape(path, "recursive query cycle");
   ancestors.add(query);
   try {
@@ -593,7 +587,7 @@ function validateProgram(query: RecursiveDTQLQuery, ancestors: WeakSet<object>, 
   } finally { ancestors.delete(query); }
 }
 
-function validateRelationProgram(relation: RecursiveDTQLRelation, ancestors: WeakSet<object>, path: string): void {
+function validateRelationProgram(relation: RecursiveTugQLRelation, ancestors: WeakSet<object>, path: string): void {
   if (ancestors.has(relation)) shape(path, "recursive relation cycle");
   ancestors.add(relation);
   try {
@@ -606,39 +600,39 @@ function validateRelationProgram(relation: RecursiveDTQLRelation, ancestors: Wea
   } finally { ancestors.delete(relation); }
 }
 
-function validateConditionProgram(value: RecursiveDTQLCondition | undefined, ancestors: WeakSet<object>, path: string): void {
+function validateConditionProgram(value: RecursiveTugQLCondition | undefined, ancestors: WeakSet<object>, path: string): void {
   if (value === undefined) return;
   if (value.kind === "exists" || value.kind === "not-exists") { validateProgram(value.query, ancestors, `${path}.query`); return; }
   if (value.kind === "and" || value.kind === "or") { value.conditions.forEach((child, index) => { validateConditionProgram(child, ancestors, `${path}.${value.kind}[${index.toString()}]`); }); return; }
   if (value.kind === "is-null" || value.kind === "is-not-null") { validateExpressionProgram(value.operand, ancestors, `${path}.operand`); return; }
-  const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>;
+  const comparison = value as Extract<RecursiveTugQLCondition, { readonly kind: "comparison" }>;
   validateExpressionProgram(comparison.left, ancestors, `${path}.left`);
   validateExpressionProgram(comparison.right, ancestors, `${path}.right`);
 }
 
-function validateExpressionProgram(value: RecursiveDTQLExpression, ancestors: WeakSet<object>, path: string): void {
+function validateExpressionProgram(value: RecursiveTugQLExpression, ancestors: WeakSet<object>, path: string): void {
   if (value.kind === "query") { validateProgram(value.query, ancestors, `${path}.query`); return; }
   if (value.kind === "aggregate") value.args.forEach((item, index) => { validateExpressionProgram(item, ancestors, `${path}.aggregate.args[${index.toString()}]`); });
   if (value.kind === "binary") { validateExpressionProgram(value.left, ancestors, `${path}.binary.left`); validateExpressionProgram(value.right, ancestors, `${path}.binary.right`); }
 }
 
-function parseQuery(value: Record<string, unknown>, schema: DTQLSchema, path: string): RecursiveDTQLQuery {
+function parseQuery(value: Record<string, unknown>, schema: TugQLSchema, path: string): RecursiveTugQLQuery {
   keys(value, new Set(["as", "from", "where", "groupBy", "having", "orderBy", "limit", "offset", "columns"]), path);
-  const result: RecursiveDTQLQuery = {
-    kind: "recursive-dtql", from: parseRelation(requireValue(value, "from", path), schema, `${path}.from`),
+  const result: RecursiveTugQLQuery = {
+    kind: "recursive-tugql", from: parseRelation(requireValue(value, "from", path), schema, `${path}.from`),
     ...(value.as === undefined ? {} : { as: text(value.as, `${path}.as`) }),
     ...(value.where === undefined ? {} : { where: parseCondition(raw(value.where, `${path}.where`), schema, `${path}.where`) }),
     ...(value.orderBy === undefined ? {} : { orderBy: list(value.orderBy, `${path}.orderBy`).map((item, index) => { const order = raw(item, `${path}.orderBy[${index.toString()}]`); keys(order, new Set(["field", "source", "desc"]), `${path}.orderBy[${index.toString()}]`); const desc = order.desc === true; delete order.desc; return { field: fieldReference(order, `${path}.orderBy[${index.toString()}]`), direction: desc ? "desc" as const : "asc" as const }; }) }),
     ...(value.limit === undefined ? {} : { limit: positive(value.limit, `${path}.limit`) }),
     ...(value.offset === undefined ? {} : { offset: offset(value.offset, `${path}.offset`) }),
     ...(value.columns === undefined ? {} : { columns: list(value.columns, `${path}.columns`).map((item, index) => { const column = raw(item, `${path}.columns[${index.toString()}]`); const as = column.as === undefined ? undefined : text(column.as, `${path}.columns[${index.toString()}].as`); delete column.as; const expression = parseExpression(column, schema, `${path}.columns[${index.toString()}]`); if (expression.kind === "query" && as !== undefined) shape(`${path}.columns[${index.toString()}]`, "scalar query alias belongs in query.as"); return { expression, ...(as === undefined ? {} : { as }) }; }) }),
-    ...(value.groupBy === undefined ? {} : { groupBy: list(value.groupBy, `${path}.groupBy`).map((item, index) => parseExpression(item, schema, `${path}.groupBy[${index.toString()}]`) as DTQLExpression) }),
+    ...(value.groupBy === undefined ? {} : { groupBy: list(value.groupBy, `${path}.groupBy`).map((item, index) => parseExpression(item, schema, `${path}.groupBy[${index.toString()}]`) as TugQLExpression) }),
     ...(value.having === undefined ? {} : { having: parseCondition(raw(value.having, `${path}.having`), schema, `${path}.having`, true) }),
   };
   return result;
 }
 
-function parseRelation(value: unknown, schema: DTQLSchema, path: string): RecursiveDTQLRelation {
+function parseRelation(value: unknown, schema: TugQLSchema, path: string): RecursiveTugQLRelation {
   const source = raw(value, path); keys(source, new Set(["name", "schema", "alias", "as", "query", "joins"]), path);
   const hasName = source.name !== undefined; const hasQuery = source.query !== undefined;
   if (hasName === hasQuery) shape(path, "requires exactly one of name or query");
@@ -647,13 +641,13 @@ function parseRelation(value: unknown, schema: DTQLSchema, path: string): Recurs
     const name = text(source.name, `${path}.name`); const relationSchema = source.schema === undefined ? undefined : text(source.schema, `${path}.schema`);
     if (!schema.tables.some((table) => table.name === name && (relationSchema === undefined || table.schema === relationSchema))) shape(path, `unknown table ${name}`);
     const alias = source.alias ?? source.as; if (source.alias !== undefined && source.as !== undefined) shape(path, "alias and as cannot both be set");
-    return { kind: "table", name, ...(relationSchema === undefined ? {} : { schema: relationSchema }), ...(alias === undefined ? {} : { alias: text(alias, `${path}.alias`) }), joins: joins as RecursiveDTQLRelation["joins"] };
+    return { kind: "table", name, ...(relationSchema === undefined ? {} : { schema: relationSchema }), ...(alias === undefined ? {} : { alias: text(alias, `${path}.alias`) }), joins: joins as RecursiveTugQLRelation["joins"] };
   }
   if (source.schema !== undefined || source.alias !== undefined || source.as !== undefined) shape(path, "derived alias belongs in query.as");
-  return { kind: "query", query: parseQuery(raw(source.query, `${path}.query`), schema, `${path}.query`), joins: joins as RecursiveDTQLRelation["joins"] };
+  return { kind: "query", query: parseQuery(raw(source.query, `${path}.query`), schema, `${path}.query`), joins: joins as RecursiveTugQLRelation["joins"] };
 }
 
-function parseJoin(value: Record<string, unknown>, schema: DTQLSchema, path: string) {
+function parseJoin(value: Record<string, unknown>, schema: TugQLSchema, path: string) {
   keys(value, new Set(["type", "from", "on", "hints"]), path); const type = value.type === undefined ? "inner" : value.type;
   if (type !== "inner" && type !== "left") shape(`${path}.type`, "must be inner or left");
   const predicates = list(requireValue(value, "on", path), `${path}.on`).map((item, index) => { const predicate = raw(item, `${path}.on[${index.toString()}]`); keys(predicate, new Set(["left", "op", "right"]), `${path}.on[${index.toString()}]`); if (predicate.op !== "==" && predicate.op !== "eq") shape(`${path}.on[${index.toString()}].op`, "must be =="); return { left: fieldReference(raw(requireValue(predicate, "left", path), `${path}.on[${index.toString()}].left`), `${path}.on[${index.toString()}].left`), operator: "==" as const, right: fieldReference(raw(requireValue(predicate, "right", path), `${path}.on[${index.toString()}].right`), `${path}.on[${index.toString()}].right`) }; });
@@ -683,7 +677,7 @@ function parseHints(value: unknown, path: string): { readonly algorithms: readon
   return { algorithms: snapshot };
 }
 
-function parseCondition(value: Record<string, unknown>, schema: DTQLSchema, path: string, having = false): RecursiveDTQLCondition {
+function parseCondition(value: Record<string, unknown>, schema: TugQLSchema, path: string, having = false): RecursiveTugQLCondition {
   if (value.exists !== undefined || value.notExists !== undefined) { const yes = value.exists !== undefined; keys(value, new Set([yes ? "exists" : "notExists"]), path); const nested = raw(yes ? value.exists : value.notExists, `${path}.query`); keys(nested, new Set(["query"]), `${path}.query`); return { kind: yes ? "exists" : "not-exists", query: parseQuery(raw(nested.query, `${path}.query`), schema, `${path}.query`) }; }
   if (value.isNull !== undefined || value.isNotNull !== undefined) { const yes = value.isNull !== undefined; const key = yes ? "isNull" : "isNotNull"; keys(value, new Set([key]), path); const operand = parseExpression(raw(value[key], `${path}.${key}`), schema, `${path}.${key}`); const problem = nullOperandProblem(operand, having); if (problem !== undefined) shape(`${path}.${key}`, problem); return { kind: yes ? "is-null" : "is-not-null", operand }; }
   if (value.and !== undefined || value.or !== undefined) { const kind = value.and === undefined ? "or" : "and"; keys(value, new Set([kind]), path); return { kind, conditions: list(value[kind], `${path}.${kind}`).map((item, index) => parseCondition(raw(item, `${path}.${kind}[${index.toString()}]`), schema, `${path}.${kind}[${index.toString()}]`, having)) }; }
@@ -692,7 +686,7 @@ function parseCondition(value: Record<string, unknown>, schema: DTQLSchema, path
   return { kind: "comparison", left: parseExpression(requireValue(value, "left", path), schema, `${path}.left`), operator: operator as never, right: parseExpression(requireValue(value, "right", path), schema, `${path}.right`) };
 }
 
-function parseExpression(value: unknown, schema: DTQLSchema, path: string): RecursiveDTQLExpression {
+function parseExpression(value: unknown, schema: TugQLSchema, path: string): RecursiveTugQLExpression {
   const expression = raw(value, path);
   if (expression.query !== undefined) { keys(expression, new Set(["query"]), path); return { kind: "query", query: parseQuery(raw(expression.query, `${path}.query`), schema, `${path}.query`) }; }
   if (expression.field !== undefined) return { kind: "field", field: fieldReference(expression, path) };
@@ -708,17 +702,17 @@ function parseExpression(value: unknown, schema: DTQLSchema, path: string): Recu
     return {
       kind: "binary",
       operator,
-      left: parseExpression(requireValue(binary, "left", `${path}.binary`), schema, `${path}.binary.left`) as DTQLExpression,
-      right: parseExpression(requireValue(binary, "right", `${path}.binary`), schema, `${path}.binary.right`) as DTQLExpression,
+      left: parseExpression(requireValue(binary, "left", `${path}.binary`), schema, `${path}.binary.left`) as TugQLExpression,
+      right: parseExpression(requireValue(binary, "right", `${path}.binary`), schema, `${path}.binary.right`) as TugQLExpression,
     };
   }
-  if (expression.aggregate !== undefined) { keys(expression, new Set(["aggregate"]), path); const aggregate = raw(expression.aggregate, `${path}.aggregate`); keys(aggregate, new Set(["function", "args", "distinct"]), `${path}.aggregate`); const functionName = text(requireValue(aggregate, "function", `${path}.aggregate`), `${path}.aggregate.function`); if (!aggregateFunctions.has(functionName)) shape(`${path}.aggregate.function`, `unsupported aggregate ${functionName}`); if (aggregate.distinct !== undefined && aggregate.distinct !== true && aggregate.distinct !== false) shape(`${path}.aggregate.distinct`, "must be boolean"); return { kind: "aggregate", function: functionName as never, args: list(requireValue(aggregate, "args", `${path}.aggregate`), `${path}.aggregate.args`).map((item, index) => parseExpression(item, schema, `${path}.aggregate.args[${index.toString()}]`) as DTQLExpression), ...(aggregate.distinct === true ? { distinct: true } : {}) }; }
+  if (expression.aggregate !== undefined) { keys(expression, new Set(["aggregate"]), path); const aggregate = raw(expression.aggregate, `${path}.aggregate`); keys(aggregate, new Set(["function", "args", "distinct"]), `${path}.aggregate`); const functionName = text(requireValue(aggregate, "function", `${path}.aggregate`), `${path}.aggregate.function`); if (!aggregateFunctions.has(functionName)) shape(`${path}.aggregate.function`, `unsupported aggregate ${functionName}`); if (aggregate.distinct !== undefined && aggregate.distinct !== true && aggregate.distinct !== false) shape(`${path}.aggregate.distinct`, "must be boolean"); return { kind: "aggregate", function: functionName as never, args: list(requireValue(aggregate, "args", `${path}.aggregate`), `${path}.aggregate.args`).map((item, index) => parseExpression(item, schema, `${path}.aggregate.args[${index.toString()}]`) as TugQLExpression), ...(aggregate.distinct === true ? { distinct: true } : {}) }; }
   shape(path, "unknown expression");
 }
 
-function writeRelation(value: RecursiveDTQLRelation): Record<string, unknown> { const joins = value.joins.length === 0 ? {} : { joins: value.joins.map((join) => ({ ...(join.type === "inner" ? {} : { type: join.type }), from: writeRelation(join.from), on: join.on.map((item) => ({ left: item.left, op: "==", right: item.right })), ...(join.hints === undefined ? {} : { hints: { algorithms: [...join.hints.algorithms] } }) })) }; return value.kind === "table" ? { ...(value.schema === undefined ? {} : { schema: value.schema }), name: value.name, ...(value.alias === undefined ? {} : { alias: value.alias }), ...joins } : { query: serializeRecursiveDTQL(value.query ?? shape("relation", "query relation needs query")), ...joins }; }
-function writeCondition(value: RecursiveDTQLCondition): Record<string, unknown> { if (value.kind === "exists") return { exists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "not-exists") return { notExists: { query: serializeRecursiveDTQL(value.query) } }; if (value.kind === "and" || value.kind === "or") return { [value.kind]: value.conditions.map(writeCondition) }; if (value.kind === "is-null" || value.kind === "is-not-null") return { [value.kind === "is-null" ? "isNull" : "isNotNull"]: writeExpression(value.operand) }; const comparison = value as Extract<RecursiveDTQLCondition, { readonly kind: "comparison" }>; return { left: writeExpression(comparison.left), op: comparison.operator === "in" ? "In" : comparison.operator === "not-in" ? "NotIn" : comparison.operator, right: writeExpression(comparison.right) }; }
-function writeExpression(value: RecursiveDTQLExpression): Record<string, unknown> { if (value.kind === "query") return { query: serializeRecursiveDTQL(value.query) }; if (value.kind === "field") return { field: value.field.field, ...(value.field.source === "" ? {} : { source: value.field.source }) }; if (value.kind === "literal") return { value: value.value }; if (value.kind === "values") return { values: value.values }; if (value.kind === "star") return { star: true }; if (value.kind === "binary") return { binary: { op: value.operator, left: writeExpression(value.left), right: writeExpression(value.right) } }; if (value.kind === "aggregate") return { aggregate: { function: value.function, args: value.args.map(writeExpression), ...(value.distinct === true ? { distinct: true } : {}) } }; shape("expression", `cannot serialize ${value.kind}`); }
+function writeRelation(value: RecursiveTugQLRelation): Record<string, unknown> { const joins = value.joins.length === 0 ? {} : { joins: value.joins.map((join) => ({ ...(join.type === "inner" ? {} : { type: join.type }), from: writeRelation(join.from), on: join.on.map((item) => ({ left: item.left, op: "==", right: item.right })), ...(join.hints === undefined ? {} : { hints: { algorithms: [...join.hints.algorithms] } }) })) }; return value.kind === "table" ? { ...(value.schema === undefined ? {} : { schema: value.schema }), name: value.name, ...(value.alias === undefined ? {} : { alias: value.alias }), ...joins } : { query: serializeRecursiveTugQL(value.query ?? shape("relation", "query relation needs query")), ...joins }; }
+function writeCondition(value: RecursiveTugQLCondition): Record<string, unknown> { if (value.kind === "exists") return { exists: { query: serializeRecursiveTugQL(value.query) } }; if (value.kind === "not-exists") return { notExists: { query: serializeRecursiveTugQL(value.query) } }; if (value.kind === "and" || value.kind === "or") return { [value.kind]: value.conditions.map(writeCondition) }; if (value.kind === "is-null" || value.kind === "is-not-null") return { [value.kind === "is-null" ? "isNull" : "isNotNull"]: writeExpression(value.operand) }; const comparison = value as Extract<RecursiveTugQLCondition, { readonly kind: "comparison" }>; return { left: writeExpression(comparison.left), op: comparison.operator === "in" ? "In" : comparison.operator === "not-in" ? "NotIn" : comparison.operator, right: writeExpression(comparison.right) }; }
+function writeExpression(value: RecursiveTugQLExpression): Record<string, unknown> { if (value.kind === "query") return { query: serializeRecursiveTugQL(value.query) }; if (value.kind === "field") return { field: value.field.field, ...(value.field.source === "" ? {} : { source: value.field.source }) }; if (value.kind === "literal") return { value: value.value }; if (value.kind === "values") return { values: value.values }; if (value.kind === "star") return { star: true }; if (value.kind === "binary") return { binary: { op: value.operator, left: writeExpression(value.left), right: writeExpression(value.right) } }; if (value.kind === "aggregate") return { aggregate: { function: value.function, args: value.args.map(writeExpression), ...(value.distinct === true ? { distinct: true } : {}) } }; shape("expression", `cannot serialize ${value.kind}`); }
 function raw(value: unknown, path: string): Record<string, unknown> { if (typeof value === "string") { const parsed = parseYamlDocument(value, { prettyErrors: false, strict: true, uniqueKeys: true }); if (parsed.errors.length > 0) shape(path, "invalid YAML"); return raw(parsed.toJS(), path); } if (value === null || Array.isArray(value) || typeof value !== "object") shape(path, "must be object"); return { ...(value as Record<string, unknown>) }; }
 function rejectObjectCycles(value: unknown, path: string, ancestors: WeakSet<object>): void {
   if (value === null || typeof value !== "object") return;
@@ -737,5 +731,5 @@ function keys(value: Record<string, unknown>, allowed: ReadonlySet<string>, path
 function positive(value: unknown, path: string): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > 10_000) shape(path, "must be positive safe integer at most 10000"); return value; }
 function offset(value: unknown, path: string): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) shape(path, "must be non-negative safe integer"); return value; }
 
-/** Parsed recursively by dtql.ts; exported here for a single public execution route. */
-export type { DTQLSchema, TugQLSchema };
+/** Parsed recursively by tugql-yaml.ts; exported here for a single public execution route. */
+export type { TugQLSchema };

@@ -1,23 +1,23 @@
 import { walkConditionExpressions } from "./condition.js";
-import type { DTQLCondition, DTQLExpression, DTQLQueryOrder, QueryColumn } from "./query.js";
+import type { TugQLCondition, TugQLExpression, TugQLQueryOrder, QueryColumn } from "./query.js";
 
 /** True when the expression is, or contains, an aggregate call. */
-export function containsAggregate(expression: DTQLExpression): boolean {
+export function containsAggregate(expression: TugQLExpression): boolean {
   return expression.kind === "aggregate" || (expression.kind === "binary" && (containsAggregate(expression.left) || containsAggregate(expression.right)));
 }
 
 /** True when the expression is, or contains, a `DISTINCT` aggregate call. */
-export function containsDistinctAggregate(expression: DTQLExpression): boolean {
+export function containsDistinctAggregate(expression: TugQLExpression): boolean {
   if (expression.kind === "aggregate") return expression.distinct === true || expression.args.some(containsDistinctAggregate);
   return expression.kind === "binary" && (containsDistinctAggregate(expression.left) || containsDistinctAggregate(expression.right));
 }
 
 /** The pieces of a query that decide whether it has aggregate semantics. */
 export interface AggregationParts {
-  readonly groupBy?: readonly DTQLExpression[] | undefined;
+  readonly groupBy?: readonly TugQLExpression[] | undefined;
   readonly columns?: readonly QueryColumn[] | undefined;
-  readonly having?: DTQLCondition | undefined;
-  readonly orders: readonly DTQLQueryOrder[];
+  readonly having?: TugQLCondition | undefined;
+  readonly orders: readonly TugQLQueryOrder[];
 }
 
 /**
@@ -38,7 +38,7 @@ export function hasDistinctAggregate(parts: AggregationParts): boolean {
     (parts.having !== undefined && conditionHasDistinctAggregate(parts.having));
 }
 
-function conditionHasDistinctAggregate(condition: DTQLCondition): boolean {
+function conditionHasDistinctAggregate(condition: TugQLCondition): boolean {
   let found = false;
   walkConditionExpressions(condition, "having", (expression) => {
     if (containsDistinctAggregate(expression)) found = true;
@@ -72,7 +72,7 @@ export function fieldText(source: string | undefined, field: string): string {
  * The text Go gives an expression (`COUNT(*)`, `SUM(s.qty)`, `(a / b)`), which is
  * also the output name of an aggregate column that has no `as`.
  */
-export function expressionText(expression: DTQLExpression): string {
+export function expressionText(expression: TugQLExpression): string {
   switch (expression.kind) {
     case "field": return fieldText(expression.field.source, expression.field.field);
     case "literal": return constantText(expression.value);
@@ -85,7 +85,7 @@ export function expressionText(expression: DTQLExpression): string {
 }
 
 /** A stable structural identity, equal exactly when two expressions are the same. */
-export function expressionIdentity(expression: DTQLExpression): string {
+export function expressionIdentity(expression: TugQLExpression): string {
   switch (expression.kind) {
     case "field": return `${expression.field.source}.${expression.field.field}`;
     case "literal": return JSON.stringify(expression.value);
@@ -131,7 +131,7 @@ export function validateAggregation(parts: AggregationParts): void {
   });
 }
 
-function validateGrouped(expression: DTQLExpression, groupKeys: ReadonlySet<string>, location: string): void {
+function validateGrouped(expression: TugQLExpression, groupKeys: ReadonlySet<string>, location: string): void {
   switch (expression.kind) {
     case "aggregate": validateAggregate(expression, location); return;
     case "binary":
@@ -144,7 +144,7 @@ function validateGrouped(expression: DTQLExpression, groupKeys: ReadonlySet<stri
   }
 }
 
-function validateAggregate(expression: Extract<DTQLExpression, { readonly kind: "aggregate" }>, location: string): void {
+function validateAggregate(expression: Extract<TugQLExpression, { readonly kind: "aggregate" }>, location: string): void {
   const name = expression.function.toUpperCase();
   const [argument] = expression.args;
   if (expression.args.length !== 1 || argument === undefined) reject(location, `${name} requires exactly one argument`);
@@ -171,7 +171,7 @@ function validateAggregate(expression: Extract<DTQLExpression, { readonly kind: 
   validateScalar(argument, `${location}.aggregate.args[0]`);
 }
 
-function validateScalar(expression: DTQLExpression, location: string): void {
+function validateScalar(expression: TugQLExpression, location: string): void {
   switch (expression.kind) {
     case "field":
     case "literal":

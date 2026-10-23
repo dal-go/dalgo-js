@@ -4,8 +4,8 @@
  * `capabilities` map of an OVDB descriptor.
  *
  * Required: `read`, `query`, `write`, `delete`, `reset`, `persistent`.
- * Optional: `joins`, `aggregation`, `dtql`, `dtqlStreaming`,
- * `dtqlStreamingErrors`. An absent optional key means the database does not
+ * Optional: `joins`, `aggregation`, `tugql`, `tugqlStreaming`,
+ * `tugqlStreamingErrors`. An absent optional key means the database does not
  * claim that capability; it is not a promise that the capability is missing.
  */
 export interface DatabaseCapabilities {
@@ -17,9 +17,9 @@ export interface DatabaseCapabilities {
   readonly persistent: boolean;
   readonly joins?: boolean;
   readonly aggregation?: boolean;
-  readonly dtql?: boolean;
-  readonly dtqlStreaming?: boolean;
-  readonly dtqlStreamingErrors?: boolean;
+  readonly tugql?: boolean;
+  readonly tugqlStreaming?: boolean;
+  readonly tugqlStreamingErrors?: boolean;
 }
 
 /** Optional interface: a database that can describe its own capabilities. */

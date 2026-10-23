@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-  executeJoinedDTQLQuery,
-  isJoinedDTQLQuery,
+  executeJoinedTugQLQuery,
+  isJoinedTugQLQuery,
   key,
-  parseDTQL,
-  serializeJoinedDTQL,
-  type DTQLSchema,
+  parseTugQLYaml,
+  serializeJoinedTugQL,
+  type TugQLSchema,
   type ExistingRecord,
-  type JoinedDTQLQuery,
+  type JoinedTugQLQuery,
   type QueryExecutor,
   type StructuredQuery,
 } from "../src/index.js";
@@ -20,7 +20,7 @@ import {
 
 type Data = Record<string, unknown>;
 
-const schema: DTQLSchema = {
+const schema: TugQLSchema = {
   tables: [
     { name: "A", fields: ["id", "n", "d", "note", "s"] },
     { name: "B", fields: ["id", "aId", "w"] },
@@ -39,15 +39,15 @@ function rows(collection: string, items: readonly Data[]): ExistingRecord<Data>[
   return items.map((data, index) => ({ key: key(collection, String(index)), exists: true as const, data }));
 }
 
-function joined(input: unknown, options?: { maxLimit?: number }): JoinedDTQLQuery {
-  const query = parseDTQL(input, schema, options);
-  if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+function joined(input: unknown, options?: { maxLimit?: number }): JoinedTugQLQuery {
+  const query = parseTugQLYaml(input, schema, options);
+  if (!isJoinedTugQLQuery(query)) throw new Error("expected joined query");
   return query;
 }
 
-async function run(tables: Readonly<Record<string, readonly Data[]>>, query: JoinedDTQLQuery): Promise<Data[]> {
+async function run(tables: Readonly<Record<string, readonly Data[]>>, query: JoinedTugQLQuery): Promise<Data[]> {
   const executor = new MemoryExecutor(Object.fromEntries(Object.entries(tables).map(([name, items]) => [name, rows(name, items)])));
-  return (await executeJoinedDTQLQuery(executor, query)).records.map((row) => row.data);
+  return (await executeJoinedTugQLQuery(executor, query)).records.map((row) => row.data);
 }
 
 const count = { aggregate: { function: "count", args: [{ star: true }] } };
@@ -97,8 +97,8 @@ describe("schema-resolved fields (Go needs a source in a JOIN)", () => {
   });
 });
 
-describe("`!=` (DTQL in Go has no such operator)", () => {
-  const where = (op: string, value: unknown): JoinedDTQLQuery => joined({ from: { name: "A", alias: "a" }, where: { op, left: a("note"), right: { value } }, columns: [a("id")], orderBy: [a("id")] });
+describe("`!=` (TugQL in Go has no such operator)", () => {
+  const where = (op: string, value: unknown): JoinedTugQLQuery => joined({ from: { name: "A", alias: "a" }, where: { op, left: a("note"), right: { value } }, columns: [a("id")], orderBy: [a("id")] });
 
   it("treats null as a value: x != null means not null, null != x is true", async () => {
     expect(await run({ A: aData }, where("!=", null))).toEqual([{ id: 1 }, { id: 3 }]);
@@ -108,7 +108,7 @@ describe("`!=` (DTQL in Go has no such operator)", () => {
   it("works in HAVING and inside groups, and serialises as written", async () => {
     const query = joined({ from: { name: "A", alias: "a" }, groupBy: [a("d")], having: { and: [{ op: "!=", left: a("d"), right: { value: 2 } }, { op: ">=", left: count, right: { value: 1 } }] }, columns: [a("d")] });
     expect(await run({ A: aData }, query)).toEqual([{ d: 1 }]);
-    expect(JSON.stringify(serializeJoinedDTQL(query))).toContain('"op":"!="');
+    expect(JSON.stringify(serializeJoinedTugQL(query))).toContain('"op":"!="');
   });
 });
 
@@ -120,7 +120,7 @@ describe("limits", () => {
 
   it("reads limit: 0 as no limit in the relation model, as Go does, and still requires one for a bare source", () => {
     expect(joined({ from: { name: "A", alias: "a" }, limit: 0 }).limit).toBeUndefined();
-    expect(() => parseDTQL({ from: { name: "A" }, limit: 0 }, schema)).toThrow("limit must be a positive safe integer");
+    expect(() => parseTugQLYaml({ from: { name: "A" }, limit: 0 }, schema)).toThrow("limit must be a positive safe integer");
   });
 });
 
@@ -132,12 +132,12 @@ describe("forms the joined executor does not support", () => {
     ["notExists inside a group", { from: { name: "A", alias: "a" }, where: { and: [{ notExists: { query: { from: { name: "B" } } } }] } }, "exists and notExists subqueries are not supported"],
     ["a groupBy expression", { from: { name: "A", alias: "a" }, groupBy: [{ binary: { op: "+", left: { value: 1 }, right: { value: 2 } } }] }, "unsupported groupBy[0] key binary"],
   ])("rejects %s at parse", (_label, document, message) => {
-    expect(() => parseDTQL(document, schema)).toThrow(message);
+    expect(() => parseTugQLYaml(document, schema)).toThrow(message);
   });
 
   it("keeps the plain field-versus-literal where for a bare single source and refuses groups there", () => {
-    expect(parseDTQL({ from: { name: "A" }, where: { op: "==", left: { field: "n" }, right: { value: 1 } }, limit: 1 }, schema).filters).toEqual([{ field: "n", operator: "==", value: 1 }]);
-    expect(() => parseDTQL({ from: { name: "A" }, where: { and: [{ op: "==", left: { field: "n" }, right: { value: 1 } }] }, limit: 1 }, schema)).toThrow("where groups require an aliased or joined relation model");
+    expect(parseTugQLYaml({ from: { name: "A" }, where: { op: "==", left: { field: "n" }, right: { value: 1 } }, limit: 1 }, schema).filters).toEqual([{ field: "n", operator: "==", value: 1 }]);
+    expect(() => parseTugQLYaml({ from: { name: "A" }, where: { and: [{ op: "==", left: { field: "n" }, right: { value: 1 } }] }, limit: 1 }, schema)).toThrow("where groups require an aliased or joined relation model");
   });
 });
 
@@ -154,12 +154,12 @@ describe("conditions built by hand", () => {
     { field: { field: "n", source: "a" }, operator: ">=" as const, value: 10 },
     { left: { kind: "field" as const, field: { field: "d", source: "a" } }, operator: "==" as const, right: { kind: "literal" as const, value: 1 } },
   ];
-  const base: JoinedDTQLQuery = { kind: "joined-dtql", from: { name: "A", alias: "a", joins: [] }, filters, orders: [{ field: { field: "id", source: "a" }, direction: "asc" }], columns: [{ expression: { kind: "field", field: { field: "id", source: "a" } } }] };
+  const base: JoinedTugQLQuery = { kind: "joined-tugql", from: { name: "A", alias: "a", joins: [] }, filters, orders: [{ field: { field: "id", source: "a" }, direction: "asc" }], columns: [{ expression: { kind: "field", field: { field: "id", source: "a" } } }] };
 
   it("holds every top-level filter, and serialises several as one `and` group that parses back to the same rows", async () => {
     const expected = await run({ A: aData }, base);
     expect(expected).toEqual([{ id: 1 }, { id: 2 }]);
-    const document = serializeJoinedDTQL(base);
+    const document = serializeJoinedTugQL(base);
     expect(document.where).toEqual({
       and: [
         { op: ">=", left: { field: "n", source: "a" }, right: { value: 10 } },
@@ -170,17 +170,17 @@ describe("conditions built by hand", () => {
   });
 
   it("refuses a hand-built query whose condition names an unknown alias, at any depth", async () => {
-    const group: JoinedDTQLQuery = { ...base, filters: [{ kind: "or", conditions: [{ kind: "and", conditions: [{ left: { kind: "field", field: { field: "n", source: "zz" } }, operator: "==", right: { kind: "literal", value: 1 } }] }] }] };
+    const group: JoinedTugQLQuery = { ...base, filters: [{ kind: "or", conditions: [{ kind: "and", conditions: [{ left: { kind: "field", field: { field: "n", source: "zz" } }, operator: "==", right: { kind: "literal", value: 1 } }] }] }] };
     await expect(run({ A: aData }, group)).rejects.toThrow("join_scope at where[0].or[0].and[0].left.source: unknown alias zz");
   });
 
   it("evaluates a hand-built In whose right side is a literal as the error Go reports", async () => {
-    const bad: JoinedDTQLQuery = { ...base, filters: [{ field: { field: "n", source: "a" }, operator: "in", value: 10 }] };
+    const bad: JoinedTugQLQuery = { ...base, filters: [{ field: { field: "n", source: "a" }, operator: "in", value: 10 }] };
     await expect(run({ A: aData }, bad)).rejects.toThrow("IN requires an array");
   });
 
   it("names an unaliased aggregate by its text when the query was built by hand", async () => {
-    const query: JoinedDTQLQuery = { ...base, filters: [], orders: [], columns: [
+    const query: JoinedTugQLQuery = { ...base, filters: [], orders: [], columns: [
       { expression: { kind: "aggregate", function: "sum", args: [{ kind: "field", field: { field: "n", source: "a" } }] } },
       { expression: { kind: "aggregate", function: "count", distinct: true, args: [{ kind: "field", field: { field: "d", source: "a" } }] } },
       { expression: { kind: "aggregate", function: "count", args: [{ kind: "star" }] } },
@@ -193,8 +193,8 @@ describe("null tests (isNull / isNotNull)", () => {
   const idsOf = (rows: readonly Data[]): unknown[] => rows.map((row) => row.id).sort();
 
   it("rejects isNull on a field the schema lacks at parse; Go, without field metadata, reads the field as absent and matches every row", () => {
-    expect(() => parseDTQL({ ...join, where: { isNull: { field: "nope", source: "a" } } }, schema)).toThrow("unknown field a.nope");
-    expect(() => parseDTQL({ ...join, where: { isNotNull: { field: "nope", source: "a" } } }, schema)).toThrow("unknown field a.nope");
+    expect(() => parseTugQLYaml({ ...join, where: { isNull: { field: "nope", source: "a" } } }, schema)).toThrow("unknown field a.nope");
+    expect(() => parseTugQLYaml({ ...join, where: { isNotNull: { field: "nope", source: "a" } } }, schema)).toThrow("unknown field a.nope");
   });
 
   it("resolves an unqualified null-test operand through the schema; Go requires a source in a JOIN", async () => {
@@ -203,12 +203,12 @@ describe("null tests (isNull / isNotNull)", () => {
   });
 
   it("rejects a null element of an and / or list; Go's YAML decoder drops it and runs the rest", () => {
-    expect(() => parseDTQL({ ...join, where: { and: [{ isNull: { field: "note", source: "a" } }, null] }, columns: [{ field: "id", source: "a" }] }, schema)).toThrow("where.and[1] must be an object");
+    expect(() => parseTugQLYaml({ ...join, where: { and: [{ isNull: { field: "note", source: "a" } }, null] }, columns: [{ field: "id", source: "a" }] }, schema)).toThrow("where.and[1] must be an object");
   });
 
   it("parses a null test on a bare single source into the relation model (Go has one model and no such split)", () => {
-    const bare = parseDTQL({ from: { name: "A" }, where: { isNull: { field: "note" } }, limit: 10 }, schema);
-    expect(isJoinedDTQLQuery(bare)).toBe(true);
-    expect(isJoinedDTQLQuery(parseDTQL({ from: { name: "A" }, where: { op: "==", left: { field: "note" }, right: { value: null } }, limit: 10 }, schema))).toBe(false);
+    const bare = parseTugQLYaml({ from: { name: "A" }, where: { isNull: { field: "note" } }, limit: 10 }, schema);
+    expect(isJoinedTugQLQuery(bare)).toBe(true);
+    expect(isJoinedTugQLQuery(parseTugQLYaml({ from: { name: "A" }, where: { op: "==", left: { field: "note" }, right: { value: null } }, limit: 10 }, schema))).toBe(false);
   });
 });

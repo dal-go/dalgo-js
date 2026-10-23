@@ -1,10 +1,10 @@
 import type {
   QueryFieldReference,
   QueryColumn,
-  DTQLQueryFilter,
-  DTQLQueryOrder,
-  DTQLExpression,
-  DTQLCondition,
+  TugQLQueryFilter,
+  TugQLQueryOrder,
+  TugQLExpression,
+  TugQLCondition,
   QueryFilter,
   QueryJoin,
   QueryJoinAlgorithm,
@@ -13,16 +13,16 @@ import type {
   QueryOperator,
   QueryOrder,
   QueryRelation,
-  ParsedDTQLQuery,
-  JoinedDTQLQuery,
+  ParsedTugQLQuery,
+  JoinedTugQLQuery,
   StructuredQuery,
 } from "./query.js";
 import { constantText, expressionText, fieldText, validateAggregation } from "./aggregation.js";
 import { isMembership, isConditionGroup, nullOperandProblem, toCondition } from "./condition.js";
 import { parseDocument as parseYamlDocument, stringify as stringifyYaml } from "yaml";
 
-/** The allowlisted tables and fields against which a DTQL action is validated. */
-export interface DTQLSchema {
+/** The allowlisted tables and fields against which a TugQL action is validated. */
+export interface TugQLSchema {
   readonly tables: readonly {
     readonly name: string;
     readonly database?: string;
@@ -30,13 +30,6 @@ export interface DTQLSchema {
     readonly fields: readonly string[];
   }[];
 }
-
-// Canonical TugQL aliases
-export type TugQLSchema = DTQLSchema;
-export type TugQLQueryFilter = DTQLQueryFilter;
-export type TugQLQueryOrder = DTQLQueryOrder;
-export type TugQLExpression = DTQLExpression;
-export type TugQLCondition = DTQLCondition;
 
 type ObjectValue = Record<string, unknown>;
 
@@ -58,24 +51,24 @@ const orderKeys = new Set(["field", "source", "desc"]);
 const expressionOrderKeys = new Set(["value", "values", "param", "star", "aggregate", "binary", "desc"]);
 const columnExtraKeys = new Set(["as", "distinct"]);
 const noKeys: ReadonlySet<string> = new Set();
-const noAliases: ReadonlyMap<string, DTQLExpression> = new Map();
+const noAliases: ReadonlyMap<string, TugQLExpression> = new Map();
 const columnKeys = new Set(["field", "source", "as", "wildcard", "aggregate", "binary", "distinct", "value"]);
 const aggregateNames = new Set(["count", "sum", "avg", "min", "max", "first", "last"]);
 const aggregateKeys = new Set(["function", "distinct", "args"]);
 const operators = new Set(["==", "!=", "<", "<=", ">", ">=", "In", "NotIn"]);
 
 /**
- * Parses schema-validated DTQL into either the legacy single-source model or a
+ * Parses schema-validated TugQL into either the legacy single-source model or a
  * distinct join-aware model. It does not execute either query.
  */
-export function parseDTQL(
+export function parseTugQLYaml(
   // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents -- public API accepts YAML/JSON text and objects
   input: string | unknown,
-  schema: DTQLSchema,
+  schema: TugQLSchema,
   options: { maxLimit?: number } = {},
-): ParsedDTQLQuery<Record<string, unknown>> {
+): ParsedTugQLQuery<Record<string, unknown>> {
   const document = parseDocument(input);
-  assertOnlyKeys(document, rootKeys, "DTQL action");
+  assertOnlyKeys(document, rootKeys, "TugQL action");
 
   const rawFrom = requiredObject(document, "from");
   const relation = parseRelation(rawFrom, schema, "from", new WeakSet());
@@ -86,7 +79,7 @@ export function parseDTQL(
   // A null value (or an empty list for columns and groupBy) means "absent", as in the Go engine.
   const rawWhere = given(document.where);
   // A null test needs the relation model even on a bare single source: the legacy filter (field, operator, value)
-  // has no way to carry one, and a legacy executor would drop or misread it. The parse is then a JoinedDTQLQuery.
+  // has no way to carry one, and a legacy executor would drop or misread it. The parse is then a JoinedTugQLQuery.
   const hasRelationModel = relation.database !== undefined || relation.alias !== undefined || relation.joins.length > 0 || containsNullTest(rawWhere);
   // An aliased single source is still the relation model: its fields are source-qualified references too.
   const where = rawWhere === undefined ? undefined : hasRelationModel ? parseWhereCondition(rawWhere, aliases, schema) : parseLegacyWhere(rawWhere, fields, aliases, schema);
@@ -111,7 +104,7 @@ export function parseDTQL(
   if (columns !== undefined && !hasRelationModel) fail("columns require an aliased or joined relation model");
   if ((groupBy !== undefined || having !== undefined) && !hasRelationModel) fail("groupBy and having require an aliased or joined relation model");
   if (limit === undefined && !hasRelationModel) fail("limit must be a positive safe integer");
-  if (hasRelationModel) validateAggregation({ groupBy, columns, having, orders: orders as readonly DTQLQueryOrder[] });
+  if (hasRelationModel) validateAggregation({ groupBy, columns, having, orders: orders as readonly TugQLQueryOrder[] });
 
   const query = {
     source: { kind: "collection", name: tableIdentity(table) },
@@ -122,10 +115,10 @@ export function parseDTQL(
   };
   if (hasRelationModel) {
     return {
-      kind: "joined-dtql" as const,
+      kind: "joined-tugql" as const,
       from: relation,
-      filters: query.filters as unknown as readonly (DTQLQueryFilter | DTQLCondition)[],
-      orders: query.orders as readonly DTQLQueryOrder[],
+      filters: query.filters as unknown as readonly (TugQLQueryFilter | TugQLCondition)[],
+      orders: query.orders as readonly TugQLQueryOrder[],
       ...(columns === undefined ? {} : { columns }),
       ...(limit === undefined ? {} : { limit }),
       ...(offset === undefined ? {} : { offset }),
@@ -137,8 +130,8 @@ export function parseDTQL(
   return query as StructuredQuery<Record<string, unknown>>;
 }
 
-/** Returns the stable JSON-compatible DTQL representation for a joined query. */
-export function serializeJoinedDTQL(query: JoinedDTQLQuery): ObjectValue {
+/** Returns the stable JSON-compatible TugQL representation for a joined query. */
+export function serializeJoinedTugQL(query: JoinedTugQLQuery): ObjectValue {
   return {
     from: serializeRelation(query.from),
     ...(query.filters.length === 0 ? {} : { where: serializeWhere(query.filters) }),
@@ -162,12 +155,9 @@ function parseMoney(value: unknown): { readonly minorUnitScale: number; readonly
 }
 
 /** Serializes a joined query to canonical YAML. JSON callers can stringify the object form. */
-export function stringifyJoinedDTQL(query: JoinedDTQLQuery): string {
-  return stringifyYaml(serializeJoinedDTQL(query));
+export function stringifyJoinedTugQL(query: JoinedTugQLQuery): string {
+  return stringifyYaml(serializeJoinedTugQL(query));
 }
-
-export const serializeJoinedTugQL = serializeJoinedDTQL;
-export const stringifyJoinedTugQL = stringifyJoinedDTQL;
 
 function serializeRelation(relation: QueryRelation): ObjectValue {
   return {
@@ -187,14 +177,14 @@ function serializeRelation(relation: QueryRelation): ObjectValue {
   };
 }
 
-/** Several top-level filters hold together, which is an `and` group in DTQL. */
-function serializeWhere(filters: readonly (DTQLQueryFilter | DTQLCondition)[]): ObjectValue {
+/** Several top-level filters hold together, which is an `and` group in TugQL. */
+function serializeWhere(filters: readonly (TugQLQueryFilter | TugQLCondition)[]): ObjectValue {
   const [only] = filters;
   if (filters.length === 1 && only !== undefined) return serializeCondition(toCondition(only));
   return { and: filters.map((filter) => serializeCondition(toCondition(filter))) };
 }
 
-function serializeCondition(condition: DTQLCondition): ObjectValue {
+function serializeCondition(condition: TugQLCondition): ObjectValue {
   if (isConditionGroup(condition)) return { [condition.kind]: condition.conditions.map(serializeCondition) };
   if ("operand" in condition) return { [condition.kind === "is-null" ? "isNull" : "isNotNull"]: serializeExpression(condition.operand) };
   return {
@@ -204,12 +194,12 @@ function serializeCondition(condition: DTQLCondition): ObjectValue {
   };
 }
 
-function serializeOrder(order: DTQLQueryOrder): ObjectValue {
+function serializeOrder(order: TugQLQueryOrder): ObjectValue {
   const key = order.expression === undefined ? { field: order.field.field, source: order.field.source } : serializeExpression(order.expression);
   return { ...key, ...(order.direction === "desc" ? { desc: true } : {}) };
 }
 
-function serializeExpression(expression: DTQLExpression): ObjectValue {
+function serializeExpression(expression: TugQLExpression): ObjectValue {
   switch (expression.kind) {
     case "field": return { field: expression.field.field, source: expression.field.source };
     case "literal": return { value: expression.value };
@@ -236,16 +226,16 @@ function parseDocument(input: unknown): ObjectValue {
   if (typeof input === "string") {
     const trimmed = input.trim();
     if (trimmed.length === 0) {
-      fail("DTQL must not be empty");
+      fail("TugQL must not be empty");
     }
     const document = parseYamlDocument(trimmed, { prettyErrors: false, strict: true, uniqueKeys: true });
-    if (document.errors.length > 0) fail(`invalid DTQL YAML: ${document.errors.map(message).join("; ")}`);
-    return object(document.toJS(), "DTQL action");
+    if (document.errors.length > 0) fail(`invalid TugQL YAML: ${document.errors.map(message).join("; ")}`);
+    return object(document.toJS(), "TugQL action");
   }
-  return object(input, "DTQL action");
+  return object(input, "TugQL action");
 }
 
-function resolveTable(name: string, requestedSchema: string | undefined, requestedDatabase: string | undefined, schema: DTQLSchema, context: string): DTQLSchema["tables"][number] {
+function resolveTable(name: string, requestedSchema: string | undefined, requestedDatabase: string | undefined, schema: TugQLSchema, context: string): TugQLSchema["tables"][number] {
   const candidates = schema.tables.filter((table) =>
     table.name === name && (requestedSchema === undefined || table.schema === requestedSchema) &&
     (requestedDatabase === undefined || table.database === undefined || table.database === requestedDatabase),
@@ -257,11 +247,11 @@ function resolveTable(name: string, requestedSchema: string | undefined, request
   return table;
 }
 
-function resolveRelationTable(relation: QueryRelation, schema: DTQLSchema): DTQLSchema["tables"][number] {
+function resolveRelationTable(relation: QueryRelation, schema: TugQLSchema): TugQLSchema["tables"][number] {
   return resolveTable(relation.name, relation.schema, relation.database, schema, "from");
 }
 
-function parseRelation(value: ObjectValue, schema: DTQLSchema, path: string, ancestors: WeakSet<object>): QueryRelation {
+function parseRelation(value: ObjectValue, schema: TugQLSchema, path: string, ancestors: WeakSet<object>): QueryRelation {
   if (ancestors.has(value)) fail(`join_cycle at ${path}`);
   ancestors.add(value);
   try {
@@ -303,7 +293,7 @@ function parseAlias(value: ObjectValue, path: string): string | undefined {
   return optionalString(value, value.alias === undefined ? "as" : "alias");
 }
 
-function parseJoin(value: ObjectValue, schema: DTQLSchema, path: string, ancestors: WeakSet<object>): QueryJoin {
+function parseJoin(value: ObjectValue, schema: TugQLSchema, path: string, ancestors: WeakSet<object>): QueryJoin {
   assertOnlyKeys(value, joinKeys, path);
   const type = parseJoinType(value.type, `${path}.type`);
   if (!("from" in value)) fail(`join_shape at ${path}.from: from is required`);
@@ -359,7 +349,7 @@ function parseQualifiedField(value: ObjectValue, path: string): QueryFieldRefere
   return { field: requiredString(value, "field"), source: requiredString(value, "source") };
 }
 
-function validateRelationScopes(root: QueryRelation, schema: DTQLSchema): void {
+function validateRelationScopes(root: QueryRelation, schema: TugQLSchema): void {
   const aliases = new Map<string, { readonly relation: QueryRelation; readonly path: string }>();
   collectAliases(root, "from", aliases);
   validateRelationScope(root, "from", new Map(), aliases, schema);
@@ -379,7 +369,7 @@ function validateRelationScope(
   path: string,
   inherited: ReadonlyMap<string, QueryRelation>,
   allAliases: ReadonlyMap<string, { readonly relation: QueryRelation; readonly path: string }>,
-  schema: DTQLSchema,
+  schema: TugQLSchema,
 ): Map<string, QueryRelation> {
   const visible = new Map(inherited);
   visible.set(relation.alias ?? relation.name, relation);
@@ -408,7 +398,7 @@ function validateJoinReference(
   parentVisible: ReadonlyMap<string, QueryRelation>,
   subtree: ReadonlyMap<string, QueryRelation>,
   allAliases: ReadonlyMap<string, { readonly relation: QueryRelation; readonly path: string }>,
-  schema: DTQLSchema,
+  schema: TugQLSchema,
 ): void {
   const relation = parentVisible.get(reference.source) ?? subtree.get(reference.source);
   if (relation === undefined) {
@@ -436,8 +426,8 @@ function parseLegacyWhere(
   value: unknown,
   fields: ReadonlySet<string>,
   aliases: ReadonlyMap<string, QueryRelation>,
-  schema: DTQLSchema,
-): QueryFilter<Record<string, unknown>> | DTQLQueryFilter {
+  schema: TugQLSchema,
+): QueryFilter<Record<string, unknown>> | TugQLQueryFilter {
   const where = object(value, "where");
   if (Object.hasOwn(where, "and") || Object.hasOwn(where, "or")) fail("where groups require an aliased or joined relation model");
   assertOnlyKeys(where, comparisonKeys, "where");
@@ -463,7 +453,7 @@ function parseLegacyWhere(
     : { field, operator: toQueryOperator(operator), value: right.value };
 }
 
-function parseWhereCondition(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLQueryFilter | DTQLCondition {
+function parseWhereCondition(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: TugQLSchema): TugQLQueryFilter | TugQLCondition {
   const condition = parseCondition(value, "where", "where", (operand, path) => parseExpression(operand, path, aliases, schema));
   if (isConditionGroup(condition) || "operand" in condition) return condition;
   const { left, operator, right } = condition;
@@ -482,8 +472,8 @@ function parseCondition(
   value: unknown,
   path: string,
   label: string,
-  operand: (value: ObjectValue, path: string) => DTQLExpression,
-): DTQLCondition {
+  operand: (value: ObjectValue, path: string) => TugQLExpression,
+): TugQLCondition {
   const condition = object(value, path);
   if (Object.hasOwn(condition, "exists") || Object.hasOwn(condition, "notExists")) fail(`${path}: exists and notExists subqueries are not supported by the joined executor`);
   assertOnlyKeys(condition, conditionKeys, label);
@@ -549,9 +539,9 @@ function parseOrders(
   aliases: ReadonlyMap<string, QueryRelation>,
   joined: boolean,
   hasRelationModel: boolean,
-  schema: DTQLSchema,
-  selectAliasMap: ReadonlyMap<string, DTQLExpression>,
-): readonly (QueryOrder<Record<string, unknown>> | DTQLQueryOrder)[] {
+  schema: TugQLSchema,
+  selectAliasMap: ReadonlyMap<string, TugQLExpression>,
+): readonly (QueryOrder<Record<string, unknown>> | TugQLQueryOrder)[] {
   if (!Array.isArray(value)) fail("orderBy must be an array");
   return value.map((entry, index) => {
     const location = `orderBy[${index.toString()}]`;
@@ -576,7 +566,7 @@ function parseOrders(
 }
 
 /**
- * Any non-field order key is a DTQL expression plus an optional `desc`, as in
+ * Any non-field order key is a TugQL expression plus an optional `desc`, as in
  * the Go engine. Unknown properties are rejected rather than ignored, so a
  * misspelt `desc` (`descending`, `direction`) cannot silently sort ascending.
  */
@@ -585,9 +575,9 @@ function parseExpressionOrder(
   location: string,
   hasRelationModel: boolean,
   aliases: ReadonlyMap<string, QueryRelation>,
-  schema: DTQLSchema,
-  selectAliasMap: ReadonlyMap<string, DTQLExpression>,
-): DTQLQueryOrder {
+  schema: TugQLSchema,
+  selectAliasMap: ReadonlyMap<string, TugQLExpression>,
+): TugQLQueryOrder {
   if (!hasRelationModel) fail("orderBy expressions require an aliased or joined relation model");
   if (Object.hasOwn(order, "source")) fail(`${location}: source is valid only with field`);
   assertOnlyKeys(order, expressionOrderKeys, location);
@@ -603,10 +593,10 @@ function parseExpressionOrder(
  * (an alias may be used by `orderBy` and `having`; the default name of an
  * unaliased aggregate may not).
  */
-function parseColumns(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): { readonly columns: readonly QueryColumn[]; readonly aliases: ReadonlyMap<string, DTQLExpression> } {
+function parseColumns(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: TugQLSchema): { readonly columns: readonly QueryColumn[]; readonly aliases: ReadonlyMap<string, TugQLExpression> } {
   if (!Array.isArray(value)) fail("columns must be a non-empty array");
   const names = new Set<string>();
-  const selectAliases = new Map<string, DTQLExpression>();
+  const selectAliases = new Map<string, TugQLExpression>();
   const columns = value.map((entry, index) => {
     const path = `columns[${index.toString()}]`;
     const column = object(entry, path);
@@ -655,7 +645,7 @@ function writtenName(value: ObjectValue): string {
   return fieldText(typeof value.source === "string" && value.source.length > 0 ? value.source : undefined, String(value.field));
 }
 
-function parseAggregate(encoded: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): DTQLExpression {
+function parseAggregate(encoded: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: TugQLSchema): TugQLExpression {
   assertOnlyKeys(encoded, aggregateKeys, `${path}.aggregate`);
   const functionName = requiredString(encoded, "function");
   if (!aggregateNames.has(functionName)) fail(`join_shape at ${path}.aggregate.function: unsupported aggregate`);
@@ -676,7 +666,7 @@ function parseAggregate(encoded: ObjectValue, path: string, aliases: ReadonlyMap
  * source name a SELECT alias, also inside arithmetic but not inside an
  * aggregate's argument, which reads the input row.
  */
-function parseExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema, extraKeys: ReadonlySet<string> = noKeys, selectAliasMap: ReadonlyMap<string, DTQLExpression> = noAliases): DTQLExpression {
+function parseExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<string, QueryRelation>, schema: TugQLSchema, extraKeys: ReadonlySet<string> = noKeys, selectAliasMap: ReadonlyMap<string, TugQLExpression> = noAliases): TugQLExpression {
   if (Object.hasOwn(value, "query")) fail(`join_shape at ${path}: subquery expressions are not supported by the joined executor`);
   const forms = ["field", "value", "values", "param", "star", "aggregate", "binary"].filter((key) => Object.hasOwn(value, key));
   if (forms.length !== 1) fail(`join_shape at ${path}: expression must set exactly one form`);
@@ -716,7 +706,7 @@ function parseExpression(value: ObjectValue, path: string, aliases: ReadonlyMap<
   return { kind: "field", field: parseKnownQualifiedField(value, path, aliases, schema, allowed) };
 }
 
-function parseGroupBy(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema): readonly DTQLExpression[] {
+function parseGroupBy(value: unknown, aliases: ReadonlyMap<string, QueryRelation>, schema: TugQLSchema): readonly TugQLExpression[] {
   if (!Array.isArray(value)) fail("groupBy must be a non-empty array");
   return value.map((entry, index) => ({ kind: "field", field: parseKnownQualifiedField(object(entry, `groupBy[${index.toString()}]`), `groupBy[${index.toString()}]`, aliases, schema) }));
 }
@@ -727,7 +717,7 @@ function parseScopedField(
   aliases: ReadonlyMap<string, QueryRelation>,
   joined: boolean,
   path: string,
-  schema: DTQLSchema,
+  schema: TugQLSchema,
 ): string | QueryFieldReference {
   const field = requiredString(value, "field");
   const source = optionalString(value, "source");
@@ -749,7 +739,7 @@ function parseKnownQualifiedField(
   value: ObjectValue,
   path: string,
   aliases: ReadonlyMap<string, QueryRelation>,
-  schema: DTQLSchema,
+  schema: TugQLSchema,
   allowed: ReadonlySet<string> = qualifiedFieldKeys,
 ): QueryFieldReference {
   assertOnlyKeys(value, allowed, path);
@@ -767,7 +757,7 @@ function parseKnownQualifiedField(
 function resolveUniqueField(
   field: string,
   aliases: ReadonlyMap<string, QueryRelation>,
-  schema: DTQLSchema,
+  schema: TugQLSchema,
   path: string,
 ): QueryFieldReference {
   const matches = [...aliases.entries()].filter(([, relation]) =>
@@ -795,7 +785,7 @@ function parseOffset(value: unknown): number {
   return value as number;
 }
 
-function tableIdentity(table: DTQLSchema["tables"][number]): string {
+function tableIdentity(table: TugQLSchema["tables"][number]): string {
   return table.schema === undefined ? table.name : `${table.schema}.${table.name}`;
 }
 

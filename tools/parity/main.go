@@ -1,4 +1,4 @@
-// Command parity runs the DTQL parity cases through the Go reference engine
+// Command parity runs the TugQL parity cases through the Go reference engine
 // (github.com/dal-go/dalgo, pinned in go.mod) and writes the expected results
 // that test/parity.test.ts compares the TypeScript engine against.
 //
@@ -17,12 +17,12 @@ import (
 	"strings"
 
 	"github.com/dal-go/dalgo/dal"
-	"github.com/dal-go/dalgo/dtql"
 	"github.com/dal-go/dalgo/recordset"
+	"github.com/dal-go/dalgo/tugql"
 	"github.com/dal-go/record"
 )
 
-// caseDef is one parity case. Exactly one of Query (a JSON DTQL document),
+// caseDef is one parity case. Exactly one of Query (a JSON TugQL document),
 // YAML (inline text) or YAMLFile (relative to the parity directory) is set.
 // YAMLReplace and YAMLAppend derive variants of a checked-in saved query.
 // The remaining fields are read by the TypeScript test only.
@@ -154,7 +154,7 @@ func run(c caseDef, root string, data dataset) (out any) {
 	if err != nil {
 		fatalf("case %q: %v", c.Name, err)
 	}
-	query, err := dtql.Deserialize(doc)
+	query, err := tugql.Deserialize(doc)
 	if err != nil {
 		return map[string]any{"error": err.Error(), "phase": "parse"}
 	}

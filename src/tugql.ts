@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion -- parser accesses are guarded by token count and cursor bounds checks. */
 
-import { parseRecursiveDTQL } from "./recursive.js";
-import type { DTQLSchema } from "./dtql.js";
-import type { RecursiveDTQLQuery } from "./query.js";
+import { parseRecursiveTugQL } from "./recursive.js";
+import type { TugQLSchema } from "./tugql-yaml.js";
+import type { RecursiveTugQLQuery } from "./query.js";
 
 /** Versioned TugQL and TugQTree authoring adapters. */
 export const TUGQL_VERSION = 1 as const;
@@ -155,7 +155,7 @@ export interface TugQLDependencyReceipt {
 }
 
 export interface TugQLResolved {
-  readonly query: import("./query.js").RecursiveDTQLQuery;
+  readonly query: import("./query.js").RecursiveTugQLQuery;
   readonly columns: readonly TugQLOutputColumn[];
   readonly schemaVersion: string;
   readonly dependencies: readonly TugQLDependencyReceipt[];
@@ -1481,13 +1481,13 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
     for (const definition of rootDefinitions) validateDefinition(definition);
     const inferredColumns = inferOutputColumns(loweredRootBody.query, [], schemaTables, context.relationships);
     const recursiveDoc = stripInternalLineage(loweredRootBody.query) as TugQLQueryDocument;
-    const schemas: DTQLSchema = { tables: [...schemaTables.entries()].map(([key, table]) => ({ ...(table.schema === undefined ? {} : { schema: table.schema }), name: key.split("\0").at(-1) ?? "", fields: [...table.fields.keys()] })) };
+    const schemas: TugQLSchema = { tables: [...schemaTables.entries()].map(([key, table]) => ({ ...(table.schema === undefined ? {} : { schema: table.schema }), name: key.split("\0").at(-1) ?? "", fields: [...table.fields.keys()] })) };
     const unsupportedFunction = findFunctionCall(recursiveDoc);
     if (unsupportedFunction !== undefined) throw new ResolveFailure("unsupported_function", `unsupported_function: scalar function ${JSON.stringify(unsupportedFunction)} is not executable by DALgo`);
     if (containsBareStar(recursiveDoc)) throw new ResolveFailure("unsupported_projection", "wildcard projection cannot be resolved to a stable typed output");
-    let recursive: RecursiveDTQLQuery;
+    let recursive: RecursiveTugQLQuery;
     try {
-      recursive = parseRecursiveDTQL(recursiveDoc, schemas);
+      recursive = parseRecursiveTugQL(recursiveDoc, schemas);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const duplicateOutput = /duplicate output field ([^\s]+)/u.exec(message);
@@ -1791,7 +1791,7 @@ function validateCondition(value: unknown): void {
     validateKeys(condition, [key], "condition");
     const body = condition[key] as TugQLBody;
     if (asRecord(body)?.definitions !== undefined) {
-      invalidTree("invalid TugQTree query: yaml: unmarshal errors:\n  line 9: field definitions not found in type dtql.existsYAML");
+      invalidTree("invalid TugQTree query: yaml: unmarshal errors:\n  line 9: field definitions not found in type tugql.existsYAML");
     }
     validateKeys(body, ["query"], "EXISTS query body");
     validateQuery(body.query);

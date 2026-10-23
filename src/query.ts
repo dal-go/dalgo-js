@@ -81,8 +81,8 @@ export interface QueryJoin {
   readonly hints?: QueryJoinHints;
 }
 
-/** A structured expression reserved for join-aware DTQL pipeline clauses. */
-export type DTQLExpression =
+/** A structured expression reserved for join-aware TugQL pipeline clauses. */
+export type TugQLExpression =
   | { readonly kind: "field"; readonly field: QueryFieldReference }
   | { readonly kind: "literal"; readonly value: string | number | boolean | null }
   | { readonly kind: "values"; readonly values: readonly (string | number | boolean | null)[] }
@@ -91,14 +91,14 @@ export type DTQLExpression =
   | {
     readonly kind: "aggregate";
     readonly function: "count" | "sum" | "avg" | "min" | "max" | "first" | "last";
-    readonly args: readonly DTQLExpression[];
+    readonly args: readonly TugQLExpression[];
     readonly distinct?: boolean;
   }
-  | { readonly kind: "binary"; readonly operator: "+" | "-" | "*" | "/"; readonly left: DTQLExpression; readonly right: DTQLExpression };
+  | { readonly kind: "binary"; readonly operator: "+" | "-" | "*" | "/"; readonly left: TugQLExpression; readonly right: TugQLExpression };
 
-/** A named projection in a DTQL query. */
+/** A named projection in a TugQL query. */
 export interface QueryColumn {
-  readonly expression?: DTQLExpression;
+  readonly expression?: TugQLExpression;
   readonly wildcard?: { readonly source?: string; readonly exclude: readonly string[] };
   readonly as?: string;
 }
@@ -108,16 +108,16 @@ export interface QueryColumn {
  * HAVING predicate. WHERE accepts an expression on either side (a field, a
  * literal, arithmetic, a `values` list); HAVING resolves aggregates per group.
  */
-export interface DTQLComparison {
-  readonly left: DTQLExpression;
+export interface TugQLComparison {
+  readonly left: TugQLExpression;
   readonly operator: QueryOperator;
-  readonly right: DTQLExpression;
+  readonly right: TugQLExpression;
 }
 
 /** An `and` or `or` group of conditions, as Go's `dal.GroupCondition`. */
-export interface DTQLConditionGroup {
+export interface TugQLConditionGroup {
   readonly kind: "and" | "or";
-  readonly conditions: readonly DTQLCondition[];
+  readonly conditions: readonly TugQLCondition[];
 }
 
 /**
@@ -126,31 +126,31 @@ export interface DTQLConditionGroup {
  * never unknown, so it is the way to select or exclude nulls in a joined or
  * aggregated query where `x == null` matches nothing. A missing field is null.
  */
-export interface DTQLNullTest {
+export interface TugQLNullTest {
   readonly kind: "is-null" | "is-not-null";
-  readonly operand: DTQLExpression;
+  readonly operand: TugQLExpression;
 }
 
 /** A WHERE or HAVING condition: a comparison, a null test or a nested `and`/`or` group. */
-export type DTQLCondition = DTQLComparison | DTQLConditionGroup | DTQLNullTest;
+export type TugQLCondition = TugQLComparison | TugQLConditionGroup | TugQLNullTest;
 
 /**
  * The compact form of the most common WHERE predicate: a field compared with a
  * literal (`In` and `NotIn` take the list as `value`). The parser emits it for
  * exactly that shape at the top level of `where`, and every other WHERE
- * condition is a `DTQLCondition`.
+ * condition is a `TugQLCondition`.
  */
-export interface DTQLQueryFilter {
+export interface TugQLQueryFilter {
   readonly field: QueryFieldReference;
   readonly operator: QueryOperator;
   readonly value: unknown;
 }
 
 /** A structured HAVING predicate. */
-export type DTQLHaving = DTQLComparison;
+export type TugQLHaving = TugQLComparison;
 
-/** An ordering term on a plain field of a join-aware DTQL query. */
-export interface DTQLFieldOrder {
+/** An ordering term on a plain field of a join-aware TugQL query. */
+export interface TugQLFieldOrder {
   readonly field: QueryFieldReference;
   readonly expression?: undefined;
   readonly direction: OrderDirection;
@@ -158,17 +158,17 @@ export interface DTQLFieldOrder {
 
 /**
  * An ordering term on an arbitrary expression (for example a binary `/` over
- * aggregates), as the Go DTQL engine accepts. Plain field keys keep the
- * `DTQLFieldOrder` shape.
+ * aggregates), as the Go TugQL engine accepts. Plain field keys keep the
+ * `TugQLFieldOrder` shape.
  */
-export interface DTQLExpressionOrder {
-  readonly expression: DTQLExpression;
+export interface TugQLExpressionOrder {
+  readonly expression: TugQLExpression;
   readonly field?: undefined;
   readonly direction: OrderDirection;
 }
 
-/** An ordering term in a join-aware DTQL query. */
-export type DTQLQueryOrder = DTQLFieldOrder | DTQLExpressionOrder;
+/** An ordering term in a join-aware TugQL query. */
+export type TugQLQueryOrder = TugQLFieldOrder | TugQLExpressionOrder;
 
 export interface QueryFilter<T> {
   readonly field: FieldPath<T>;
@@ -198,96 +198,82 @@ export interface StructuredQuery<T> {
 }
 
 /**
- * A parsed DTQL query that needs a join-aware execution entrypoint. It has no
+ * A parsed TugQL query that needs a join-aware execution entrypoint. It has no
  * `source` property, making it intentionally incompatible with legacy
  * `QueryExecutor.query(StructuredQuery)` implementations.
  */
-export interface JoinedDTQLQuery {
-  readonly kind: "joined-dtql" | "joined-tugql";
+export interface JoinedTugQLQuery {
+  readonly kind: "joined-tugql";
   readonly money?: { readonly minorUnitScale: number; readonly divisionScale: number; readonly rounding: "halfEven" };
   readonly from: QueryRelation;
   /** Conditions that must all hold; the parser emits at most one (Go has a single `where`). */
-  readonly filters: readonly (DTQLQueryFilter | DTQLCondition)[];
-  readonly orders: readonly DTQLQueryOrder[];
+  readonly filters: readonly (TugQLQueryFilter | TugQLCondition)[];
+  readonly orders: readonly TugQLQueryOrder[];
   readonly columns?: readonly QueryColumn[];
   readonly limit?: number;
   readonly offset?: number;
-  readonly groupBy?: readonly DTQLExpression[];
-  readonly having?: DTQLCondition;
+  readonly groupBy?: readonly TugQLExpression[];
+  readonly having?: TugQLCondition;
 }
 
-export type ParsedDTQLQuery<T> = StructuredQuery<T> | JoinedDTQLQuery;
+export type ParsedTugQLQuery<T> = StructuredQuery<T> | JoinedTugQLQuery;
 
 /**
- * Recursive DTQL (TugQL) is intentionally a separate query model. It is executed by
- * `executeRecursiveDTQLQuery`, which only gives leaf StructuredQuery objects
+ * Recursive TugQL (TugQL) is intentionally a separate query model. It is executed by
+ * `executeRecursiveTugQLQuery`, which only gives leaf StructuredQuery objects
  * to a provider's legacy QueryExecutor.
  */
-export interface RecursiveDTQLQuery {
-  readonly kind: "recursive-dtql" | "recursive-tugql";
+export interface RecursiveTugQLQuery {
+  readonly kind: "recursive-tugql";
   readonly as?: string;
-  readonly from: RecursiveDTQLRelation;
-  readonly where?: RecursiveDTQLCondition;
-  readonly orderBy?: readonly DTQLFieldOrder[];
+  readonly from: RecursiveTugQLRelation;
+  readonly where?: RecursiveTugQLCondition;
+  readonly orderBy?: readonly TugQLFieldOrder[];
   readonly limit?: number;
   readonly offset?: number;
-  readonly columns?: readonly RecursiveDTQLColumn[];
-  readonly groupBy?: readonly DTQLExpression[];
-  readonly having?: RecursiveDTQLCondition;
+  readonly columns?: readonly RecursiveTugQLColumn[];
+  readonly groupBy?: readonly TugQLExpression[];
+  readonly having?: RecursiveTugQLCondition;
 }
 
-export interface RecursiveDTQLRelation {
+export interface RecursiveTugQLRelation {
   readonly kind: "table" | "query";
   readonly name?: string;
   readonly schema?: string;
   readonly alias?: string;
-  readonly query?: RecursiveDTQLQuery;
-  readonly joins: readonly RecursiveDTQLJoin[];
+  readonly query?: RecursiveTugQLQuery;
+  readonly joins: readonly RecursiveTugQLJoin[];
 }
 
-export interface RecursiveDTQLJoin {
+export interface RecursiveTugQLJoin {
   readonly type: QueryJoinType;
-  readonly from: RecursiveDTQLRelation;
+  readonly from: RecursiveTugQLRelation;
   readonly on: readonly QueryJoinPredicate[];
   readonly hints?: QueryJoinHints;
 }
 
-export type RecursiveDTQLExpression = DTQLExpression | { readonly kind: "query"; readonly query: RecursiveDTQLQuery };
+export type RecursiveTugQLExpression = TugQLExpression | { readonly kind: "query"; readonly query: RecursiveTugQLQuery };
 
-export interface RecursiveDTQLColumn {
-  readonly expression: RecursiveDTQLExpression;
+export interface RecursiveTugQLColumn {
+  readonly expression: RecursiveTugQLExpression;
   readonly as?: string;
 }
 
-export type RecursiveDTQLCondition =
-  | { readonly kind: "comparison"; readonly left: RecursiveDTQLExpression; readonly operator: QueryOperator; readonly right: RecursiveDTQLExpression }
-  | { readonly kind: "and" | "or"; readonly conditions: readonly RecursiveDTQLCondition[] }
-  | { readonly kind: "is-null" | "is-not-null"; readonly operand: RecursiveDTQLExpression }
-  | { readonly kind: "exists" | "not-exists"; readonly query: RecursiveDTQLQuery };
+export type RecursiveTugQLCondition =
+  | { readonly kind: "comparison"; readonly left: RecursiveTugQLExpression; readonly operator: QueryOperator; readonly right: RecursiveTugQLExpression }
+  | { readonly kind: "and" | "or"; readonly conditions: readonly RecursiveTugQLCondition[] }
+  | { readonly kind: "is-null" | "is-not-null"; readonly operand: RecursiveTugQLExpression }
+  | { readonly kind: "exists" | "not-exists"; readonly query: RecursiveTugQLQuery };
 
-export type AnyParsedDTQLQuery<T> = ParsedDTQLQuery<T> | RecursiveDTQLQuery;
+export type AnyParsedTugQLQuery<T> = ParsedTugQLQuery<T> | RecursiveTugQLQuery;
 
-export function isJoinedDTQLQuery<T>(query: ParsedDTQLQuery<T>): query is JoinedDTQLQuery {
+export function isJoinedTugQLQuery<T>(query: ParsedTugQLQuery<T>): query is JoinedTugQLQuery {
   return "kind" in query;
 }
 
-export function isRecursiveDTQLQuery<T>(query: AnyParsedDTQLQuery<T>): query is RecursiveDTQLQuery {
-  return "kind" in query && (query.kind === "recursive-dtql" || (query.kind as string) === "recursive-tugql");
+export function isRecursiveTugQLQuery<T>(query: AnyParsedTugQLQuery<T>): query is RecursiveTugQLQuery {
+  return "kind" in query && query.kind === "recursive-tugql";
 }
-
-// TugQL aliases for canonical rebranding
-export type JoinedTugQLQuery = JoinedDTQLQuery;
-export type ParsedTugQLQuery<T> = ParsedDTQLQuery<T>;
-export type RecursiveTugQLQuery = RecursiveDTQLQuery;
-export type RecursiveTugQLRelation = RecursiveDTQLRelation;
-export type RecursiveTugQLJoin = RecursiveDTQLJoin;
-export type RecursiveTugQLExpression = RecursiveDTQLExpression;
-export type RecursiveTugQLColumn = RecursiveDTQLColumn;
-export type RecursiveTugQLCondition = RecursiveDTQLCondition;
-export type AnyParsedTugQLQuery<T> = AnyParsedDTQLQuery<T>;
-
-export const isJoinedTugQLQuery = isJoinedDTQLQuery;
-export const isRecursiveTugQLQuery = isRecursiveDTQLQuery;
 
 export interface QueryPage<T> extends QueryMetadata {
   readonly records: readonly ExistingRecord<T>[];

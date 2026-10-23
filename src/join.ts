@@ -8,17 +8,17 @@ import {
 } from "./source-composition.js";
 import { declarationId, validateSourceIdentity } from "./source-declarations.js";
 import { containsAggregate, effectiveColumns, expressionText, hasAggregation, hasDistinctAggregate } from "./aggregation.js";
-import { evaluateCondition, isMembership, nullTestTruth, toCondition, walkConditionExpressions, type DTQLLeaf, type Truth } from "./condition.js";
+import { evaluateCondition, isMembership, nullTestTruth, toCondition, walkConditionExpressions, type TugQLLeaf, type Truth } from "./condition.js";
 import type { QueryExecutor } from "./database.js";
-import type { DTQLSchema } from "./dtql.js";
+import type { TugQLSchema } from "./tugql-yaml.js";
 import { Key } from "./key.js";
 import type { ExistingRecord } from "./record.js";
 import type {
-  DTQLComparison,
-  DTQLCondition,
-  DTQLExpression,
-  DTQLQueryFilter,
-  JoinedDTQLQuery,
+  TugQLComparison,
+  TugQLCondition,
+  TugQLExpression,
+  TugQLQueryFilter,
+  JoinedTugQLQuery,
   QueryFieldReference,
   QueryJoinPredicate,
   QueryJoinAlgorithm,
@@ -58,9 +58,9 @@ export interface JoinedQueryExecutionOptions {
   readonly maxCandidateEvaluations?: number;
   readonly maxRetainedBytes?: number;
   /** The parse-time schema used for source-qualified wildcard expansion. */
-  readonly schema?: DTQLSchema;
+  readonly schema?: TugQLSchema;
   /**
-   * Maps a DTQL relation to an adapter source. Required when a relation names
+   * Maps a TugQL relation to an adapter source. Required when a relation names
    * a schema because the legacy QueryExecutor has no schema namespace.
    */
   readonly resolveSource?: (relation: QueryRelation) => StructuredQuery<Data>["source"];
@@ -117,13 +117,13 @@ const defaults: ExecutionLimits = {
  * existing single-source executor. This deliberately remains a separate entry
  * point: legacy `QueryExecutor.query(StructuredQuery)` never receives joins.
  *
- * Pass the same schema used by `parseDTQL` when the query has wildcard
+ * Pass the same schema used by `parseTugQLYaml` when the query has wildcard
  * projections. For schema-qualified relations, pass `resolveSource` so the
  * adapter, rather than this generic executor, defines its source namespace.
  */
-export async function executeJoinedDTQLQuery(
+export async function executeJoinedTugQLQuery(
   executor: QueryExecutor,
-  query: JoinedDTQLQuery,
+  query: JoinedTugQLQuery,
   options: JoinedQueryExecutionOptions = {},
 ): Promise<QueryPage<Data>> {
   return executeMaterializedJoin(executor, query, options);
@@ -133,8 +133,8 @@ export async function executeJoinedDTQLQuery(
  * Explicit JS-local, materialized-only rights route. No recursive, streaming,
  * composed-leaf, Go/OVDB, persistence or export capability is implied.
  */
-export async function executeSourceComposedJoinedDTQLQuery(
-  query: JoinedDTQLQuery,
+export async function executeSourceComposedJoinedTugQLQuery(
+  query: JoinedTugQLQuery,
   options: SourceCompositionJoinOptions,
 ): Promise<QueryPage<Data>> {
   for (const unsupported of ["scanPages", "money", "pageSize", "resolveExecutor"]) {
@@ -154,7 +154,7 @@ export async function executeSourceComposedJoinedDTQLQuery(
 
 async function executeMaterializedJoin(
   executor: QueryExecutor,
-  query: JoinedDTQLQuery,
+  query: JoinedTugQLQuery,
   options: JoinedQueryExecutionOptions,
   composition?: CompositionExecution,
 ): Promise<QueryPage<Data>> {
@@ -260,7 +260,7 @@ function prepareCompositionScans(
   return scans;
 }
 
-function expandQueryColumns(query: JoinedDTQLQuery, aliases: ReadonlyMap<string, QueryRelation>, schema: DTQLSchema | undefined): JoinedDTQLQuery {
+function expandQueryColumns(query: JoinedTugQLQuery, aliases: ReadonlyMap<string, QueryRelation>, schema: TugQLSchema | undefined): JoinedTugQLQuery {
   return query.columns === undefined ? query : { ...query, columns: expandColumns(query.columns, aliases, schema) };
 }
 
@@ -269,7 +269,7 @@ function expandQueryColumns(query: JoinedDTQLQuery, aliases: ReadonlyMap<string,
  * projection (an ungrouped aggregate query projects an empty row), as the Go
  * engine does, rather than the first row of every group.
  */
-function withDerivedColumns(query: JoinedDTQLQuery): JoinedDTQLQuery {
+function withDerivedColumns(query: JoinedTugQLQuery): JoinedTugQLQuery {
   const columns = effectiveColumns(query);
   return columns === undefined || columns === query.columns ? query : { ...query, columns };
 }
@@ -368,11 +368,11 @@ function validateJoinReferenceShape(value: unknown, path: string): void {
   }
 }
 
-function validateClauseSources(query: JoinedDTQLQuery, aliases: ReadonlyMap<string, QueryRelation>): void {
+function validateClauseSources(query: JoinedTugQLQuery, aliases: ReadonlyMap<string, QueryRelation>): void {
   const field = (reference: QueryFieldReference, path: string): void => {
     if (!aliases.has(reference.source)) scopeError(`${path}.source`, `unknown alias ${reference.source}`);
   };
-  const expression = (value: DTQLExpression, path: string): void => {
+  const expression = (value: TugQLExpression, path: string): void => {
     switch (value.kind) {
       case "field": field(value.field, path); return;
       case "aggregate": value.args.forEach((argument, index) => { expression(argument, `${path}.aggregate.args[${index.toString()}]`); }); return;
@@ -395,7 +395,7 @@ function validateClauseSources(query: JoinedDTQLQuery, aliases: ReadonlyMap<stri
 function expandColumns(
   columns: readonly QueryColumn[],
   aliases: ReadonlyMap<string, QueryRelation>,
-  schema: DTQLSchema | undefined,
+  schema: TugQLSchema | undefined,
 ): readonly QueryColumn[] {
   const expanded: QueryColumn[] = [];
   const names = new Set<string>();
@@ -664,11 +664,11 @@ function joinKey(value: unknown, path: string): string | undefined {
  * row; a comparison with a null operand is unknown (so `x == null` never holds
  * and `NotIn` over a list containing null never does either).
  */
-function matchesWhere(row: JoinedRow, filter: DTQLQueryFilter | DTQLCondition): boolean {
+function matchesWhere(row: JoinedRow, filter: TugQLQueryFilter | TugQLCondition): boolean {
   return evaluateCondition(toCondition(filter), (leaf, path) => whereTruth(row, leaf, path), "where") === "true";
 }
 
-function whereTruth(row: JoinedRow, leaf: DTQLLeaf, path: string): Truth {
+function whereTruth(row: JoinedRow, leaf: TugQLLeaf, path: string): Truth {
   if ("operand" in leaf) return nullTestTruth(leaf, whereOperand(row, leaf.operand, `${path}.operand`));
   const comparison = leaf;
   const left = whereOperand(row, comparison.left, `${path}.left`);
@@ -685,7 +685,7 @@ function whereTruth(row: JoinedRow, leaf: DTQLLeaf, path: string): Truth {
     return truth;
   }
   const right = whereOperand(row, comparison.right, `${path}.right`);
-  // `!=` is a DTQL extension of this package (Go has none): it treats null as a value, so `x != null` means "x is not null".
+  // `!=` is a TugQL extension of this package (Go has none): it treats null as a value, so `x != null` means "x is not null".
   if (comparison.operator === "!=") return equal(left ?? null, right ?? null) ? "false" : "true";
   if (left === null || left === undefined || right === null || right === undefined) return "unknown";
   switch (comparison.operator) {
@@ -699,7 +699,7 @@ function whereTruth(row: JoinedRow, leaf: DTQLLeaf, path: string): Truth {
 }
 
 /** A WHERE operand: a field, a literal, a list or arithmetic over them (no aggregate, star or parameter). */
-function whereOperand(row: JoinedRow, expression: DTQLExpression, path: string): unknown {
+function whereOperand(row: JoinedRow, expression: TugQLExpression, path: string): unknown {
   switch (expression.kind) {
     case "field": return fieldValue(row, expression.field);
     case "literal": return expression.value;
@@ -709,7 +709,7 @@ function whereOperand(row: JoinedRow, expression: DTQLExpression, path: string):
   }
 }
 
-function materialize(rows: readonly JoinedRow[], query: JoinedDTQLQuery, limits: ExecutionLimits): MaterializedRow[] {
+function materialize(rows: readonly JoinedRow[], query: JoinedTugQLQuery, limits: ExecutionLimits): MaterializedRow[] {
   if (!hasAggregation(query)) return rows.map((row) => ({ row, group: [row] }));
   const groups = new Map<string, JoinedRow[]>();
   if (rows.length === 0 && query.groupBy === undefined) groups.set("all", []);
@@ -729,9 +729,9 @@ function materialize(rows: readonly JoinedRow[], query: JoinedDTQLQuery, limits:
   return having === undefined ? values : values.filter((value) => matchesHaving(value, having));
 }
 
-function queryAggregates(query: JoinedDTQLQuery): Extract<DTQLExpression, { readonly kind: "aggregate" }>[] {
-  const found: Extract<DTQLExpression, { readonly kind: "aggregate" }>[] = [];
-  const visit = (expression: DTQLExpression): void => {
+function queryAggregates(query: JoinedTugQLQuery): Extract<TugQLExpression, { readonly kind: "aggregate" }>[] {
+  const found: Extract<TugQLExpression, { readonly kind: "aggregate" }>[] = [];
+  const visit = (expression: TugQLExpression): void => {
     if (expression.kind === "aggregate") found.push(expression);
     else if (expression.kind === "binary") { visit(expression.left); visit(expression.right); }
   };
@@ -759,10 +759,10 @@ function validateExecutionScopes(relation: QueryRelation, inherited: ReadonlySet
 }
 
 function emptyAggregateRow(): JoinedRow {
-  return { aliases: new Map(), root: { key: new Key("__dtql__", "aggregate"), exists: true, data: {} } };
+  return { aliases: new Map(), root: { key: new Key("__tugql__", "aggregate"), exists: true, data: {} } };
 }
 
-function matchesHaving(value: MaterializedRow, having: DTQLCondition): boolean {
+function matchesHaving(value: MaterializedRow, having: TugQLCondition): boolean {
   return evaluateCondition(having, (leaf, path) => {
     if ("operand" in leaf) return nullTestTruth(leaf, expressionValue(value.row, value.group, leaf.operand, `${path}.operand`));
     return havingHolds(leaf.operator, expressionValue(value.row, value.group, leaf.left, `${path}.left`), expressionValue(value.row, value.group, leaf.right, `${path}.right`)) ? "true" : "false";
@@ -774,7 +774,7 @@ function matchesHaving(value: MaterializedRow, having: DTQLCondition): boolean {
  * every ordering comparison is false when either side is null, and membership
  * operators are not supported there (Go reports it when a group is evaluated).
  */
-function havingHolds(operator: DTQLComparison["operator"], leftValue: unknown, rightValue: unknown): boolean {
+function havingHolds(operator: TugQLComparison["operator"], leftValue: unknown, rightValue: unknown): boolean {
   const left = leftValue ?? null;
   const right = rightValue ?? null;
   switch (operator) {
@@ -793,7 +793,7 @@ function havingHolds(operator: DTQLComparison["operator"], leftValue: unknown, r
   }
 }
 
-function stableOrder(rows: readonly MaterializedRow[], query: JoinedDTQLQuery): MaterializedRow[] {
+function stableOrder(rows: readonly MaterializedRow[], query: JoinedTugQLQuery): MaterializedRow[] {
   const grouped = hasAggregation(query);
   // Keys are resolved once per row, before sorting, so an evaluation error
   // surfaces deterministically instead of depending on comparison order.
@@ -812,7 +812,7 @@ function stableOrder(rows: readonly MaterializedRow[], query: JoinedDTQLQuery): 
   }).map(({ row }) => row);
 }
 
-function project(value: MaterializedRow, query: JoinedDTQLQuery, aliases: readonly string[]): Data {
+function project(value: MaterializedRow, query: JoinedTugQLQuery, aliases: readonly string[]): Data {
   if (query.columns === undefined) {
     const result: Data = {};
     for (const alias of aliases) {
@@ -846,7 +846,7 @@ function columnOutput(column: QueryColumn, path: string): string {
   planError(path, "non-field joined column requires an alias");
 }
 
-function expressionValue(row: JoinedRow, group: readonly JoinedRow[], expression: DTQLExpression, path = "expression"): unknown {
+function expressionValue(row: JoinedRow, group: readonly JoinedRow[], expression: TugQLExpression, path = "expression"): unknown {
   switch (expression.kind) {
     case "field": return fieldValue(row, expression.field);
     case "literal": return expression.value;
@@ -861,7 +861,7 @@ function expressionValue(row: JoinedRow, group: readonly JoinedRow[], expression
 /** Aggregate results per group, so an aggregate used in several places is computed (and can fail) once. */
 const aggregateResults = new WeakMap<readonly JoinedRow[], Map<string, unknown>>();
 
-function aggregate(rows: readonly JoinedRow[], expression: Extract<DTQLExpression, { readonly kind: "aggregate" }>, path: string): unknown {
+function aggregate(rows: readonly JoinedRow[], expression: Extract<TugQLExpression, { readonly kind: "aggregate" }>, path: string): unknown {
   let results = aggregateResults.get(rows);
   if (results === undefined) {
     results = new Map();
@@ -874,7 +874,7 @@ function aggregate(rows: readonly JoinedRow[], expression: Extract<DTQLExpressio
   return value;
 }
 
-function computeAggregate(rows: readonly JoinedRow[], expression: Extract<DTQLExpression, { readonly kind: "aggregate" }>, path: string): unknown {
+function computeAggregate(rows: readonly JoinedRow[], expression: Extract<TugQLExpression, { readonly kind: "aggregate" }>, path: string): unknown {
   const argument = expression.args[0];
   if (argument === undefined) planError(path, "aggregate requires an argument");
   const argumentPath = `${path}.aggregate.args[0]`;
@@ -1061,7 +1061,7 @@ function expressionKey(values: readonly unknown[]): string {
 }
 
 /** The group a row belongs to: its group-by values, with null and missing the same value. */
-function groupKey(row: JoinedRow, groupBy: readonly DTQLExpression[]): string {
+function groupKey(row: JoinedRow, groupBy: readonly TugQLExpression[]): string {
   return expressionKey(groupBy.map((expression) => {
     const value = expressionValue(row, [row], expression);
     rejectNonFinite(value, "groupBy");
@@ -1121,7 +1121,7 @@ function planError(path: string, reason: string): never {
  * an aggregate that only appears in an order key or HAVING) over one flat hash
  * join. `DISTINCT` aggregates need every distinct value and use the generic plan.
  */
-function canStreamJoinedAggregate(query: JoinedDTQLQuery): boolean {
+function canStreamJoinedAggregate(query: JoinedTugQLQuery): boolean {
   return query.from.joins.length === 1 && query.from.joins[0]?.from.joins.length === 0 &&
     selectJoinAlgorithm(query.from.joins[0].hints?.algorithms, true) === "hash" &&
     hasAggregation(query) && !hasDistinctAggregate(query);
@@ -1129,8 +1129,8 @@ function canStreamJoinedAggregate(query: JoinedDTQLQuery): boolean {
 
 /** Streams a flat equality join in bounded result pages. The indexed side
  * remains bounded; the fact side and output can exceed generic join limits. */
-export async function* executeJoinedDTQLQueryPages(
-  query: JoinedDTQLQuery,
+export async function* executeJoinedTugQLQueryPages(
+  query: JoinedTugQLQuery,
   options: JoinedQueryExecutionOptions,
 ): AsyncIterable<QueryPage<Data>> {
   if (options.pageSize !== undefined && (!Number.isSafeInteger(options.pageSize) || options.pageSize < 1 || options.pageSize > 1000)) planError("pageSize", "pageSize must be 1..1000");
@@ -1221,7 +1221,7 @@ interface StreamGroup {
 }
 
 /** Streams a large fact relation through one indexed dimension and keeps only groups. */
-async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, options: JoinedQueryExecutionOptions): Promise<QueryPage<Data>> {
+async function executeStreamingJoinedAggregateQuery(query: JoinedTugQLQuery, options: JoinedQueryExecutionOptions): Promise<QueryPage<Data>> {
   const scanPages = options.scanPages;
   if (scanPages === undefined) planError("from", "paged source transport is required");
   validateRelationShape(query.from, new WeakSet(), "from");
@@ -1249,8 +1249,8 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
   const expanded = expandQueryColumns(query, aliases, options.schema);
   validateClauseSources(expanded, aliases);
   const effective = withDerivedColumns(expanded);
-  const aggregateExpressions = new Map<string, Extract<DTQLExpression, { readonly kind: "aggregate" }>>();
-  const collect = (value: DTQLExpression): void => {
+  const aggregateExpressions = new Map<string, Extract<TugQLExpression, { readonly kind: "aggregate" }>>();
+  const collect = (value: TugQLExpression): void => {
     if (value.kind === "aggregate") {
       if (value.distinct) planError("columns", "streaming DISTINCT aggregate is not supported");
       aggregateExpressions.set(JSON.stringify(value), value);
@@ -1338,7 +1338,7 @@ async function executeStreamingJoinedAggregateQuery(query: JoinedDTQLQuery, opti
   return { records: ordered.slice(start, effective.limit === undefined ? undefined : start + effective.limit) };
 }
 
-function updateStreamAggregate(group: StreamGroup, signature: string, expression: Extract<DTQLExpression, { readonly kind: "aggregate" }>, row: JoinedRow, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): void {
+function updateStreamAggregate(group: StreamGroup, signature: string, expression: Extract<TugQLExpression, { readonly kind: "aggregate" }>, row: JoinedRow, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): void {
   const argument = expression.args[0];
   if (argument === undefined) planError("aggregate", "aggregate requires an argument");
   const value = argument.kind === "star" ? 1 : expressionValue(row, [row], argument);
@@ -1378,7 +1378,7 @@ function updateStreamAggregate(group: StreamGroup, signature: string, expression
   group.aggregates.set(signature, state);
 }
 
-function streamExpression(group: StreamGroup, expression: DTQLExpression, path: string, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): unknown {
+function streamExpression(group: StreamGroup, expression: TugQLExpression, path: string, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): unknown {
   if (expression.kind === "aggregate") {
     const state = group.aggregates.get(JSON.stringify(expression));
     if (expression.function === "count") return state?.count ?? 0;
@@ -1394,14 +1394,14 @@ function streamExpression(group: StreamGroup, expression: DTQLExpression, path: 
   return expressionValue(group.first, [group.first], expression, path);
 }
 
-function streamHaving(group: StreamGroup, having: DTQLCondition, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): boolean {
+function streamHaving(group: StreamGroup, having: TugQLCondition, exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): boolean {
   return evaluateCondition(having, (leaf, path) => {
     if ("operand" in leaf) return nullTestTruth(leaf, streamExpression(group, leaf.operand, `${path}.operand`, exact));
     return havingHolds(leaf.operator, streamExpression(group, leaf.left, `${path}.left`, exact), streamExpression(group, leaf.right, `${path}.right`, exact)) ? "true" : "false";
   }, "having") === "true";
 }
 
-function streamProject(group: StreamGroup, query: JoinedDTQLQuery, aliases: readonly string[], exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): Data {
+function streamProject(group: StreamGroup, query: JoinedTugQLQuery, aliases: readonly string[], exact?: NonNullable<JoinedQueryExecutionOptions["money"]>): Data {
   if (query.columns === undefined) return project({ row: group.first, group: [group.first] }, query, aliases);
   const data: Data = {};
   for (const [position, column] of query.columns.entries()) {

@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
-  executeJoinedDTQLQuery,
-  executeRecursiveDTQLQuery,
-  isJoinedDTQLQuery,
+  executeJoinedTugQLQuery,
+  executeRecursiveTugQLQuery,
+  isJoinedTugQLQuery,
   key,
-  parseDTQL,
-  parseRecursiveDTQL,
-  serializeJoinedDTQL,
-  serializeRecursiveDTQL,
-  stringifyJoinedDTQL,
-  stringifyRecursiveDTQL,
-  type DTQLSchema,
+  parseTugQLYaml,
+  parseRecursiveTugQL,
+  serializeJoinedTugQL,
+  serializeRecursiveTugQL,
+  stringifyJoinedTugQL,
+  stringifyRecursiveTugQL,
+  type TugQLSchema,
   type ExistingRecord,
-  type JoinedDTQLQuery,
+  type JoinedTugQLQuery,
   type QueryExecutor,
   type QueryRelation,
   type StructuredQuery,
@@ -39,7 +39,7 @@ const tables: Record<string, readonly Data[]> = {
     { id: 12, chat: 2, total: 7 },
   ],
 };
-const schema: DTQLSchema = { tables: Object.entries(tables).map(([name, rows]) => ({ name, fields: [...new Set(rows.flatMap((row) => Object.keys(row)))] })) };
+const schema: TugQLSchema = { tables: Object.entries(tables).map(([name, rows]) => ({ name, fields: [...new Set(rows.flatMap((row) => Object.keys(row)))] })) };
 
 function records(name: string): ExistingRecord<Data>[] {
   return (tables[name] ?? []).map((data, index) => ({ key: key(name, String(index)), exists: true as const, data: { ...data } }));
@@ -58,9 +58,9 @@ const join = `from:
       on: [{left: {field: id, source: c}, op: '==', right: {field: chat, source: i}}]
 `;
 
-function parse(document: string): JoinedDTQLQuery {
-  const query = parseDTQL(document, schema);
-  if (!isJoinedDTQLQuery(query)) throw new Error("expected the relation model");
+function parse(document: string): JoinedTugQLQuery {
+  const query = parseTugQLYaml(document, schema);
+  if (!isJoinedTugQLQuery(query)) throw new Error("expected the relation model");
   return query;
 }
 
@@ -70,7 +70,7 @@ async function run(document: string, streaming = false): Promise<Data[]> {
     resolveExecutor: () => executor,
     ...(streaming ? { scanPages: async function* (relation: QueryRelation) { await Promise.resolve(); yield { records: records(relation.name) }; } } : {}),
   };
-  return (await executeJoinedDTQLQuery(executor, parse(document), options)).records.map((row) => row.data);
+  return (await executeJoinedTugQLQuery(executor, parse(document), options)).records.map((row) => row.data);
 }
 
 const ids = (rows: readonly Data[]): unknown[] => rows.map((row) => row.id).sort();
@@ -86,15 +86,15 @@ describe("null tests: parsing and serialization", () => {
 
   it.each(Object.entries(documents))("round-trips %s through YAML and JSON", (_name, document) => {
     const query = parse(document);
-    expect(parseDTQL(stringifyJoinedDTQL(query), schema)).toEqual(query);
-    expect(parseDTQL(JSON.stringify(serializeJoinedDTQL(query)), schema)).toEqual(query);
+    expect(parseTugQLYaml(stringifyJoinedTugQL(query), schema)).toEqual(query);
+    expect(parseTugQLYaml(JSON.stringify(serializeJoinedTugQL(query)), schema)).toEqual(query);
   });
 
   it("models the tests as null-test conditions, not comparisons", () => {
     expect(parse(documents["where isNull"] ?? "").filters).toEqual([{ kind: "is-null", operand: { kind: "field", field: { field: "Company", source: "c" } } }]);
     expect(parse(documents["where isNotNull"] ?? "").filters).toEqual([{ kind: "is-not-null", operand: { kind: "field", field: { field: "Company", source: "c" } } }]);
-    expect(serializeJoinedDTQL(parse(documents["where isNull"] ?? "")).where).toEqual({ isNull: { field: "Company", source: "c" } });
-    expect(serializeJoinedDTQL(parse(documents.having ?? "")).having).toEqual({ isNotNull: { aggregate: { function: "max", args: [{ field: "total", source: "i" }] } } });
+    expect(serializeJoinedTugQL(parse(documents["where isNull"] ?? "")).where).toEqual({ isNull: { field: "Company", source: "c" } });
+    expect(serializeJoinedTugQL(parse(documents.having ?? "")).having).toEqual({ isNotNull: { aggregate: { function: "max", args: [{ field: "total", source: "i" }] } } });
   });
 
   it("accepts the same documents Go accepts and rejects the ones it rejects at parse", () => {
@@ -110,25 +110,25 @@ describe("null tests: parsing and serialization", () => {
       "an explicit null alone": "isNull: null",
     };
     for (const [name, where] of Object.entries(rejected)) {
-      expect(() => parseDTQL(`${join}where:\n  ${where}\n`, schema), name).toThrow(TypeError);
+      expect(() => parseTugQLYaml(`${join}where:\n  ${where}\n`, schema), name).toThrow(TypeError);
     }
     // An explicit null is absent, so the comparison beside it stands alone, as in Go.
     expect(parse(`${join}where:\n  isNull: null\n  op: '=='\n  left: {field: id, source: c}\n  right: {value: 1}\n`).filters).toHaveLength(1);
-    expect(() => parseDTQL(`from: {name: Chat, alias: c, joins: [{from: {name: Invoice, alias: i}, on: [{isNull: {field: chat, source: i}}]}]}\n`, schema)).toThrow("on[0]");
+    expect(() => parseTugQLYaml(`from: {name: Chat, alias: c, joins: [{from: {name: Invoice, alias: i}, on: [{isNull: {field: chat, source: i}}]}]}\n`, schema)).toThrow("on[0]");
   });
 
   it("parses a null test on a bare single source into the relation model, since the legacy filter cannot carry one", () => {
     for (const test of ["isNull", "isNotNull"]) {
-      const query = parseDTQL(`from: {name: Chat}\nwhere:\n  ${test}: {field: Company}\nlimit: 10\n`, schema);
-      expect(isJoinedDTQLQuery(query)).toBe(true);
-      expect(query).toMatchObject({ kind: "joined-dtql", from: { name: "Chat", joins: [] }, limit: 10 });
+      const query = parseTugQLYaml(`from: {name: Chat}\nwhere:\n  ${test}: {field: Company}\nlimit: 10\n`, schema);
+      expect(isJoinedTugQLQuery(query)).toBe(true);
+      expect(query).toMatchObject({ kind: "joined-tugql", from: { name: "Chat", joins: [] }, limit: 10 });
       expect(query).not.toHaveProperty("source");
     }
-    const grouped = parseDTQL("from: {name: Chat}\nwhere:\n  and:\n    - isNull: {field: Company}\n    - {op: ==, left: {field: Region}, right: {value: eu}}\n", schema);
-    expect(isJoinedDTQLQuery(grouped)).toBe(true);
+    const grouped = parseTugQLYaml("from: {name: Chat}\nwhere:\n  and:\n    - isNull: {field: Company}\n    - {op: ==, left: {field: Region}, right: {value: eu}}\n", schema);
+    expect(isJoinedTugQLQuery(grouped)).toBe(true);
     // Without a null test the bare source stays the legacy model, groups included in what it refuses.
-    expect(isJoinedDTQLQuery(parseDTQL("from: {name: Chat}\nwhere: {op: ==, left: {field: Company}, right: {value: a}}\nlimit: 10\n", schema))).toBe(false);
-    expect(() => parseDTQL("from: {name: Chat}\nwhere:\n  and:\n    - {op: ==, left: {field: Company}, right: {value: a}}\nlimit: 10\n", schema)).toThrow("require an aliased or joined relation model");
+    expect(isJoinedTugQLQuery(parseTugQLYaml("from: {name: Chat}\nwhere: {op: ==, left: {field: Company}, right: {value: a}}\nlimit: 10\n", schema))).toBe(false);
+    expect(() => parseTugQLYaml("from: {name: Chat}\nwhere:\n  and:\n    - {op: ==, left: {field: Company}, right: {value: a}}\nlimit: 10\n", schema)).toThrow("require an aliased or joined relation model");
   });
 
   it("rejects operands a null test cannot have, with the path of the test, as Go does", () => {
@@ -141,12 +141,12 @@ describe("null tests: parsing and serialization", () => {
       ["{binary: {op: +, left: {star: true}, right: {value: 1}}}", "star is not a value"],
     ];
     for (const [operand, message] of bad) {
-      expect(() => parseDTQL(`${join}where: {isNull: ${operand}}\ncolumns: [{field: id, source: c}]\n`, schema), operand).toThrow(message);
+      expect(() => parseTugQLYaml(`${join}where: {isNull: ${operand}}\ncolumns: [{field: id, source: c}]\n`, schema), operand).toThrow(message);
     }
-    expect(() => parseDTQL(`${join}where:\n  and:\n    - isNull: {field: Company, source: c}\n    - or:\n        - isNotNull: {param: p}\ncolumns: [{field: id, source: c}]\n`, schema)).toThrow("query_shape at where.and[1].or[0].isNotNull: a param");
-    expect(() => parseDTQL(`${join}groupBy: [{field: Region, source: c}]\nhaving: {isNull: {star: true}}\ncolumns: [{field: Region, source: c}]\n`, schema)).toThrow("query_shape at having.isNull: star");
+    expect(() => parseTugQLYaml(`${join}where:\n  and:\n    - isNull: {field: Company, source: c}\n    - or:\n        - isNotNull: {param: p}\ncolumns: [{field: id, source: c}]\n`, schema)).toThrow("query_shape at where.and[1].or[0].isNotNull: a param");
+    expect(() => parseTugQLYaml(`${join}groupBy: [{field: Region, source: c}]\nhaving: {isNull: {star: true}}\ncolumns: [{field: Region, source: c}]\n`, schema)).toThrow("query_shape at having.isNull: star");
     // An aggregate is fine in having, alone or inside arithmetic.
-    expect(() => parseDTQL(`${join}groupBy: [{field: Region, source: c}]\nhaving: {isNull: {binary: {op: /, left: {aggregate: {function: sum, args: [{field: total, source: i}]}}, right: {aggregate: {function: count, args: [{star: true}]}}}}}\ncolumns: [{field: Region, source: c}]\n`, schema)).not.toThrow();
+    expect(() => parseTugQLYaml(`${join}groupBy: [{field: Region, source: c}]\nhaving: {isNull: {binary: {op: /, left: {aggregate: {function: sum, args: [{field: total, source: i}]}}, right: {aggregate: {function: count, args: [{star: true}]}}}}}\ncolumns: [{field: Region, source: c}]\n`, schema)).not.toThrow();
   });
 });
 
@@ -200,8 +200,8 @@ describe.each([["generic executor", false], ["streaming scanPages executor", tru
 });
 
 describe("null tests: recursive queries", () => {
-  const recursiveSchema: DTQLSchema = { tables: Object.entries(tables).map(([name, rows]) => ({ name, fields: [...new Set(rows.flatMap((row) => Object.keys(row)))] })) };
-  const runRecursive = async (document: string): Promise<Data[]> => (await executeRecursiveDTQLQuery(executor, parseRecursiveDTQL(document, recursiveSchema))).records.map((row) => row.data);
+  const recursiveSchema: TugQLSchema = { tables: Object.entries(tables).map(([name, rows]) => ({ name, fields: [...new Set(rows.flatMap((row) => Object.keys(row)))] })) };
+  const runRecursive = async (document: string): Promise<Data[]> => (await executeRecursiveTugQLQuery(executor, parseRecursiveTugQL(document, recursiveSchema))).records.map((row) => row.data);
 
   it("evaluates isNull and isNotNull in WHERE, inside groups and inside a nested query", async () => {
     expect(ids(await runRecursive("from: {name: Chat, alias: c}\nwhere: {isNull: {field: Company, source: c}}\n"))).toEqual([1, 3]);
@@ -221,14 +221,14 @@ where:
     expect(ids(await runRecursive(exists))).toEqual([1]);
   });
 
-  it("rejects operands a null test cannot have, as parseDTQL does", () => {
+  it("rejects operands a null test cannot have, as parseTugQLYaml does", () => {
     for (const operand of ["{values: [1]}", "{star: true}", "{aggregate: {function: max, args: [{field: total, source: i}]}}"]) {
-      expect(() => parseRecursiveDTQL(`from: {name: Invoice, alias: i}\nwhere: {isNull: ${operand}}\n`, recursiveSchema), operand).toThrow("shape at root.where.isNull");
+      expect(() => parseRecursiveTugQL(`from: {name: Invoice, alias: i}\nwhere: {isNull: ${operand}}\n`, recursiveSchema), operand).toThrow("shape at root.where.isNull");
     }
-    expect(() => parseRecursiveDTQL("from: {name: Invoice, alias: i}\nwhere:\n  and:\n    - isNotNull: {star: true}\n", recursiveSchema)).toThrow("shape at root.where.and[0].isNotNull: star");
-    expect(() => parseRecursiveDTQL("from: {name: Invoice, alias: i}\nwhere:\n  exists:\n    query:\n      from: {name: Chat, alias: c}\n      where: {isNull: {values: [1]}}\n", recursiveSchema)).toThrow("where.isNull: a values list");
-    expect(() => parseRecursiveDTQL("from: {name: Invoice, alias: i}\nhaving: {isNull: {star: true}}\n", recursiveSchema)).toThrow("shape at root.having.isNull");
-    expect(() => parseRecursiveDTQL("from: {name: Invoice, alias: i}\nhaving: {isNull: {aggregate: {function: max, args: [{field: total, source: i}]}}}\n", recursiveSchema)).not.toThrow();
+    expect(() => parseRecursiveTugQL("from: {name: Invoice, alias: i}\nwhere:\n  and:\n    - isNotNull: {star: true}\n", recursiveSchema)).toThrow("shape at root.where.and[0].isNotNull: star");
+    expect(() => parseRecursiveTugQL("from: {name: Invoice, alias: i}\nwhere:\n  exists:\n    query:\n      from: {name: Chat, alias: c}\n      where: {isNull: {values: [1]}}\n", recursiveSchema)).toThrow("where.isNull: a values list");
+    expect(() => parseRecursiveTugQL("from: {name: Invoice, alias: i}\nhaving: {isNull: {star: true}}\n", recursiveSchema)).toThrow("shape at root.having.isNull");
+    expect(() => parseRecursiveTugQL("from: {name: Invoice, alias: i}\nhaving: {isNull: {aggregate: {function: max, args: [{field: total, source: i}]}}}\n", recursiveSchema)).not.toThrow();
   });
 
   it("treats a scalar subquery operand that returns no row as null", async () => {
@@ -252,11 +252,11 @@ where:
   });
 
   it("round-trips and rejects malformed null tests", () => {
-    const query = parseRecursiveDTQL("from: {name: Chat, alias: c}\nwhere:\n  and:\n    - {isNull: {field: Company, source: c}}\n    - {isNotNull: {field: Region, source: c}}\n", recursiveSchema);
-    expect(parseRecursiveDTQL(stringifyRecursiveDTQL(query), recursiveSchema)).toEqual(query);
-    expect(parseRecursiveDTQL(JSON.stringify(serializeRecursiveDTQL(query)), recursiveSchema)).toEqual(query);
-    expect(() => parseRecursiveDTQL("from: {name: Chat, alias: c}\nwhere: {isNull: {field: Company, source: c}, isNotNull: {field: Company, source: c}}\n", recursiveSchema)).toThrow("unsupported key isNotNull");
-    expect(() => parseRecursiveDTQL("from: {name: Chat, alias: c}\nwhere: {isNull: {field: Company, source: zzz}}\n", recursiveSchema)).toThrow();
-    expect(() => parseRecursiveDTQL("from: {name: Chat, alias: c}\nwhere: {isNull: {}}\n", recursiveSchema)).toThrow("unknown expression");
+    const query = parseRecursiveTugQL("from: {name: Chat, alias: c}\nwhere:\n  and:\n    - {isNull: {field: Company, source: c}}\n    - {isNotNull: {field: Region, source: c}}\n", recursiveSchema);
+    expect(parseRecursiveTugQL(stringifyRecursiveTugQL(query), recursiveSchema)).toEqual(query);
+    expect(parseRecursiveTugQL(JSON.stringify(serializeRecursiveTugQL(query)), recursiveSchema)).toEqual(query);
+    expect(() => parseRecursiveTugQL("from: {name: Chat, alias: c}\nwhere: {isNull: {field: Company, source: c}, isNotNull: {field: Company, source: c}}\n", recursiveSchema)).toThrow("unsupported key isNotNull");
+    expect(() => parseRecursiveTugQL("from: {name: Chat, alias: c}\nwhere: {isNull: {field: Company, source: zzz}}\n", recursiveSchema)).toThrow();
+    expect(() => parseRecursiveTugQL("from: {name: Chat, alias: c}\nwhere: {isNull: {}}\n", recursiveSchema)).toThrow("unknown expression");
   });
 });
