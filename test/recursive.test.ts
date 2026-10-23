@@ -66,7 +66,7 @@ having: {left: {aggregate: {function: count, args: [{star: true}]}}, op: '==', r
   });
 
   it("pins every vendored byte to the Go manifest and source commit", () => {
-    expect(manifest.sourceCommit).toBe("96a1cd5b9c9ded7251dd4a8558df920db35a3b87");
+    expect(manifest.sourceCommit).toBe("56b804de624ade79efdc3d61970da7ac7562dc68");
     expect(readdirSync(root).sort()).toContain("suite.json");
     for (const [name, digest] of Object.entries(manifest.files)) {
       expect(createHash("sha256").update(fixture(name)).digest("hex")).toBe(digest);

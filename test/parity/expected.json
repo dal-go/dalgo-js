@@ -1,8 +1,8 @@
 {
  "dalgo": {
-  "commit": "96a1cd5b9c9ded7251dd4a8558df920db35a3b87",
+  "commit": "56b804de624ade79efdc3d61970da7ac7562dc68",
   "module": "github.com/dal-go/dalgo",
-  "version": "v0.95.2-0.20261023103012-96a1cd5b9c9d"
+  "version": "v0.95.2"
  },
  "results": {
   "01 saved per-capita fixture (desc, tie, div-by-zero)": {

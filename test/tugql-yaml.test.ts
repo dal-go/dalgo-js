@@ -133,7 +133,7 @@ describe("parseTugQLYaml", () => {
       readonly sourceCommit: string;
       readonly files: Readonly<Record<string, string>>;
     };
-    expect(manifest.sourceCommit).toBe("96a1cd5b9c9ded7251dd4a8558df920db35a3b87");
+    expect(manifest.sourceCommit).toBe("56b804de624ade79efdc3d61970da7ac7562dc68");
     for (const [name, expected] of Object.entries(manifest.files)) {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in canonical fixture at runtime.
       const fixture = readFileSync(new URL(`./testdata/joins/${name}`, import.meta.url), "utf8");

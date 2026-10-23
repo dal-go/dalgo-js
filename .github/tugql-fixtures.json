@@ -1,7 +1,7 @@
 {
   "schema": "dalgo.tugql-fixture-provenance.v1",
   "providerRepository": "https://github.com/dal-go/dalgo.git",
-  "providerCommit": "96a1cd5b9c9ded7251dd4a8558df920db35a3b87",
+  "providerCommit": "56b804de624ade79efdc3d61970da7ac7562dc68",
   "providerDirectory": "tugql/testdata/tugql/v1",
   "consumerDirectory": "test/testdata/tugql/v1",
   "fixtures": [
