@@ -64,12 +64,52 @@ export interface TugQLQueryDocument extends Readonly<Record<string, unknown>> {
   readonly from: Readonly<Record<string, unknown>>;
 }
 
+/**
+ * One source comment with its marker removed. In the TugQL text form a comment
+ * starts with `--` or `//` and runs to the end of the line; in the structured
+ * YAML form it is a `#` comment. `text` drops the marker and one optional
+ * following space, so `-- note`, `--note` and `// note` all carry "note".
+ * `blankBefore` records that at least one blank line separated this comment
+ * from the previous comment of the same group; it is never set on the first
+ * comment of a group.
+ */
+export interface TugQLComment {
+  readonly text: string;
+  readonly blankBefore?: true;
+}
+
+/** The comments attached to one anchor: lines above it and the comment on its own line. */
+export interface TugQLCommentGroup {
+  readonly leading?: readonly TugQLComment[];
+  readonly trailing?: TugQLComment;
+}
+
+/**
+ * Every comment of a TugQTree. Comments are not query semantics: they live
+ * beside the tree, are ignored by resolution, and never reach resolved queries
+ * or generated SQL.
+ *
+ * `anchors` maps a TugQTree path to the comments of the clause-level element at
+ * that path: `parameters`, `definitions[i]`, `query.from`,
+ * `query.from.joins[k]`, `query.from.joins[k].on[j]`, `query.where`,
+ * `query.groupBy`, `query.having`, `query.orderBy`, `query.limit` and
+ * `query.columns` (the SELECT clause). A comment with no clean anchor (inside a
+ * multi-line block, or at a non-anchor position of the YAML form) becomes a
+ * leading comment of the nearest following anchor; a comment after the last
+ * anchor is kept in `end`. A comment is never dropped.
+ */
+export interface TugQLComments {
+  readonly anchors?: Readonly<Record<string, TugQLCommentGroup>>;
+  readonly end?: readonly TugQLComment[];
+}
+
 export interface TugQLTree {
   readonly format: typeof TUGQL_TREE_FORMAT;
   readonly version: typeof TUGQL_VERSION;
   readonly parameters?: readonly TugQLParameter[];
   readonly definitions?: readonly TugQLDefinition[];
   readonly query: TugQLQueryDocument;
+  readonly comments?: TugQLComments;
 }
 
 export interface TugQLDocument {
@@ -185,6 +225,19 @@ interface Token {
   readonly endOffset: number;
 }
 
+/** Characters Go's unicode.IsSpace reports as space; JavaScript's trim differs (U+FEFF, U+0085). */
+function isGoSpace(char: string): boolean {
+  return /^[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/u.test(char);
+}
+
+/** Comment text after its marker: trailing space trimmed, then one leading space dropped. */
+function commentText(raw: string): string {
+  let end = raw.length;
+  while (end > 0 && isGoSpace(raw[end - 1]!)) end -= 1;
+  const trimmed = raw.slice(0, end);
+  return trimmed.startsWith(" ") ? trimmed.slice(1) : trimmed;
+}
+
 function firstUnpairedSurrogate(source: string): TugQLDiagnostic | undefined {
   let line = 1; let column = 1;
   for (let offset = 0; offset < source.length;) {
@@ -278,10 +331,12 @@ function tokenizeTugQL(source: string): { readonly tokens: readonly Token[]; rea
     const start = offset;
     const startLine = line;
     const startColumn = column;
-    if (source.startsWith("--", offset)) {
+    if (source.startsWith("--", offset) || source.startsWith("//", offset)) {
+      // Both markers start an end-of-line comment. Quoted values are consumed
+      // whole below, so neither marker is seen inside a literal or identifier.
       advance(); advance();
       while (offset < source.length && source.codePointAt(offset) !== 10 && source.codePointAt(offset) !== 13) advance();
-      push("comment", start, startLine, startColumn, source.slice(start + 2, offset));
+      push("comment", start, startLine, startColumn, commentText(source.slice(start + 2, offset)));
       continue;
     }
     if (current === "'" || current === '"' || current === "`") {
@@ -334,9 +389,9 @@ function tokenizeTugQL(source: string): { readonly tokens: readonly Token[]; rea
     const pair = source.slice(offset, offset + 2);
     if (["<=", ">=", "!=", "<>", "==", "||", "&&"].includes(pair)) { advance(); advance(); push("symbol", start, startLine, startColumn); continue; }
     if ("(),.*+-/%=<>;".includes(current)) { advance(); push("symbol", start, startLine, startColumn); continue; }
+    // Any other character is a lone symbol, as in the Go lexer; the parser reports where it is not allowed.
     advance();
     push("symbol", start, startLine, startColumn);
-    diagnostics.push({ code: "unexpected-character", message: `unexpected character ${JSON.stringify(current)}`, span: spanFrom(startLine, startColumn) });
   }
   if (tokens.length > maxTokens) return { tokens: [], diagnostics };
   return { tokens, diagnostics };
@@ -346,6 +401,8 @@ interface SourceLine {
   readonly indent: string;
   readonly number: number;
   readonly tokens: readonly Token[];
+  /** The line carries a comment (code lines may also have one). */
+  readonly hasComment: boolean;
 }
 
 interface Clause {
@@ -370,12 +427,13 @@ function linesFromTokens(source: string, tokens: readonly Token[]): SourceLine[]
   const rawLines = source.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
   const lines = rawLines.map((raw, index) => {
     const indent = (/^[ \t]*/u.exec(raw))?.[0] ?? "";
-    return { indent, number: index + 1, tokens: [] as Token[] };
+    return { indent, number: index + 1, tokens: [] as Token[], hasComment: false };
   });
   for (const token of tokens) {
-    if (token.kind !== "comment" && lines[token.span.start.line - 1] !== undefined) {
-      (lines[token.span.start.line - 1] as { tokens: Token[] }).tokens.push(token);
-    }
+    const line = lines[token.span.start.line - 1];
+    if (line === undefined) continue;
+    if (token.kind === "comment") (line as { hasComment: boolean }).hasComment = true;
+    else (line as { tokens: Token[] }).tokens.push(token);
   }
   return lines;
 }
@@ -479,16 +537,16 @@ function structuralIndentUnit(lines: readonly SourceLine[]): { readonly unit: st
   let style: "spaces" | "tabs" | undefined;
   const diagnostics: TugQLDiagnostic[] = [];
   for (const line of lines) {
-    if (line.tokens.length === 0 || line.indent.length === 0) continue;
+    if ((line.tokens.length === 0 && !line.hasComment) || line.indent.length === 0) continue;
     const hasSpaces = line.indent.includes(" ");
     const hasTabs = line.indent.includes("\t");
     if (hasSpaces && hasTabs) {
-      diagnostics.push(diagnostic("indentation", "tabs and spaces cannot be mixed", line.tokens[0]!.span));
+      diagnostics.push(diagnostic("indentation", "tabs and spaces cannot be mixed", line.tokens[0]?.span ?? spanForLine(line)));
       continue;
     }
     const current: "spaces" | "tabs" = hasTabs ? "tabs" : "spaces";
     if (current === "spaces" && line.indent.length % 2 !== 0) diagnostics.push(diagnostic("indentation", "spaces must be used in two-space levels", spanForLine(line)));
-    if (style !== undefined && style !== current) diagnostics.push(diagnostic("indentation", "tabs and spaces cannot be mixed", line.tokens[0]!.span));
+    if (style !== undefined && style !== current) diagnostics.push(diagnostic("indentation", "tabs and spaces cannot be mixed", line.tokens[0]?.span ?? spanForLine(line)));
     style ??= current;
   }
   return { unit: style === "tabs" ? "\t" : "  ", diagnostics };
@@ -719,7 +777,7 @@ function parseColumns(tokens: readonly Token[], source: string): Readonly<Record
     const openingLine = rawLines[opening.span.start.line - 1] ?? "";
     const openingIndent = (/^[ \t]*/u.exec(openingLine)?.[0]) ?? "";
     const closingIndent = (/^[ \t]*/u.exec(closingLine)?.[0]) ?? "";
-    if (closingLine.trim() !== ")" || closingIndent !== openingIndent) throw new Error("SELECT block closing ')' must be alone and aligned with SELECT");
+    if (!lineIsOnlyCloseParen(closingLine) || closingIndent !== openingIndent) throw new Error("SELECT block closing ')' must be alone and aligned with SELECT");
   }
   const items = block ? splitSelectBlock(tokens.slice(1, -1)) : parseCommaItems(tokens);
   return items.map((item) => {
@@ -742,6 +800,18 @@ function parseColumns(tokens: readonly Token[], source: string): Readonly<Record
     } else Object.assign(column, parseExpression(item));
     return column;
   });
+}
+
+/** A line that holds only `)`, optionally followed by a comment. */
+function lineIsOnlyCloseParen(rawLine: string): boolean {
+  const tokens = tokenizeTugQL(rawLine).tokens.filter((token) => token.kind !== "comment");
+  return tokens.length === 1 && tokens[0]!.text === ")";
+}
+
+/** A line that holds only a comment; its indentation never matters. */
+function isCommentOnlyLine(rawLine: string): boolean {
+  const content = rawLine.trimStart();
+  return content.startsWith("--") || content.startsWith("//");
 }
 
 function splitSelectBlock(tokens: readonly Token[]): Token[][] {
@@ -777,7 +847,7 @@ function parseScalarColumn(item: readonly Token[], source: string): Readonly<Rec
   const indentation = structuralIndentUnit(linesFromTokens(source, tokenizeTugQL(source).tokens)).unit;
   const prefix = itemIndent + indentation;
   const bodyLines = lines.slice(startLine, closeLine - 1);
-  for (const line of bodyLines) if (line.trim().length > 0 && !line.startsWith(prefix)) throw new Error("nested query body must add one structural indentation level");
+  for (const line of bodyLines) if (line.trim().length > 0 && !isCommentOnlyLine(line) && !line.startsWith(prefix)) throw new Error("nested query body must add one structural indentation level");
   const bodyText = bodyLines.map((line) => line.startsWith(prefix) ? line.slice(prefix.length) : line).join("\n");
   const parsed = parseDocumentInner(bodyText, false, 1);
   if (parsed.diagnostics.length > 0 || parsed.document.tree === undefined) throw new Error(`nested scalar query: ${parsed.diagnostics[0]?.message ?? "invalid nested query"}`);
@@ -1018,6 +1088,7 @@ function parseDocumentInner(source: string, allowParameters: boolean, depth: num
   const keywordDiagnostics = validateKeywordStyle(lexed.tokens);
   const diagnostics = [...lexed.diagnostics, ...indentation.diagnostics];
   const spans: TugQLSourceNode[] = [];
+  const commentUnits: CommentUnit[] = [];
   let index = 0;
   while (index < lines.length && lines[index]!.tokens.length === 0) index += 1;
   const parameters: TugQLParameter[] = [];
@@ -1044,6 +1115,7 @@ function parseDocumentInner(source: string, allowParameters: boolean, depth: num
           } catch (error) { diagnostics.push(diagnostic(errorMessage(error).includes("more than once") ? "duplicate_parameter" : "invalid_parameter", errorMessage(error), spanForLine(item))); }
         }
         spans.push({ path: "parameters", span: spanForLine(header) });
+        commentUnits.push({ path: "parameters", first: header.number, last: lines[close]!.number });
         index = close + 1;
       }
     }
@@ -1055,7 +1127,10 @@ function parseDocumentInner(source: string, allowParameters: boolean, depth: num
     if (lines[index]!.indent !== "") diagnostics.push(diagnostic("indentation", "WITH declarations must not be indented", spanForLine(lines[index]!)));
     const parsed = parseDefinition(lines, rawLines, index, depth);
     diagnostics.push(...parsed.diagnostics);
-    if (parsed.definition !== undefined) definitions.push(parsed.definition);
+    if (parsed.definition !== undefined) {
+      commentUnits.push({ path: `definitions[${definitions.length.toString()}]`, first: lines[index]!.number, last: lines[parsed.next - 1]!.number });
+      definitions.push(parsed.definition);
+    }
     spans.push(...parsed.nodes);
     if (parsed.next <= index) break;
     index = parsed.next;
@@ -1097,9 +1172,138 @@ function parseDocumentInner(source: string, allowParameters: boolean, depth: num
     }
   }
   const uniqueFinalDiagnostics = uniqueDiagnostics(finalDiagnostics);
-  const validTree = uniqueFinalDiagnostics.length === 0 ? tree : undefined;
+  let validTree: TugQLTree | undefined = uniqueFinalDiagnostics.length === 0 ? tree : undefined;
+  if (validTree !== undefined && depth === 0) {
+    const comments = commentsFromTokens(lexed.tokens);
+    if (comments.length > 0) {
+      const units = [...commentUnits, ...clauseCommentUnits(collectClauses(lines.slice(index)).clauses)];
+      validTree = { ...validTree, comments: attachComments(rawLines, comments, units) };
+    }
+  }
   const document: TugQLDocument = { source, ...(validTree === undefined ? {} : { tree: validTree }), sourceMetadata: { format: TUGQL_SOURCE_FORMAT, version: TUGQL_VERSION } };
   return { document, diagnostics: uniqueFinalDiagnostics };
+}
+
+/** A source region (1-based, inclusive lines) that owns the comments written inside and just above it. */
+interface CommentUnit {
+  readonly path: string;
+  readonly first: number;
+  readonly last: number;
+}
+
+/** One comment as the lexer sees it: `marker` is the author's spelling and `trailing` means code precedes it on its line. */
+export interface TugQLCommentToken {
+  readonly marker: "--" | "//";
+  readonly text: string;
+  /** One-based line of the marker. */
+  readonly line: number;
+  /** One-based Unicode scalar-value column of the marker. */
+  readonly column: number;
+  readonly trailing: boolean;
+}
+
+/** Lists the comments of TugQL source text in source order. Returns an empty list when the source cannot be lexed. */
+export function lexTugQLComments(source: string): readonly TugQLCommentToken[] {
+  const lexed = tokenizeTugQL(source);
+  return lexed.diagnostics.some((item) => item.code === "invalid_utf8" || item.code === "input_too_large") ? [] : commentsFromTokens(lexed.tokens);
+}
+
+function commentsFromTokens(tokens: readonly Token[]): TugQLCommentToken[] {
+  const comments: TugQLCommentToken[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    if (token.kind !== "comment") continue;
+    const previous = tokens[index - 1];
+    comments.push({
+      marker: token.text.startsWith("//") ? "//" : "--",
+      text: token.value,
+      line: token.span.start.line,
+      column: token.span.start.column,
+      trailing: previous?.span.end.line === token.span.start.line,
+    });
+  }
+  return comments;
+}
+
+/** Names the clause lines of the main query as comment anchors. A JOIN is joins[k]; each ON is on[j] of the latest JOIN. */
+function clauseCommentUnits(clauses: readonly Clause[]): CommentUnit[] {
+  const units: CommentUnit[] = [];
+  let joins = -1;
+  let ons = 0;
+  for (const clause of clauses) {
+    let path = "";
+    switch (clause.name) {
+      case "from": path = "query.from"; break;
+      case "join": case "left join":
+        joins += 1; ons = 0;
+        path = `query.from.joins[${joins.toString()}]`;
+        break;
+      case "on":
+        path = `query.from.joins[${joins.toString()}].on[${ons.toString()}]`;
+        ons += 1;
+        break;
+      case "where": path = "query.where"; break;
+      case "group by": path = "query.groupBy"; break;
+      case "having": path = "query.having"; break;
+      case "order by": path = "query.orderBy"; break;
+      case "limit": path = "query.limit"; break;
+      case "select": path = "query.columns"; break;
+      default: break;
+    }
+    units.push({ path, first: clause.span.start.line, last: clause.span.end.line });
+  }
+  return units;
+}
+
+interface PlacedComment {
+  readonly line: number;
+  readonly comment: { text: string; blankBefore?: true };
+}
+
+function blankSeparated(rawLines: readonly string[], placed: readonly PlacedComment[]): TugQLComment[] {
+  return placed.map((item, index) => {
+    const previous = placed[index - 1];
+    let blank = false;
+    if (previous !== undefined && item.line > previous.line + 1) {
+      blank = rawLines.slice(previous.line, item.line - 1).every((between) => between.trim() === "");
+    }
+    return blank ? { text: item.comment.text, blankBefore: true as const } : { text: item.comment.text };
+  });
+}
+
+/** Maps lexer comments to anchors. It is total: every comment lands in exactly one place. */
+function attachComments(rawLines: readonly string[], comments: readonly TugQLCommentToken[], units: readonly CommentUnit[]): TugQLComments {
+  const anchors = new Map<string, { leading?: TugQLComment[]; trailing?: TugQLComment }>();
+  const leading: PlacedComment[][] = Array.from({ length: units.length + 1 }, () => []); // last slot is the document end
+  for (const comment of comments) {
+    let low = 0;
+    let high = units.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (units[mid]!.last >= comment.line) high = mid; else low = mid + 1;
+    }
+    let target = low;
+    const unit = units[low];
+    if (unit !== undefined && unit.first <= comment.line) {
+      if (comment.trailing && comment.line === unit.first) {
+        anchors.set(unit.path, { ...anchors.get(unit.path), trailing: { text: comment.text } });
+        continue;
+      }
+      // Inside a multi-line unit there is no clean anchor: the comment moves to the nearest following element.
+      target = low + 1;
+    }
+    leading[target]!.push({ line: comment.line, comment: { text: comment.text } });
+  }
+  let end: TugQLComment[] | undefined;
+  leading.forEach((placed, index) => {
+    const list = blankSeparated(rawLines, placed);
+    if (index === units.length) { end = list.length === 0 ? undefined : list; return; }
+    if (list.length > 0) anchors.set(units[index]!.path, { ...anchors.get(units[index]!.path), leading: list });
+  });
+  return {
+    ...(anchors.size === 0 ? {} : { anchors: Object.fromEntries(anchors) }),
+    ...(end === undefined ? {} : { end }),
+  };
 }
 
 function uniqueDiagnostics(diagnostics: readonly TugQLDiagnostic[]): TugQLDiagnostic[] {
@@ -1167,7 +1371,7 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
     const header = tree as { readonly format: string; readonly version: number };
     if (header.format !== TUGQL_TREE_FORMAT || header.version !== TUGQL_VERSION) return fail("unsupported_version", "unsupported TugQTree format or version");
     validateTugQLTree(tree);
-    if (parsed !== undefined && stableJSON(tree) !== stableJSON(parsed.document.tree)) return fail("source_tree_mismatch", "TugQL source and semantic tree do not describe the same query");
+    if (parsed !== undefined && stableJSON(withoutComments(tree)) !== stableJSON(withoutComments(parsed.document.tree))) return fail("source_tree_mismatch", "TugQL source and semantic tree do not describe the same query");
     let expandedSemanticNodes = authoredNodes;
     const authoredRootQueryNodes = countTugQLQueryNodes(tree.query, maxSemanticNodes);
 
@@ -1564,8 +1768,15 @@ function requireImportContext(context: TugQLResolveContext): void {
   }
 }
 
+function withoutComments(tree: TugQLTree | undefined): unknown {
+  if (tree === undefined) return undefined;
+  const rest: Record<string, unknown> = { ...tree };
+  delete rest.comments;
+  return rest;
+}
+
 function validateTugQLTree(tree: TugQLTree): void {
-  validateKeys(tree, ["format", "version", "parameters", "definitions", "query"], "tree");
+  validateKeys(tree, ["format", "version", "parameters", "definitions", "query", "comments"], "tree");
   if (!Array.isArray(tree.parameters ?? [])) invalidTree("parameters must be an array");
   for (const parameter of tree.parameters ?? []) {
     validateKeys(parameter, ["name", "type", "required", "default"], "parameter");
@@ -2624,7 +2835,7 @@ function reindentTugQL(source: string, options: TugQLFormatOptions, originalToke
       if (clause !== undefined) {
         level = clause.name === "on" ? queryDepth + scalarDepth + 1 : queryDepth + scalarDepth;
         lastClauseLevel = level;
-      } else if (content.startsWith("--")) level = blocks.at(-1)?.kind === "parameters" ? (blocks.at(-1)?.level ?? 0) + 1 : queryDepth + scalarDepth;
+      } else if (content.startsWith("--") || content.startsWith("//")) level = blocks.at(-1)?.kind === "parameters" ? (blocks.at(-1)?.level ?? 0) + 1 : queryDepth + scalarDepth;
       else if (!sourceWasValid && line.indent.length === 0) level = 0;
       else level = lastClauseLevel + 1;
     }

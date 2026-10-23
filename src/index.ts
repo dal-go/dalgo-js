@@ -13,3 +13,4 @@ export * from "./source-rights.js";
 export * from "./provider-reads.js";
 export * from "./source-composition.js";
 export * from "./tugql.js";
+export * from "./tugql-convert.js";

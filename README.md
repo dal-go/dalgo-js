@@ -181,7 +181,8 @@ on the header line and closers have their own aligned line. Indent consistently
 with two spaces or one tab. Reserved words are consistently lowercase or
 uppercase; identifiers retain their spelling. `as` is mandatory for aliases
 and CTEs. Ordinary fields use `expression as Alias`; scalar subqueries use
-`Name as (`. End-of-line `--` comments are preserved by formatting.
+`Name as (`. End-of-line comments start with `--` or `//` and are preserved by
+formatting, each keeping the marker its author wrote.
 
 `WHERE` filters invoice rows before grouping; `HAVING` filters the completed
 groups. The clause order is `FROM`, optional `WHERE`, optional `GROUP BY`,
@@ -219,10 +220,34 @@ current query engine cannot guarantee exact decimal or timestamp comparison
 semantics, so resolution rejects those parameter types explicitly while their
 authoring syntax and values remain representable.
 
+### Comments
+
+In the text form a comment is `--` or `//` to the end of the line. Both are
+recognised only outside string literals and quoted identifiers, so
+`'https://example.com/x'` and `"a//b"` contain no comment. `#` is not a comment
+in the text form. A comment never reaches a resolved query or generated SQL:
+`parseTugQL` keeps comments on `tree.comments` beside the query, and resolution
+ignores them.
+
+`tugqlToYaml(source)` converts text to the structured YAML form and
+`yamlToTugQL(yaml)` converts it back (`printTugQL(tree)` prints a tree). Every
+text comment becomes a `#` comment attached where it annotated: comment lines
+above a clause are the head comment of that clause, and a comment after code is
+the same-line comment. A comment inside a multi-line block (PARAMETERS, a WITH
+body, a SELECT block) has no clean anchor and becomes a leading comment of the
+nearest following clause; a comment after the last clause is a document-end
+comment. No comment is dropped. YAML to text writes every `#` comment as
+`--`, so a `//` marker is lost on a text to YAML to text round trip; this is
+accepted and documented.
+
+The YAML written by `tugqlToYaml` is byte-identical to the Go reference
+(4-space indentation, canonical key order, Go's scalar quoting, so the YAML 1.1
+key `on` is written as `"on"`), and the shared `comments.json` vectors pin that.
+
 The shared Go/TypeScript fixture files are byte-identical and are checked
-against their SHA-256 manifest and a pinned Go provider commit in CI. Query
-YAML parity compares parsed mappings, not serializer bytes: key ordering and
-quoting are serializer details. At the executable boundary, the only
+against their SHA-256 manifest and a pinned Go provider commit in CI. Outside
+the comment vectors, query YAML parity compares parsed mappings: key ordering
+and quoting are serializer details. At the executable boundary, the only
 documented shape normalization moves a scalar subquery alias between the
 column expression and the containing query item, matching the existing
 recursive engine representation; the authored TugQTree keeps the alias on the
