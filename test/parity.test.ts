@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import {
-  executeJoinedDTQLQuery,
-  isJoinedDTQLQuery,
+  executeJoinedTugQLQuery,
+  isJoinedTugQLQuery,
   key,
-  parseDTQL,
-  serializeJoinedDTQL,
-  stringifyJoinedDTQL,
-  type DTQLSchema,
+  parseTugQLYaml,
+  serializeJoinedTugQL,
+  stringifyJoinedTugQL,
+  type TugQLSchema,
   type ExistingRecord,
-  type JoinedDTQLQuery,
+  type JoinedTugQLQuery,
   type QueryExecutor,
   type QueryRelation,
   type StructuredQuery,
@@ -27,7 +27,7 @@ import {
  *  - rows must equal exactly: same order, same keys, same values; numbers are
  *    compared to within 1e-9 (absolute below 1, relative above);
  *  - when Go reports an error, TypeScript must throw as well. If Go failed
- *    while parsing (phase "parse") TypeScript must already fail in parseDTQL.
+ *    while parsing (phase "parse") TypeScript must already fail in parseTugQLYaml.
  *    Messages differ between the engines, so a case may name a substring the
  *    TypeScript message must contain ("tsError") to pin its location.
  */
@@ -74,7 +74,7 @@ const cases = listFiles(new URL("cases/", parityDirectory)).filter((name) => nam
 
 // The test schema lists each table's fields as the union of its row keys; an
 // empty table has no rows to read them from, so it declares an `id` field.
-const schema: DTQLSchema = {
+const schema: TugQLSchema = {
   tables: Object.entries(dataset.tables).flatMap(([database, tables]) => Object.entries(tables).map(([name, rows]) => {
     const fields = [...new Set(rows.flatMap((row) => Object.keys(row)))];
     return { database, name, fields: fields.length === 0 ? ["id"] : fields };
@@ -103,11 +103,11 @@ function executor(database: string | undefined): QueryExecutor {
 
 type Outcome = { readonly rows: readonly Data[] } | { readonly error: Error; readonly phase: "parse" | "execute" };
 
-async function run(definition: CaseDefinition, streaming: boolean): Promise<Outcome & { readonly query?: JoinedDTQLQuery }> {
-  let query: JoinedDTQLQuery;
+async function run(definition: CaseDefinition, streaming: boolean): Promise<Outcome & { readonly query?: JoinedTugQLQuery }> {
+  let query: JoinedTugQLQuery;
   try {
-    const parsed = parseDTQL(document(definition), schema);
-    if (!isJoinedDTQLQuery(parsed)) throw new Error("parity cases must use the relation model");
+    const parsed = parseTugQLYaml(document(definition), schema);
+    if (!isJoinedTugQLQuery(parsed)) throw new Error("parity cases must use the relation model");
     query = parsed;
   } catch (error) {
     return { error: error as Error, phase: "parse" };
@@ -118,7 +118,7 @@ async function run(definition: CaseDefinition, streaming: boolean): Promise<Outc
       resolveExecutor: (relation: QueryRelation) => executor(relation.database),
       ...(streaming ? { scanPages: async function* (relation: QueryRelation) { await Promise.resolve(); yield { records: records(relation.database ?? "chinook", relation.name) }; } } : {}),
     };
-    const page = await executeJoinedDTQLQuery(executor(undefined), query, options);
+    const page = await executeJoinedTugQLQuery(executor(undefined), query, options);
     return { rows: page.records.map((row) => row.data), query };
   } catch (error) {
     return { error: error as Error, phase: "execute" };
@@ -178,12 +178,12 @@ describe("Go parity suite", () => {
     });
   });
 
-  it.each(cases.map((definition) => [definition.name, definition] as const))("round-trips %s through canonical DTQL", async (_name, definition) => {
+  it.each(cases.map((definition) => [definition.name, definition] as const))("round-trips %s through canonical TugQL", async (_name, definition) => {
     const outcome = await run(definition, false);
     if ("error" in outcome) return;
     const query = outcome.query;
     if (query === undefined) throw new Error("parsed query expected");
-    expect(parseDTQL(stringifyJoinedDTQL(query), schema)).toEqual(query);
-    expect(parseDTQL(JSON.stringify(serializeJoinedDTQL(query)), schema)).toEqual(query);
+    expect(parseTugQLYaml(stringifyJoinedTugQL(query), schema)).toEqual(query);
+    expect(parseTugQLYaml(JSON.stringify(serializeJoinedTugQL(query)), schema)).toEqual(query);
   });
 });

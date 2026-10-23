@@ -1,10 +1,10 @@
 # JS-local materialized source composition
 
-`executeSourceComposedJoinedDTQLQuery(query, options)` is an explicit opt-in
+`executeSourceComposedJoinedTugQLQuery(query, options)` is an explicit opt-in
 materialized relation-tree join. Each leaf is independently admitted by a
 trusted application before any source query. The output has
 `sourceComposition.format: "dalgo-source-composition/1"`, including when
-`records` is empty. Ordinary `executeJoinedDTQLQuery`, paged joins and recursive
+`records` is empty. Ordinary `executeJoinedTugQLQuery`, paged joins and recursive
 execution continue to refuse annotated inputs.
 
 This core slice is verified with fabricated in-memory currency descriptors and

@@ -70,9 +70,9 @@ describe("isCapabilityAware", () => {
       ...caps,
       joins: true,
       aggregation: false,
-      dtql: true,
-      dtqlStreaming: true,
-      dtqlStreamingErrors: false,
+      tugql: true,
+      tugqlStreaming: true,
+      tugqlStreamingErrors: false,
     };
     const db = { capabilities: () => full };
     expect(isCapabilityAware(db)).toBe(true);

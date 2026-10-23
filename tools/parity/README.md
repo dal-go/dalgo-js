@@ -1,7 +1,7 @@
 # Go parity generator
 
 `main.go` runs every case in `../../test/parity/cases/*.json` through the Go
-DTQL engine (`dtql.Deserialize` then `dal.ExecuteFederatedQuery`, over the
+TugQL engine (`tugql.Deserialize` then `dal.ExecuteFederatedQuery`, over the
 in-memory tables of `../../test/parity/dataset.json`) and writes the results to
 `../../test/parity/expected.json`, together with the dalgo version and commit.
 

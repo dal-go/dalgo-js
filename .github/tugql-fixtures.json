@@ -1,8 +1,8 @@
 {
   "schema": "dalgo.tugql-fixture-provenance.v1",
   "providerRepository": "https://github.com/dal-go/dalgo.git",
-  "providerCommit": "c8f5533e52f9a818814ddc761409fc17273445cd",
-  "providerDirectory": "dtql/testdata/tugql/v1",
+  "providerCommit": "56b804de624ade79efdc3d61970da7ac7562dc68",
+  "providerDirectory": "tugql/testdata/tugql/v1",
   "consumerDirectory": "test/testdata/tugql/v1",
   "fixtures": [
     {
@@ -24,6 +24,10 @@
     {
       "name": "budget.json",
       "format": "tugql-budget-suite"
+    },
+    {
+      "name": "comments.json",
+      "format": "tugql-comments-suite"
     }
   ]
 }

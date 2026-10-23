@@ -1,7 +1,7 @@
 export * from "./capabilities.js";
 export * from "./collection.js";
 export * from "./database.js";
-export * from "./dtql.js";
+export * from "./tugql-yaml.js";
 export * from "./errors.js";
 export * from "./key.js";
 export * from "./join.js";
@@ -13,3 +13,4 @@ export * from "./source-rights.js";
 export * from "./provider-reads.js";
 export * from "./source-composition.js";
 export * from "./tugql.js";
+export * from "./tugql-convert.js";

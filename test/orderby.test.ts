@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  executeJoinedDTQLQuery,
-  isJoinedDTQLQuery,
+  executeJoinedTugQLQuery,
+  isJoinedTugQLQuery,
   key,
-  parseDTQL,
-  serializeJoinedDTQL,
-  stringifyJoinedDTQL,
-  type DTQLSchema,
+  parseTugQLYaml,
+  serializeJoinedTugQL,
+  stringifyJoinedTugQL,
+  type TugQLSchema,
   type ExistingRecord,
-  type JoinedDTQLQuery,
+  type JoinedTugQLQuery,
   type QueryExecutor,
   type StructuredQuery,
 } from "../src/index.js";
 
 type Data = Record<string, unknown>;
 
-const schema: DTQLSchema = {
+const schema: TugQLSchema = {
   tables: [
     { database: "chinook", name: "Invoice", fields: ["InvoiceId", "BillingCountry", "Total"] },
     { database: "geo", name: "country_aliases", fields: ["alias", "country", "population"] },
@@ -38,15 +38,15 @@ function record(collection: string, id: string, data: Data): ExistingRecord<Data
   return { key: key(collection, id), exists: true, data };
 }
 
-function joined(input: unknown): JoinedDTQLQuery {
-  const query = parseDTQL(input, schema);
-  if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+function joined(input: unknown): JoinedTugQLQuery {
+  const query = parseTugQLYaml(input, schema);
+  if (!isJoinedTugQLQuery(query)) throw new Error("expected joined query");
   return query;
 }
 
 function perCapitaYaml(): string {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call -- Vitest reads the checked-in fixture at runtime.
-  const text: string = readFileSync(new URL("./testdata/orderby/chinook-sales-per-capita.dtql.yaml", import.meta.url), "utf8");
+  const text: string = readFileSync(new URL("./testdata/orderby/chinook-sales-per-capita.tugql.yaml", import.meta.url), "utf8");
   return text;
 }
 
@@ -58,7 +58,7 @@ const perCapitaOrder = {
   },
 };
 
-describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
+describe("expression orderBy keys (parity with the Go TugQL engine)", () => {
   describe("parsing and serialisation", () => {
     it("parses a binary key over an aggregate and keeps field keys in their existing shape", () => {
       const query = joined({
@@ -80,13 +80,13 @@ describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
 
     it("round-trips expression keys losslessly through object, JSON and YAML forms", () => {
       const fixture = perCapitaYaml();
-      const query = parseDTQL(fixture, schema);
-      if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+      const query = parseTugQLYaml(fixture, schema);
+      if (!isJoinedTugQLQuery(query)) throw new Error("expected joined query");
       expect(query.orders).toHaveLength(1);
-      const serialized = serializeJoinedDTQL(query);
+      const serialized = serializeJoinedTugQL(query);
       expect(serialized.orderBy).toEqual([{ ...perCapitaOrder, desc: true }]);
-      expect(parseDTQL(JSON.stringify(serialized), schema)).toEqual(query);
-      expect(parseDTQL(stringifyJoinedDTQL(query), schema)).toEqual(query);
+      expect(parseTugQLYaml(JSON.stringify(serialized), schema)).toEqual(query);
+      expect(parseTugQLYaml(stringifyJoinedTugQL(query), schema)).toEqual(query);
     });
 
     it("round-trips a mixed field and expression key list in order", () => {
@@ -95,11 +95,11 @@ describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
         orderBy: [{ field: "n", source: "a", desc: true }, { binary: { op: "-", left: { value: 0 }, right: { field: "id", source: "a" } } }],
       };
       const query = joined(document);
-      expect(serializeJoinedDTQL(query).orderBy).toEqual([
+      expect(serializeJoinedTugQL(query).orderBy).toEqual([
         { field: "n", source: "a", desc: true },
         { binary: { op: "-", left: { value: 0 }, right: { field: "id", source: "a" } } },
       ]);
-      expect(parseDTQL(stringifyJoinedDTQL(query), schema)).toEqual(query);
+      expect(parseTugQLYaml(stringifyJoinedTugQL(query), schema)).toEqual(query);
     });
 
     it("still rejects malformed order keys with a precise location", () => {
@@ -113,7 +113,7 @@ describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
     });
 
     it("rejects expression keys on the legacy single-source model", () => {
-      expect(() => parseDTQL({ from: { name: "A" }, orderBy: [{ binary: { op: "+", left: { field: "id" }, right: { value: 1 } } }], limit: 1 }, schema)).toThrow("orderBy expressions require an aliased or joined relation model");
+      expect(() => parseTugQLYaml({ from: { name: "A" }, orderBy: [{ binary: { op: "+", left: { field: "id" }, right: { value: 1 } } }], limit: 1 }, schema)).toThrow("orderBy expressions require an aliased or joined relation model");
     });
   });
 
@@ -139,28 +139,28 @@ describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
     const executor = new MemoryExecutor({ Invoice: invoices, country_aliases: aliases, population_wb: populations });
     const withExecutor = { resolveExecutor: () => executor };
 
-    function perCapita(desc: boolean | undefined): JoinedDTQLQuery {
+    function perCapita(desc: boolean | undefined): JoinedTugQLQuery {
       const fixture = perCapitaYaml();
-      const query = parseDTQL(fixture, schema);
-      if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+      const query = parseTugQLYaml(fixture, schema);
+      if (!isJoinedTugQLQuery(query)) throw new Error("expected joined query");
       const [order] = query.orders;
       if (order === undefined) throw new Error("expected an order key");
       return { ...query, orders: [{ ...order, direction: desc === false ? "asc" : "desc" }] };
     }
 
     it("runs the saved per-capita query: desc order, tie keeps first-seen group order, NULL (zero population) sorts last", async () => {
-      const result = await executeJoinedDTQLQuery(executor, perCapita(true), withExecutor);
+      const result = await executeJoinedTugQLQuery(executor, perCapita(true), withExecutor);
       expect(result.records.map((row) => row.data.country)).toEqual(["Iceland", "USA", "Malta", "Brazil", "Chile"]);
       expect(result.records.map((row) => row.data.salesPerMillion)).toEqual([1_000_000, 100_000, 100_000, 25_000, null]);
     });
 
     it("sorts the same expression ascending with NULL first and the tie still in first-seen order", async () => {
-      const result = await executeJoinedDTQLQuery(executor, perCapita(false), withExecutor);
+      const result = await executeJoinedTugQLQuery(executor, perCapita(false), withExecutor);
       expect(result.records.map((row) => row.data.country)).toEqual(["Chile", "Brazil", "USA", "Malta", "Iceland"]);
     });
 
     it("applies offset and limit after ordering by the expression", async () => {
-      const result = await executeJoinedDTQLQuery(executor, { ...perCapita(true), offset: 1, limit: 2 }, withExecutor);
+      const result = await executeJoinedTugQLQuery(executor, { ...perCapita(true), offset: 1, limit: 2 }, withExecutor);
       expect(result.records.map((row) => row.data.country)).toEqual(["USA", "Malta"]);
     });
 
@@ -174,7 +174,7 @@ describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
           { field: "BillingCountry", source: "i" },
         ],
       });
-      const result = await executeJoinedDTQLQuery(executor, query, withExecutor);
+      const result = await executeJoinedTugQLQuery(executor, query, withExecutor);
       expect(result.records.map((row) => row.data.country)).toEqual(["Atlantis", "USA", "Malta", "Chile", "Brazil", "Peru", "Iceland"]);
     });
 
@@ -187,7 +187,7 @@ describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
         columns: [{ field: "alias", source: "a", as: "country" }],
         orderBy: [{ binary: { op: "-", left: { value: 0 }, right: { field: "population", source: "p" } } }],
       });
-      const result = await executeJoinedDTQLQuery(executor, query, withExecutor);
+      const result = await executeJoinedTugQLQuery(executor, query, withExecutor);
       expect(result.records.map((row) => row.data.country)).toEqual(["USA", "Brazil", "Malta", "Iceland", "Chile"]);
     });
 
@@ -198,7 +198,7 @@ describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
         orderBy: [{ value: 1, desc: true }],
       });
       const rows = ["x", "y", "z", "w"].map((id) => record("A", id, { id }));
-      const result = await executeJoinedDTQLQuery(new MemoryExecutor({ A: rows }), query);
+      const result = await executeJoinedTugQLQuery(new MemoryExecutor({ A: rows }), query);
       expect(result.records.map((row) => row.data.id)).toEqual(["x", "y", "z", "w"]);
     });
 
@@ -208,17 +208,17 @@ describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
         orderBy: [{ aggregate: { function: "count", args: [{ star: true }] } }],
       });
       const rows = ["x", "y"].map((id) => record("A", id, { id }));
-      const result = await executeJoinedDTQLQuery(new MemoryExecutor({ A: rows }), query);
+      const result = await executeJoinedTugQLQuery(new MemoryExecutor({ A: rows }), query);
       // No columns and no group key: the single group projects an empty row, as in Go.
       expect(result.records.map((row) => row.data)).toEqual([{}]);
     });
 
     it("rejects an expression key naming an unknown alias before scanning", async () => {
-      const query: JoinedDTQLQuery = {
+      const query: JoinedTugQLQuery = {
         ...joined({ from: { name: "A", alias: "a" } }),
         orders: [{ expression: { kind: "field", field: { field: "id", source: "ghost" } }, direction: "asc" }],
       };
-      await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), query)).rejects.toThrow("join_scope at orderBy[0].source");
+      await expect(executeJoinedTugQLQuery(new MemoryExecutor({}), query)).rejects.toThrow("join_scope at orderBy[0].source");
     });
 
     it("sorts a streamed (scanPages) flat aggregate join by an expression key", async () => {
@@ -237,7 +237,7 @@ describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
         ],
         orderBy: [{ binary: { op: "/", left: { aggregate: { function: "sum", args: [{ field: "Total", source: "i" }] } }, right: { field: "population", source: "p" } }, desc: true }],
       });
-      const result = await executeJoinedDTQLQuery(new MemoryExecutor({}), query, {
+      const result = await executeJoinedTugQLQuery(new MemoryExecutor({}), query, {
         scanPages: async function* (relation) {
           await Promise.resolve();
           if (relation.name === "population_wb") {
@@ -273,14 +273,14 @@ describe("expression orderBy keys (parity with the Go DTQL engine)", () => {
         orderBy: [{ aggregate: { function: "sum", args: [{ field: "Total", source: "i" }] } }],
         money: { minorUnitScale: 2, divisionScale: 4, rounding: "halfEven" },
       });
-      await expect(executeJoinedDTQLQuery(new MemoryExecutor({}), query, {
+      await expect(executeJoinedTugQLQuery(new MemoryExecutor({}), query, {
         scanPages: async function* () { await Promise.resolve(); yield { records: [] }; },
       })).rejects.toThrow("join_plan at orderBy: expression order keys are not supported in exact money mode");
     });
   });
 });
 
-describe("order keys, aliases and aggregate rules (parity with the Go DTQL engine)", () => {
+describe("order keys, aliases and aggregate rules (parity with the Go TugQL engine)", () => {
   const sale = { from: { name: "A", alias: "a" }, groupBy: [{ field: "id", source: "a" }] };
   const count = { aggregate: { function: "count", args: [{ star: true }] } };
   const sumN = { aggregate: { function: "sum", args: [{ field: "n", source: "a" }] } };
@@ -385,8 +385,8 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
 
     it("serialises a resolved alias as the expression it names, and that round-trips", () => {
       const query = joined({ ...aliased, orderBy: [{ field: "purchases", desc: true }] });
-      expect(serializeJoinedDTQL(query).orderBy).toEqual([{ ...count, desc: true }]);
-      expect(parseDTQL(stringifyJoinedDTQL(query), schema)).toEqual(query);
+      expect(serializeJoinedTugQL(query).orderBy).toEqual([{ ...count, desc: true }]);
+      expect(parseTugQLYaml(stringifyJoinedTugQL(query), schema)).toEqual(query);
     });
 
     it("names the unknown alias, and does not accept an alias with a source", () => {
@@ -398,7 +398,7 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
       const rows = [["x", 1], ["y", 2], ["x", 3], ["z", 4], ["y", 5], ["y", 6]].map(([id, n], index) => record("A", String(index), { id, n }));
       const executor = new MemoryExecutor({ A: rows });
       const run = async (extra: Record<string, unknown>): Promise<unknown[]> =>
-        (await executeJoinedDTQLQuery(executor, joined({ ...aliased, ...extra }))).records.map((row) => row.data);
+        (await executeJoinedTugQLQuery(executor, joined({ ...aliased, ...extra }))).records.map((row) => row.data);
       expect(await run({ orderBy: [{ field: "purchases", desc: true }, { field: "who", desc: true }] })).toEqual([
         { who: "y", purchases: 3 }, { who: "x", purchases: 2 }, { who: "z", purchases: 1 },
       ]);
@@ -410,17 +410,17 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
 
   describe("HAVING over any expression", () => {
     const rows = [["a", 10, 5], ["b", 9, 0], ["c", 3, 3], ["d", null, 4]].map(([id, n, d], index) => record("A", String(index), { id, n, d }));
-    const havingSchema: DTQLSchema = { tables: [{ name: "A", fields: ["id", "n", "d"] }] };
+    const havingSchema: TugQLSchema = { tables: [{ name: "A", fields: ["id", "n", "d"] }] };
     const run = async (having: unknown, orderBy: unknown[] = []): Promise<unknown[]> => {
-      const query = parseDTQL({
+      const query = parseTugQLYaml({
         from: { name: "A", alias: "a" },
         groupBy: [{ field: "id", source: "a" }],
         columns: [{ field: "id", source: "a" }],
         having,
         orderBy: [...orderBy, { field: "id", source: "a" }],
       }, havingSchema);
-      if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
-      return (await executeJoinedDTQLQuery(new MemoryExecutor({ A: rows }), query)).records.map((row) => row.data.id);
+      if (!isJoinedTugQLQuery(query)) throw new Error("expected joined query");
+      return (await executeJoinedTugQLQuery(new MemoryExecutor({ A: rows }), query)).records.map((row) => row.data.id);
     };
     const ratio = { binary: { op: "/", left: { aggregate: { function: "sum", args: [{ field: "n", source: "a" }] } }, right: { aggregate: { function: "sum", args: [{ field: "d", source: "a" }] } } } };
 
@@ -457,7 +457,7 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
       record("A", "5", { id: 5, n: 8, d: 2, note: "y" }),
     ];
     const run = async (document: Record<string, unknown>): Promise<unknown[]> =>
-      (await executeJoinedDTQLQuery(new MemoryExecutor({ A: data }), joined({ from: { name: "A", alias: "a" }, ...document }))).records.map((row) => row.data);
+      (await executeJoinedTugQLQuery(new MemoryExecutor({ A: data }), joined({ from: { name: "A", alias: "a" }, ...document }))).records.map((row) => row.data);
     const field = (name: string): Record<string, unknown> => ({ field: name, source: "a" });
     const over = (op: string, left: unknown, right: unknown): Record<string, unknown> => ({ binary: { op, left, right } });
 
@@ -519,7 +519,7 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
         ],
       });
       expect(result).toEqual([{ s: 17, notes: 7, mean: 7, present: 4 }]);
-      const empty = await executeJoinedDTQLQuery(new MemoryExecutor({ A: [record("A", "1", { id: 1, n: null, note: "x" })] }), joined({
+      const empty = await executeJoinedTugQLQuery(new MemoryExecutor({ A: [record("A", "1", { id: 1, n: null, note: "x" })] }), joined({
         from: { name: "A", alias: "a" },
         columns: [{ aggregate: { function: "sum", args: [field("n")] }, as: "s" }, { aggregate: { function: "sum", args: [field("note")] }, as: "t" }],
       }));
@@ -532,7 +532,7 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
     });
 
     it("an aggregate-only key with no columns returns exactly one empty row", async () => {
-      const result = await executeJoinedDTQLQuery(new MemoryExecutor({ A: data }), joined({ from: { name: "A", alias: "a" }, orderBy: [{ aggregate: { function: "count", args: [{ star: true }] } }] }));
+      const result = await executeJoinedTugQLQuery(new MemoryExecutor({ A: data }), joined({ from: { name: "A", alias: "a" }, orderBy: [{ aggregate: { function: "count", args: [{ star: true }] } }] }));
       expect(result.records).toHaveLength(1);
       expect(result.records[0]?.data).toEqual({});
       expect(Object.keys(result.records[0]?.data ?? { present: true })).toEqual([]);
@@ -548,8 +548,8 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
       await expect(run({ columns: [field("id")], orderBy: [huge] })).resolves.toHaveLength(5);
       await expect(run({ columns: [field("id"), { ...huge, as: "big" }] })).rejects.toThrow("join_plan at columns[1]: arithmetic overflow");
       // A parameter column cannot be parsed, but a hand-built query can still carry one.
-      const unbound: JoinedDTQLQuery = { ...joined({ from: { name: "A", alias: "a" } }), columns: [{ expression: { kind: "param", name: "p" }, as: "x" }] };
-      await expect(executeJoinedDTQLQuery(new MemoryExecutor({ A: data }), unbound)).rejects.toThrow("join_plan at columns[0]: parameters are not bound by generic execution");
+      const unbound: JoinedTugQLQuery = { ...joined({ from: { name: "A", alias: "a" } }), columns: [{ expression: { kind: "param", name: "p" }, as: "x" }] };
+      await expect(executeJoinedTugQLQuery(new MemoryExecutor({ A: data }), unbound)).rejects.toThrow("join_plan at columns[0]: parameters are not bound by generic execution");
     });
   });
 
@@ -564,13 +564,13 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
         orderBy: [{ field: "n", desc: true }],
       });
       expect(query.filters).toEqual([{ field: { field: "n", source: "a" }, operator: ">=", value: 2 }]);
-      const result = await executeJoinedDTQLQuery(new MemoryExecutor({ A: rows }), query);
+      const result = await executeJoinedTugQLQuery(new MemoryExecutor({ A: rows }), query);
       expect(result.records.map((row) => row.data)).toEqual([{ id: "r4" }, { id: "r2" }]);
     });
 
     it("an ordering comparison never matches a null value, whichever the operator", async () => {
       const run = async (op: string, value: number): Promise<unknown[]> =>
-        (await executeJoinedDTQLQuery(new MemoryExecutor({ A: rows }), joined({ from: { name: "A", alias: "a" }, where: { op, left: { field: "n", source: "a" }, right: { value } }, columns: [{ field: "id", source: "a" }] }))).records.map((row) => row.data.id);
+        (await executeJoinedTugQLQuery(new MemoryExecutor({ A: rows }), joined({ from: { name: "A", alias: "a" }, where: { op, left: { field: "n", source: "a" }, right: { value } }, columns: [{ field: "id", source: "a" }] }))).records.map((row) => row.data.id);
       expect(await run("<", 3)).toEqual(["r1", "r2"]);
       expect(await run("<=", 2)).toEqual(["r1", "r2"]);
       expect(await run(">", 0)).toEqual(["r1", "r2", "r4"]);
@@ -598,7 +598,7 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
 
     async function stream(document: Record<string, unknown>, rows: readonly ExistingRecord<Data>[] = facts): Promise<{ readonly records: readonly ExistingRecord<Data>[]; readonly scans: number }> {
       let scans = 0;
-      const result = await executeJoinedDTQLQuery(new MemoryExecutor({}), joined({ from: flat, ...document }), {
+      const result = await executeJoinedTugQLQuery(new MemoryExecutor({}), joined({ from: flat, ...document }), {
         scanPages: async function* (relation) {
           await Promise.resolve();
           scans += 1;
@@ -652,7 +652,7 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
     it("answers DISTINCT aggregates with the generic plan instead of refusing them", async () => {
       let genericScans = 0;
       const executor = new MemoryExecutor({ Invoice: facts, country_aliases: dimension });
-      const result = await executeJoinedDTQLQuery(executor, joined({
+      const result = await executeJoinedTugQLQuery(executor, joined({
         from: flat,
         groupBy: [country],
         columns: [{ ...country, as: "iso" }, { aggregate: { function: "count", distinct: true, args: [{ field: "Total", source: "i" }] }, as: "distinct" }],
@@ -669,7 +669,7 @@ describe("order keys, aliases and aggregate rules (parity with the Go DTQL engin
       const zero = [record("country_aliases", "1", { alias: "Brazil", country: "BRA", population: 0 }), record("country_aliases", "2", { alias: "USA", country: "USA", population: 300 })];
       const perPerson = { binary: { op: "/", left: total, right: { field: "population", source: "a" } } };
       let scans = 0;
-      const result = await executeJoinedDTQLQuery(new MemoryExecutor({}), joined({
+      const result = await executeJoinedTugQLQuery(new MemoryExecutor({}), joined({
         from: { ...flat, joins: [{ ...flat.joins[0], from: { database: "geo", name: "country_aliases", alias: "a" } }] },
         groupBy: [country, { field: "population", source: "a" }],
         columns: [{ ...country, as: "iso" }, { ...perPerson, as: "ratio" }],

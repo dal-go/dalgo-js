@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { executeJoinedDTQLQuery, executeJoinedDTQLQueryPages, isJoinedDTQLQuery, key, parseDTQL, type DTQLSchema, type ExistingRecord, type QueryExecutor, type StructuredQuery } from "../src/index.js";
+import { executeJoinedTugQLQuery, executeJoinedTugQLQueryPages, isJoinedTugQLQuery, key, parseTugQLYaml, type TugQLSchema, type ExistingRecord, type QueryExecutor, type StructuredQuery } from "../src/index.js";
 
 type Row = Record<string, unknown>;
-const schema: DTQLSchema = { tables: [
+const schema: TugQLSchema = { tables: [
   { name: "Invoice", fields: ["id", "country_id", "amount"] },
   { name: "Country", fields: ["id", "name", "population"] },
 ] };
@@ -34,10 +34,10 @@ describe("federated country sales", () => {
         { binary: { op: "/", left: { aggregate: { function: "sum", args: [{ field: "amount", source: "o" }] } }, right: { field: "population", source: "c" } }, as: "salesPerCapita" },
       ],
     };
-    const query = parseDTQL(document, schema);
-    if (!isJoinedDTQLQuery(query)) throw new Error("expected joined query");
+    const query = parseTugQLYaml(document, schema);
+    if (!isJoinedTugQLQuery(query)) throw new Error("expected joined query");
     expect(query.money).toEqual(document.money);
-    const result = await executeJoinedDTQLQuery(new TableExecutor("Invoice", []), query, {
+    const result = await executeJoinedTugQLQuery(new TableExecutor("Invoice", []), query, {
       scanPages: async function* (relation) {
         await Promise.resolve();
         if (relation.database === "countries") {
@@ -48,7 +48,7 @@ describe("federated country sales", () => {
       },
     });
     expect(result.records[0]?.data).toEqual({ totalSales: "9007199254740993.3", avgSale: "3002399751580331.1", salesPerCapita: "3002399751580331.1" });
-    const runCase = (amount: unknown, population: number) => executeJoinedDTQLQuery(new TableExecutor("Invoice", []), query, {
+    const runCase = (amount: unknown, population: number) => executeJoinedTugQLQuery(new TableExecutor("Invoice", []), query, {
       scanPages: async function* (relation) {
         await Promise.resolve();
         if (relation.database === "countries") yield { records: [{ key: key("Country", 1), exists: true, data: { id: 1, population } }] };
@@ -63,17 +63,17 @@ describe("federated country sales", () => {
     await expect(runCase(0.1, 3)).rejects.toThrow(/base-10 string or safe integer/);
   });
   it("streams 120,000 joined output rows as bounded pages", async () => {
-    const parsed = parseDTQL({
+    const parsed = parseTugQLYaml({
       from: { database: "orders", name: "Invoice", alias: "o", joins: [{
         from: { database: "countries", name: "Country", alias: "c" },
         on: [{ left: { field: "country_id", source: "o" }, op: "==", right: { field: "id", source: "c" } }],
       }] },
       columns: [{ field: "id", source: "o", as: "invoiceId" }, { field: "name", source: "c", as: "country" }],
     }, schema);
-    if (!isJoinedDTQLQuery(parsed)) throw new Error("expected join query");
+    if (!isJoinedTugQLQuery(parsed)) throw new Error("expected join query");
     let count = 0;
     let finalProgress = 0;
-    for await (const page of executeJoinedDTQLQueryPages(parsed, {
+    for await (const page of executeJoinedTugQLQueryPages(parsed, {
       scanPages: async function* (relation) {
         await Promise.resolve();
         if (relation.database === "countries") {
@@ -94,16 +94,16 @@ describe("federated country sales", () => {
     expect(finalProgress).toBe(120_000);
   });
   it("yields a configured visible-row page before reading the next fact page", async () => {
-    const query = parseDTQL({
+    const query = parseTugQLYaml({
       from: { database: "orders", name: "Invoice", alias: "o", joins: [{
         from: { database: "countries", name: "Country", alias: "c" },
         on: [{ left: { field: "country_id", source: "o" }, op: "==", right: { field: "id", source: "c" } }],
       }] },
       columns: [{ field: "id", source: "o" }],
     }, schema);
-    if (!isJoinedDTQLQuery(query)) throw new Error("expected join query");
+    if (!isJoinedTugQLQuery(query)) throw new Error("expected join query");
     let factPagesRead = 0;
-    const pages = executeJoinedDTQLQueryPages(query, { pageSize: 100, scanPages: async function* (relation) {
+    const pages = executeJoinedTugQLQueryPages(query, { pageSize: 100, scanPages: async function* (relation) {
       await Promise.resolve();
       if (relation.database === "countries") {
         yield { records: [{ key: key("Country", 1), exists: true, data: { id: 1 } }] };
@@ -124,7 +124,7 @@ describe("federated country sales", () => {
     expect(factPagesRead).toBe(2);
   });
   it("validates same-named tables against their own database schemas", () => {
-    const distinctSchemas: DTQLSchema = { tables: [
+    const distinctSchemas: TugQLSchema = { tables: [
       { database: "north", name: "Country", fields: ["id", "northName"] },
       { database: "south", name: "Country", fields: ["id", "southName"] },
     ] };
@@ -132,11 +132,11 @@ describe("federated country sales", () => {
       from: { database: "south", name: "Country", alias: "s" },
       on: [{ left: { field: "id", source: "n" }, op: "==", right: { field: "id", source: "s" } }],
     }] }, columns: [{ field: "northName", source: "n" }, { field: "southName", source: "s" }] };
-    expect(isJoinedDTQLQuery(parseDTQL(query, distinctSchemas))).toBe(true);
-    expect(() => parseDTQL({ ...query, columns: [{ field: "southName", source: "n" }] }, distinctSchemas)).toThrow(/southName/);
+    expect(isJoinedTugQLQuery(parseTugQLYaml(query, distinctSchemas))).toBe(true);
+    expect(() => parseTugQLYaml({ ...query, columns: [{ field: "southName", source: "n" }] }, distinctSchemas)).toThrow(/southName/);
   });
   it("streams 120,000 fact rows in pages and reports download and processing progress", async () => {
-    const parsed = parseDTQL({
+    const parsed = parseTugQLYaml({
       from: { database: "orders", name: "Invoice", alias: "o", joins: [{
         from: { database: "countries", name: "Country", alias: "c" },
         on: [{ left: { field: "country_id", source: "o" }, op: "==", right: { field: "id", source: "c" } }],
@@ -148,9 +148,9 @@ describe("federated country sales", () => {
         { binary: { op: "/", left: { aggregate: { function: "sum", args: [{ field: "amount", source: "o" }] } }, right: { field: "population", source: "c" } }, as: "salesPerCapita" },
       ],
     }, schema);
-    if (!isJoinedDTQLQuery(parsed)) throw new Error("expected a join query");
+    if (!isJoinedTugQLQuery(parsed)) throw new Error("expected a join query");
     const progress: { phase: string; rows: number }[] = [];
-    const result = await executeJoinedDTQLQuery(new TableExecutor("Invoice", []), parsed, {
+    const result = await executeJoinedTugQLQuery(new TableExecutor("Invoice", []), parsed, {
       scanPages: async function* (relation) {
         await Promise.resolve();
         if (relation.database === "countries") {
@@ -197,9 +197,9 @@ describe("federated country sales", () => {
         { binary: { op: "/", left: { aggregate: { function: "sum", args: [{ field: "amount", source: "o" }] } }, right: { field: "population", source: "c" } }, as: "salesPerCapita" },
       ],
     };
-    const parsed = parseDTQL(document, schema);
-    if (!isJoinedDTQLQuery(parsed)) throw new Error("expected a join query");
-    const result = await executeJoinedDTQLQuery(invoice, parsed, {
+    const parsed = parseTugQLYaml(document, schema);
+    if (!isJoinedTugQLQuery(parsed)) throw new Error("expected a join query");
+    const result = await executeJoinedTugQLQuery(invoice, parsed, {
       resolveExecutor: (relation) => relation.database === "orders" ? invoice : relation.database === "countries" ? country : (() => { throw new Error("unknown database"); })(),
     });
     expect(result.records.map((row) => row.data)).toEqual([

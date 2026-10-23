@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  canonicalProviderEvidence, captureSourceLeaf, executeJoinedDTQLQuery, executeJoinedDTQLQueryPages, executeRecordLookupPages,
-  executeRecursiveDTQLQuery, executeSourceComposedJoinedDTQLQuery, isJoinedDTQLQuery, key,
-  parseDTQL, parseRecursiveDTQL, providerEvidenceDigest, requireNoSourceComposition,
+  canonicalProviderEvidence, captureSourceLeaf, executeJoinedTugQLQuery, executeJoinedTugQLQueryPages, executeRecordLookupPages,
+  executeRecursiveTugQLQuery, executeSourceComposedJoinedTugQLQuery, isJoinedTugQLQuery, key,
+  parseTugQLYaml, parseRecursiveTugQL, providerEvidenceDigest, requireNoSourceComposition,
   requireSourceCompositionConsumer, snapshotQueryMetadata, snapshotSourceComposition, snapshotSourceLeafAdmission,
-  validateProviderReads, type AdmittedMaterializedJoinInput, type JoinedDTQLQuery, type ProviderReadPlan,
+  validateProviderReads, type AdmittedMaterializedJoinInput, type JoinedTugQLQuery, type ProviderReadPlan,
   type ProviderReads, type QueryExecutor, type QueryMetadata, type QueryPage, type QueryRelation,
   type SourceComposition, type SourceCompositionJoinOptions, type SourceLeafAdmission, type SourceRight, type StructuredQuery,
 } from "../src/index.js";
@@ -19,13 +19,13 @@ const sourceRight: SourceRight = {
   attribution: { text: "Synthetic credit" }, freeSource: { text: "Synthetic original", url: "https://example.com/feed.xml" },
 };
 
-function joined(type: "inner" | "left" = "inner"): JoinedDTQLQuery {
-  const parsed = parseDTQL({
+function joined(type: "inner" | "left" = "inner"): JoinedTugQLQuery {
+  const parsed = parseTugQLYaml({
     from: { name: "A", alias: "a", joins: [{ type, from: { name: "B", alias: "b" },
       on: [{ left: { field: "currency", source: "a" }, op: "==", right: { field: "currency", source: "b" } }] }] },
     columns: [{ field: "name", source: "b", as: "name" }],
   }, schema);
-  if (!isJoinedDTQLQuery(parsed)) throw new Error("expected join");
+  if (!isJoinedTugQLQuery(parsed)) throw new Error("expected join");
   return parsed;
 }
 
@@ -89,7 +89,7 @@ describe("JS-local materialized source composition", () => {
     const live = await liveFixture();
     const a = new FixtureExecutor([{ currency: "USD", rate: "1.2345", referenceDate: "2026-10-06" }], live.metadata);
     const b = new FixtureExecutor([{ currency: "USD", name: "Fabricated Dollar" }]);
-    const result = await executeSourceComposedJoinedDTQLQuery(joined(), {
+    const result = await executeSourceComposedJoinedTugQLQuery(joined(), {
       compositionId: "native-currency-join", resolveInput: (relation) => relation.name === "A" ? liveInput(relation, a, live.plan) : localInput(relation, b),
     });
     expect(result.records.map((record) => record.data)).toEqual([{ name: "Fabricated Dollar" }]);
@@ -107,7 +107,7 @@ describe("JS-local materialized source composition", () => {
     const b = new FixtureExecutor(variant === "empty-side" ? [] : [{ currency: "USD", name: "Fabricated Dollar" }]);
     const query = joined();
     const filtered = variant === "where-removal" ? { ...query, filters: [{ field: { source: "b", field: "name" }, operator: "==" as const, value: "Never" }] } : query;
-    const result = await executeSourceComposedJoinedDTQLQuery(filtered, { compositionId: "empty-output", resolveInput: (relation) => relation.name === "A" ? liveInput(relation, a, live.plan) : localInput(relation, b) });
+    const result = await executeSourceComposedJoinedTugQLQuery(filtered, { compositionId: "empty-output", resolveInput: (relation) => relation.name === "A" ? liveInput(relation, a, live.plan) : localInput(relation, b) });
     expect(result.records).toEqual([]); expect(composition(result).inputs).toHaveLength(2);
     expect(composition(result).inputs[0]?.metadata.sourceRights?.[0]?.attribution).toEqual(sourceRight.attribution);
     expect(composition(result).inputs[0]?.metadata.providerReads).toEqual(live.metadata.providerReads);
@@ -118,7 +118,7 @@ describe("JS-local materialized source composition", () => {
     const live = await liveFixture();
     for (const rows of [[{ currency: "USD" }], []]) {
       const a = new FixtureExecutor(rows); const b = new FixtureExecutor([{ currency: "GBP" }], live.metadata);
-      const result = await executeSourceComposedJoinedDTQLQuery(joined("left"), { compositionId: "left", resolveInput: (relation) => relation.name === "A" ? localInput(relation, a) : liveInput(relation, b, live.plan) });
+      const result = await executeSourceComposedJoinedTugQLQuery(joined("left"), { compositionId: "left", resolveInput: (relation) => relation.name === "A" ? localInput(relation, a) : liveInput(relation, b, live.plan) });
       expect(result.records.map((record) => record.data)).toEqual(rows.length === 0 ? [] : [{ name: null }]);
       expect(composition(result).inputs).toHaveLength(2); expect(b.calls).toHaveLength(1);
     }
@@ -127,7 +127,7 @@ describe("JS-local materialized source composition", () => {
   it("scopes colliding source/resource/execution IDs without renaming or unioning observations", async () => {
     const first = await liveFixture("one"); const second = await liveFixture("two");
     const a = new FixtureExecutor([{ currency: "USD" }], first.metadata); const b = new FixtureExecutor([{ currency: "USD" }], second.metadata);
-    const result = await executeSourceComposedJoinedDTQLQuery(joined(), { compositionId: "collisions", resolveInput: (relation) => relation.name === "A" ? liveInput(relation, a, first.plan) : liveInput(relation, b, second.plan) });
+    const result = await executeSourceComposedJoinedTugQLQuery(joined(), { compositionId: "collisions", resolveInput: (relation) => relation.name === "A" ? liveInput(relation, a, first.plan) : liveInput(relation, b, second.plan) });
     const inputs = composition(result).inputs;
     expect(inputs.map((input) => input.metadata.sourceRights?.[0]?.sourceId)).toEqual(["a", "a"]);
     expect(inputs.map((input) => input.metadata.providerReads?.execution.id)).toEqual(["run", "run"]);
@@ -143,11 +143,11 @@ describe("JS-local materialized source composition", () => {
     const original = joined(); const edge = original.from.joins[0];
     if (edge === undefined) throw new Error("missing edge");
     const query = { ...original, from: { ...original.from, database: "one", joins: [{ ...edge, from: { ...edge.from, database: "two", name: "A" } }] } };
-    const result = await executeSourceComposedJoinedDTQLQuery(query, { compositionId: "same-name", resolveInput: (relation) => liveInput(relation, relation.database === "one" ? a : b, live.plan) });
+    const result = await executeSourceComposedJoinedTugQLQuery(query, { compositionId: "same-name", resolveInput: (relation) => liveInput(relation, relation.database === "one" ? a : b, live.plan) });
     expect(result.records[0]?.data.name).toBe("Two");
     expect(a.calls).toHaveLength(1); expect(b.calls).toHaveLength(1);
     expect(composition(result).inputs.map((input) => input.relationPath)).toEqual(["from", "from.joins[0].from"]);
-    const self = await executeSourceComposedJoinedDTQLQuery(query, { compositionId: "self", resolveInput: (relation) => liveInput(relation, a, live.plan) });
+    const self = await executeSourceComposedJoinedTugQLQuery(query, { compositionId: "self", resolveInput: (relation) => liveInput(relation, a, live.plan) });
     expect(a.calls).toHaveLength(3);
     expect(composition(self).inputs).toHaveLength(2);
     expect(composition(self).inputs.map((input) => input.metadata.providerReads)).toEqual([live.metadata.providerReads, live.metadata.providerReads]);
@@ -156,16 +156,16 @@ describe("JS-local materialized source composition", () => {
   it("retains every executed nested relation-tree leaf without accepting recursive or composed leaves", async () => {
     const original = joined(); const edge = original.from.joins[0];
     if (edge === undefined) throw new Error("missing edge");
-    const query: JoinedDTQLQuery = { ...original, from: { ...original.from, joins: [{ ...edge, from: { ...edge.from, joins: [{
+    const query: JoinedTugQLQuery = { ...original, from: { ...original.from, joins: [{ ...edge, from: { ...edge.from, joins: [{
       type: "inner", from: { name: "C", alias: "c", joins: [] }, on: [{ operator: "==", left: { source: "b", field: "currency" }, right: { source: "c", field: "currency" } }],
     }] } }] } };
     const empty = new FixtureExecutor([]);
-    const result = await executeSourceComposedJoinedDTQLQuery(query, { compositionId: "tree", resolveInput: (relation) => localInput(relation, empty) });
+    const result = await executeSourceComposedJoinedTugQLQuery(query, { compositionId: "tree", resolveInput: (relation) => localInput(relation, empty) });
     expect(composition(result).inputs.map((input) => input.relationPath)).toEqual(["from", "from.joins[0].from", "from.joins[0].from.joins[0].from"]);
     expect(empty.calls).toHaveLength(3);
     const composed = new FixtureExecutor([], { sourceComposition: composition(result) });
-    await expect(executeSourceComposedJoinedDTQLQuery(original, options(empty, composed))).rejects.toThrow("source-composition");
-    await expect(executeSourceComposedJoinedDTQLQuery(original, { ...options(empty, empty), scanPages: () => [] } as unknown as SourceCompositionJoinOptions)).rejects.toThrow("unsupported composed join option");
+    await expect(executeSourceComposedJoinedTugQLQuery(original, options(empty, composed))).rejects.toThrow("source-composition");
+    await expect(executeSourceComposedJoinedTugQLQuery(original, { ...options(empty, empty), scanPages: () => [] } as unknown as SourceCompositionJoinOptions)).rejects.toThrow("unsupported composed join option");
   });
 
   it("preserves declaration-only terms longer than the GET contract and treats a provided empty inventory as provided", async () => {
@@ -173,7 +173,7 @@ describe("JS-local materialized source composition", () => {
     const metadata = { sourceRights: [long], usedSourceIds: ["a"] };
     expect(await captureSourceLeaf(metadata, { kind: "declaration", ...metadata })).toEqual(metadata);
     const a = new FixtureExecutor([], { sourceRights: [] }); const b = new FixtureExecutor([]);
-    const result = await executeSourceComposedJoinedDTQLQuery(joined(), { compositionId: "declared-empty", resolveInput: (relation) => localInput(relation, relation.name === "A" ? a : b, relation.name === "A" ? { kind: "declaration", sourceRights: [] } : { kind: "unknown-local" }) });
+    const result = await executeSourceComposedJoinedTugQLQuery(joined(), { compositionId: "declared-empty", resolveInput: (relation) => localInput(relation, relation.name === "A" ? a : b, relation.name === "A" ? { kind: "declaration", sourceRights: [] } : { kind: "unknown-local" }) });
     expect(composition(result).inputs.map((input) => input.rightsStatus)).toEqual(["provided", "unknown"]);
   });
 
@@ -189,7 +189,7 @@ describe("JS-local materialized source composition", () => {
       Object.assign(b, { query: () => { throw new Error("racing executor method"); } });
       Object.assign(admittedPlan.execution, { executorId: "racing authority" });
     };
-    const result = await executeSourceComposedJoinedDTQLQuery(joined(), opts);
+    const result = await executeSourceComposedJoinedTugQLQuery(joined(), opts);
     expect(events).toEqual(["resolve-A", "resolve-B", "read-A"]);
     expect(result.records[0]?.data.name).toBe("Original");
     expect(composition(result).inputs[1]?.metadata.providerReads?.execution.executorId).toBe("synthetic-one");
@@ -203,11 +203,11 @@ describe("JS-local materialized source composition", () => {
       (input: AdmittedMaterializedJoinInput) => ({ ...input, admission: { kind: "declaration", sourceRights: [sourceRight], usedSourceIds: ["unplanned"] } }),
     ]) {
       const opts = { compositionId: "bad-preflight", resolveInput: (relation: QueryRelation) => relation.name === "B" ? bad(localInput(relation, b)) : localInput(relation, a) } as SourceCompositionJoinOptions;
-      await expect(executeSourceComposedJoinedDTQLQuery(joined(), opts)).rejects.toThrow();
+      await expect(executeSourceComposedJoinedTugQLQuery(joined(), opts)).rejects.toThrow();
       expect(a.calls).toHaveLength(0); expect(b.calls).toHaveLength(0);
     }
     const live = await liveFixture(); Object.assign(live.plan.bindings[0] ?? {}, { rightsDigest: "d".repeat(64) });
-    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { compositionId: "digest", resolveInput: (relation) => relation.name === "A" ? localInput(relation, a) : liveInput(relation, b, live.plan) })).rejects.toThrow("rights digest");
+    await expect(executeSourceComposedJoinedTugQLQuery(joined(), { compositionId: "digest", resolveInput: (relation) => relation.name === "A" ? localInput(relation, a) : liveInput(relation, b, live.plan) })).rejects.toThrow("rights digest");
     expect(a.calls).toHaveLength(0);
   });
 
@@ -217,7 +217,7 @@ describe("JS-local materialized source composition", () => {
     Object.defineProperty(b, "query", { get() {
       calls++; return calls === 1 ? method : () => { throw new Error("racing method getter"); };
     } });
-    const result = await executeSourceComposedJoinedDTQLQuery(joined(), options(a, b));
+    const result = await executeSourceComposedJoinedTugQLQuery(joined(), options(a, b));
     expect(result.records[0]?.data.name).toBe("Captured"); expect(calls).toBe(1);
   });
 
@@ -228,43 +228,43 @@ describe("JS-local materialized source composition", () => {
       const input = localInput(relation, relation.name === "A" ? a : b);
       return relation.name === "A" ? { ...input, scope: { kind: "bounded", requestedLimit: 1, contractRef: "synthetic-prefix/1", ordering: "unspecified" } } : input;
     } };
-    await expect(executeSourceComposedJoinedDTQLQuery(query, opts)).rejects.toThrow("explicit relation scan");
-    const result = await executeSourceComposedJoinedDTQLQuery(bounded, opts);
+    await expect(executeSourceComposedJoinedTugQLQuery(query, opts)).rejects.toThrow("explicit relation scan");
+    const result = await executeSourceComposedJoinedTugQLQuery(bounded, opts);
     expect(composition(result).inputs[0]?.scope).toEqual({ kind: "bounded", requestedLimit: 1, contractRef: "synthetic-prefix/1", ordering: "unspecified" });
   });
 
   it("rejects paged transport and incorrect immutable row counts even on a short empty page", async () => {
     const a = new FixtureExecutor([], {}, true); const b = new FixtureExecutor([]);
-    await expect(executeSourceComposedJoinedDTQLQuery(joined(), options(a, b))).rejects.toThrow("paginated");
+    await expect(executeSourceComposedJoinedTugQLQuery(joined(), options(a, b))).rejects.toThrow("paginated");
     const short = new FixtureExecutor([]);
-    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { compositionId: "short", resolveInput: (relation) => {
+    await expect(executeSourceComposedJoinedTugQLQuery(joined(), { compositionId: "short", resolveInput: (relation) => {
       const input = localInput(relation, short); return { ...input, scope: { kind: "complete", contractRef: "array/1", proof: "immutable-local-array", requestedLimit: 1, maxRows: 1 } };
     } })).rejects.toThrow("completeness mismatch");
   });
 
   it("enforces scan, cumulative row, retained-data and metadata budgets", async () => {
     const a = new FixtureExecutor([{ currency: "USD", name: "x".repeat(100) }]); const b = new FixtureExecutor([{ currency: "USD" }]);
-    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(a, b), maxFetchedRows: 1 })).rejects.toThrow("fetched-row bound");
-    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(a, b), maxRetainedBytes: 10 })).rejects.toThrow("retained-byte bound");
-    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(a, b), maxMetadataBytes: 10 })).rejects.toThrow("metadata budget");
-    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(a, b), maxMetadataBytes: 262145 })).rejects.toThrow("invalid metadata bound");
+    await expect(executeSourceComposedJoinedTugQLQuery(joined(), { ...options(a, b), maxFetchedRows: 1 })).rejects.toThrow("fetched-row bound");
+    await expect(executeSourceComposedJoinedTugQLQuery(joined(), { ...options(a, b), maxRetainedBytes: 10 })).rejects.toThrow("retained-byte bound");
+    await expect(executeSourceComposedJoinedTugQLQuery(joined(), { ...options(a, b), maxMetadataBytes: 10 })).rejects.toThrow("metadata budget");
+    await expect(executeSourceComposedJoinedTugQLQuery(joined(), { ...options(a, b), maxMetadataBytes: 262145 })).rejects.toThrow("invalid metadata bound");
   });
 
   it("charges long declaration metadata to the retained-byte budget even with empty inputs", async () => {
     const metadata = { sourceRights: [{ ...sourceRight, declaration: { text: "x".repeat(6000) } }], usedSourceIds: ["a"] };
     const empty = new FixtureExecutor([], metadata);
-    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { compositionId: "empty-budget", maxRetainedBytes: 1,
+    await expect(executeSourceComposedJoinedTugQLQuery(joined(), { compositionId: "empty-budget", maxRetainedBytes: 1,
       resolveInput: (relation) => localInput(relation, empty, { kind: "declaration", ...metadata }),
     })).rejects.toThrow("retained-byte bound");
   });
 
   it("charges cumulative row data and composition metadata together before processing the join", async () => {
     const a = new FixtureExecutor([{ currency: "USD", name: "x".repeat(100) }]); const b = new FixtureExecutor([{ currency: "USD", name: "Fabricated" }]);
-    const result = await executeSourceComposedJoinedDTQLQuery(joined(), options(a, b));
+    const result = await executeSourceComposedJoinedTugQLQuery(joined(), options(a, b));
     const metadataBytes = new TextEncoder().encode(canonicalProviderEvidence(composition(result))).length;
     const rowBytes = [...a.rows, ...b.rows].reduce((total, row) => total + new TextEncoder().encode(JSON.stringify(row)).length, 0);
     const phases: string[] = [];
-    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(a, b), maxRetainedBytes: metadataBytes + rowBytes - 1,
+    await expect(executeSourceComposedJoinedTugQLQuery(joined(), { ...options(a, b), maxRetainedBytes: metadataBytes + rowBytes - 1,
       onProgress: (progress) => { phases.push(progress.phase); },
     })).rejects.toThrow("retained-byte bound");
     expect(phases).not.toContain("process");
@@ -272,16 +272,16 @@ describe("JS-local materialized source composition", () => {
 
   it("reserves composition metadata through projected output and admits an exact empty metadata budget", async () => {
     const empty = new FixtureExecutor([]);
-    const first = await executeSourceComposedJoinedDTQLQuery(joined(), options(empty, empty));
+    const first = await executeSourceComposedJoinedTugQLQuery(joined(), options(empty, empty));
     const metadataBytes = new TextEncoder().encode(canonicalProviderEvidence(composition(first))).length;
-    await expect(executeSourceComposedJoinedDTQLQuery(joined(), { ...options(empty, empty), maxRetainedBytes: metadataBytes })).resolves.toEqual(first);
+    await expect(executeSourceComposedJoinedTugQLQuery(joined(), { ...options(empty, empty), maxRetainedBytes: metadataBytes })).resolves.toEqual(first);
     const a = new FixtureExecutor([{ currency: "USD" }]); const b = new FixtureExecutor([{ currency: "USD", name: "x".repeat(1000) }]);
     const original = joined();
     const column = original.columns?.[0];
     if (column === undefined) throw new Error("missing projected column");
     const columns = Array.from({ length: 20 }, (_, index) => ({ ...column, as: `repeated${index.toString()}` }));
     const query = { ...original, columns };
-    await expect(executeSourceComposedJoinedDTQLQuery(query, { ...options(a, b), maxRetainedBytes: 5000 })).rejects.toThrow("retained-byte bound");
+    await expect(executeSourceComposedJoinedTugQLQuery(query, { ...options(a, b), maxRetainedBytes: 5000 })).rejects.toThrow("retained-byte bound");
   });
 
   it("captures a composed scan cursor getter once even for explicitly bounded relations", async () => {
@@ -291,7 +291,7 @@ describe("JS-local materialized source composition", () => {
     Object.defineProperty(page, "nextCursor", { get() { cursorReads++; return cursorReads === 1 ? undefined : { values: ["more"] }; } });
     a.query = <T>() => Promise.resolve(page as QueryPage<T>);
     const original = joined(); const query = { ...original, from: { ...original.from, scan: { orderBy: [], limit: 1 } } };
-    const result = await executeSourceComposedJoinedDTQLQuery(query, { compositionId: "cursor-once", resolveInput: (relation) => {
+    const result = await executeSourceComposedJoinedTugQLQuery(query, { compositionId: "cursor-once", resolveInput: (relation) => {
       const input = localInput(relation, relation.name === "A" ? a : b);
       return relation.name === "A" ? { ...input, scope: { kind: "bounded", requestedLimit: 1, contractRef: "fixture-prefix/1", ordering: "unspecified" } } : input;
     } });
@@ -312,7 +312,7 @@ describe("JS-local materialized source composition", () => {
 
 describe("composition capture and fail-closed consumer boundary", () => {
   async function emptyComposition(): Promise<SourceComposition> {
-    const empty = new FixtureExecutor([]); return composition(await executeSourceComposedJoinedDTQLQuery(joined(), options(empty, empty)));
+    const empty = new FixtureExecutor([]); return composition(await executeSourceComposedJoinedTugQLQuery(joined(), options(empty, empty)));
   }
 
   it("detaches a composition getter once without reading rows and preserves the captured checked object", async () => {
@@ -354,11 +354,11 @@ describe("composition capture and fail-closed consumer boundary", () => {
     for (const raw of [valid, null, undefined]) {
       const page = Object.defineProperty({ sourceComposition: raw }, "records", { get() { throw new Error("rows accessed"); } }) as QueryPage<Data>;
       const executor: QueryExecutor = { query: <T>() => Promise.resolve(page as QueryPage<T>) };
-      await expect(executeJoinedDTQLQuery(executor, joined())).rejects.toThrow("source-rights-preflight");
-      const iterator = executeJoinedDTQLQueryPages(joined(), { scanPages: () => ({ async *[Symbol.asyncIterator]() { await Promise.resolve(); yield page; } }) })[Symbol.asyncIterator]();
+      await expect(executeJoinedTugQLQuery(executor, joined())).rejects.toThrow("source-rights-preflight");
+      const iterator = executeJoinedTugQLQueryPages(joined(), { scanPages: () => ({ async *[Symbol.asyncIterator]() { await Promise.resolve(); yield page; } }) })[Symbol.asyncIterator]();
       await expect(iterator.next()).rejects.toThrow("source-rights-preflight");
-      const recursive = parseRecursiveDTQL({ from: { name: "A", alias: "a" }, columns: [{ field: "currency", source: "a" }] }, schema);
-      await expect(executeRecursiveDTQLQuery(executor, recursive)).rejects.toThrow("source-rights-preflight");
+      const recursive = parseRecursiveTugQL({ from: { name: "A", alias: "a" }, columns: [{ field: "currency", source: "a" }] }, schema);
+      await expect(executeRecursiveTugQLQuery(executor, recursive)).rejects.toThrow("source-rights-preflight");
       const enriched = executeRecordLookupPages({ async *[Symbol.asyncIterator]() { await Promise.resolve(); yield page; } }, { keyOf: () => "x", fetch: () => Promise.reject(new Error("fetch accessed")), merge: (record) => record.data })[Symbol.asyncIterator]();
       await expect(enriched.next()).rejects.toThrow("source-composition");
     }

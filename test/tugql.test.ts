@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { formatTugQL, parseTugQL, resolveTugQL } from "../src/tugql.js";
-import { executeRecursiveDTQLQuery, key, stringifyRecursiveDTQL, type QueryExecutor, type StructuredQuery } from "../src/index.js";
+import { executeRecursiveTugQLQuery, key, stringifyRecursiveTugQL, type QueryExecutor, type StructuredQuery } from "../src/index.js";
 import type { TugQLFormatOptions, TugQLResolveContext } from "../src/tugql.js";
 
 const tugqlFixtureRoot = new URL("./testdata/tugql/v1/", import.meta.url);
@@ -131,7 +131,7 @@ describe("TugQL syntax adapter", () => {
       expect(parsed === undefined || parsed.diagnostics.length === 0 ? null : parsed.diagnostics, `${item.name} parse`).toEqual(item.parseDiagnostics ?? null);
       const result = resolveTugQL(document, item.context as TugQLResolveContext);
       expect(result.diagnostics.length === 0 ? null : result.diagnostics, `${item.name} diagnostics`).toEqual(item.expected.diagnostics);
-      const actualQueryYaml = result.resolved === undefined ? null : stringifyRecursiveDTQL(result.resolved.query);
+      const actualQueryYaml = result.resolved === undefined ? null : stringifyRecursiveTugQL(result.resolved.query);
       expect(actualQueryYaml === null ? null : normalizeScalarAliases(parseYaml(actualQueryYaml)), `${item.name} query YAML`).toEqual(item.expected.query === null ? null : normalizeScalarAliases(parseYaml(item.expected.query)));
       expect(result.resolved?.columns ?? null, `${item.name} columns`).toEqual(item.expected.columns);
       expect(result.resolved?.schemaVersion ?? "", `${item.name} schema version`).toBe(item.expected.schemaVersion);
@@ -272,7 +272,7 @@ describe("TugQL syntax adapter", () => {
         },
       };
       try {
-        const result = await executeRecursiveDTQLQuery(executor, resolution.resolved.query);
+        const result = await executeRecursiveTugQLQuery(executor, resolution.resolved.query);
         expect(item.expected.error, `${item.name} error`).toBeUndefined();
         expect(result.records.map((record) => record.data), `${item.name} records`).toEqual(item.expected.records);
       } catch (error) {
@@ -724,7 +724,7 @@ describe("TugQL syntax adapter", () => {
       },
     };
     if (resolution.resolved === undefined) throw new Error("expected resolved query");
-    const output = await executeRecursiveDTQLQuery(executor, resolution.resolved.query);
+    const output = await executeRecursiveTugQLQuery(executor, resolution.resolved.query);
     expect(output.records.map((record) => record.data)).toEqual([{ InvoiceId: 5 }]);
   });
 
@@ -801,7 +801,7 @@ describe("TugQL syntax adapter", () => {
         return Promise.resolve({ records: rows.map((data, index) => ({ key: key(query.source.name, String(index)), exists: true as const, data: data as T })) });
       },
     };
-    const output = await executeRecursiveDTQLQuery(executor, result.resolved.query);
+    const output = await executeRecursiveTugQLQuery(executor, result.resolved.query);
     expect(output.records.map((record) => record.data)).toEqual([{ InvoiceId: 7, CustomerName: "Ada" }]);
 
     const noMatchExecutor: QueryExecutor = {
@@ -810,7 +810,7 @@ describe("TugQL syntax adapter", () => {
         return Promise.resolve({ records: rows.map((data, index) => ({ key: key(query.source.name, String(index)), exists: true as const, data: data as T })) });
       },
     };
-    const noMatchOutput = await executeRecursiveDTQLQuery(noMatchExecutor, result.resolved.query);
+    const noMatchOutput = await executeRecursiveTugQLQuery(noMatchExecutor, result.resolved.query);
     expect(noMatchOutput.records.map((record) => record.data)).toEqual([{ InvoiceId: 7, CustomerName: null }]);
 
     const manyMatchExecutor: QueryExecutor = {
@@ -821,7 +821,7 @@ describe("TugQL syntax adapter", () => {
         return Promise.resolve({ records: rows.map((data, index) => ({ key: key(query.source.name, String(index)), exists: true as const, data: data as T })) });
       },
     };
-    await expect(executeRecursiveDTQLQuery(manyMatchExecutor, result.resolved.query)).rejects.toThrow("scalar query returned more than one row");
+    await expect(executeRecursiveTugQLQuery(manyMatchExecutor, result.resolved.query)).rejects.toThrow("scalar query returned more than one row");
   });
 
   it("pins imports to the importing revision and resolves mapped parameters", () => {

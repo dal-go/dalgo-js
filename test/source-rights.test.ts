@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./testdata/source-rights-wire.json" with { type: "json" };
 import {
-  executeJoinedDTQLQuery, executeJoinedDTQLQueryPages, executeRecordLookupPages,
-  executeRecursiveDTQLQuery, isJoinedDTQLQuery, key, parseDTQL, parseRecursiveDTQL,
+  executeJoinedTugQLQuery, executeJoinedTugQLQueryPages, executeRecordLookupPages,
+  executeRecursiveTugQLQuery, isJoinedTugQLQuery, key, parseTugQLYaml, parseRecursiveTugQL,
   snapshotQueryMetadata, UnsupportedError,
-  type CollectionMetadata, type JoinedDTQLQuery, type QueryExecutor, type QueryMetadata,
+  type CollectionMetadata, type JoinedTugQLQuery, type QueryExecutor, type QueryMetadata,
   type QueryPage, type SourceRight,
 } from "../src/index.js";
 
@@ -18,12 +18,12 @@ function right(id: string): SourceRight {
 
 const schema = { tables: [{ name: "A", fields: ["id"] }, { name: "B", fields: ["id"] }] };
 
-function joined(): JoinedDTQLQuery {
-  const parsed = parseDTQL({
+function joined(): JoinedTugQLQuery {
+  const parsed = parseTugQLYaml({
     from: { name: "A", alias: "a", joins: [{ type: "inner", from: { name: "B", alias: "b" }, on: [{ left: { field: "id", source: "a" }, op: "==", right: { field: "id", source: "b" } }] }] },
     columns: [{ field: "id", source: "a", as: "id" }],
   }, schema);
-  if (!isJoinedDTQLQuery(parsed)) throw new Error("expected join");
+  if (!isJoinedTugQLQuery(parsed)) throw new Error("expected join");
   return parsed;
 }
 
@@ -90,15 +90,15 @@ describe("optional source data rights", () => {
   it("refuses a mixed annotated/unannotated join before any result", async () => {
     const executor: QueryExecutor = { query: <T>(query: { source: { name: string } }): Promise<QueryPage<T>> =>
       Promise.resolve({ records: [], ...(query.source.name === "B" ? { sourceRights: [right("b")] } : {}) }) };
-    await expect(executeJoinedDTQLQuery(executor, joined())).rejects.toBeInstanceOf(UnsupportedError);
-    const iterator = executeJoinedDTQLQueryPages(joined(), { scanPages: (relation) => ({
+    await expect(executeJoinedTugQLQuery(executor, joined())).rejects.toBeInstanceOf(UnsupportedError);
+    const iterator = executeJoinedTugQLQueryPages(joined(), { scanPages: (relation) => ({
       async *[Symbol.asyncIterator]() { await Promise.resolve(); yield page(relation.name, relation.name === "B" ? { sourceRights: [right("b")] } : {}); },
     }) })[Symbol.asyncIterator]();
     await expect(iterator.next()).rejects.toMatchObject({ capability: "source-rights-preflight" });
   });
 
   it("refuses late metadata from a nonconforming transport and stops further output", async () => {
-    const iterator = executeJoinedDTQLQueryPages(joined(), { pageSize: 1, scanPages: (relation) => ({
+    const iterator = executeJoinedTugQLQueryPages(joined(), { pageSize: 1, scanPages: (relation) => ({
       async *[Symbol.asyncIterator]() {
         await Promise.resolve(); yield page(relation.name);
         if (relation.name === "A") yield page("A", { sourceRights: [right("a")] });
@@ -112,7 +112,7 @@ describe("optional source data rights", () => {
 
   it("refuses annotated recursive leaf scans including empty results", async () => {
     const executor: QueryExecutor = { query: <T>(): Promise<QueryPage<T>> => Promise.resolve({ records: [], sourceRights: [right("a")] }) };
-    const query = parseRecursiveDTQL("from: {name: A, alias: a}\ncolumns: [{field: id, source: a}]\n", schema);
-    await expect(executeRecursiveDTQLQuery(executor, query)).rejects.toBeInstanceOf(UnsupportedError);
+    const query = parseRecursiveTugQL("from: {name: A, alias: a}\ncolumns: [{field: id, source: a}]\n", schema);
+    await expect(executeRecursiveTugQLQuery(executor, query)).rejects.toBeInstanceOf(UnsupportedError);
   });
 });

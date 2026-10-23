@@ -1,8 +1,8 @@
 {
  "dalgo": {
-  "commit": "f82b3756805807f3c958c0a49ec7930410117e67",
+  "commit": "56b804de624ade79efdc3d61970da7ac7562dc68",
   "module": "github.com/dal-go/dalgo",
-  "version": "v0.89.0"
+  "version": "v0.95.2"
  },
  "results": {
   "01 saved per-capita fixture (desc, tie, div-by-zero)": {
@@ -1142,7 +1142,7 @@
    ]
   },
   "15 grouped ORDER BY on non-grouped field": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"s.id\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: \"s.id\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "150 HAVING null literal equals null literal": {
@@ -1249,7 +1249,7 @@
    ]
   },
   "16 grouped ORDER BY expr over non-grouped field (0 - id)": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"s.id\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: \"s.id\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "160 group by a null-or-missing field through a flat join": {
@@ -1632,7 +1632,7 @@
    ]
   },
   "191 unaliased aggregate named in a field-looking way is not an alias": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"[COUNT(*)]\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: \"[COUNT(*)]\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "192 unaliased aggregates through a flat join": {
@@ -1776,11 +1776,11 @@
    ]
   },
   "197 desc as a string": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!str `true` into bool",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!str `true` into bool",
    "phase": "parse"
   },
   "198 desc as a number": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!int `1` into bool",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!int `1` into bool",
    "phase": "parse"
   },
   "199 desc on a values key": {
@@ -2029,51 +2029,51 @@
    "rows": []
   },
   "222 WHERE with an invalid parameter name": {
-   "error": "invalid DTQL: comparison left: invalid parameter name \"1x\"",
+   "error": "invalid TugQL: comparison left: invalid parameter name \"1x\"",
    "phase": "parse"
   },
   "223 WHERE with an unknown operator": {
-   "error": "invalid DTQL: unknown comparison operator \"like\"",
+   "error": "invalid TugQL: unknown comparison operator \"like\"",
    "phase": "parse"
   },
   "224 WHERE with an empty operator": {
-   "error": "invalid DTQL: unknown comparison operator \"\"",
+   "error": "invalid TugQL: unknown comparison operator \"\"",
    "phase": "parse"
   },
   "225 WHERE missing the right side": {
-   "error": "invalid DTQL: comparison requires both left and right",
+   "error": "invalid TugQL: comparison requires both left and right",
    "phase": "parse"
   },
   "226 WHERE missing the left side": {
-   "error": "invalid DTQL: comparison requires both left and right",
+   "error": "invalid TugQL: comparison requires both left and right",
    "phase": "parse"
   },
   "227 WHERE missing the operator": {
-   "error": "invalid DTQL: unknown comparison operator \"\"",
+   "error": "invalid TugQL: unknown comparison operator \"\"",
    "phase": "parse"
   },
   "228 WHERE empty object": {
-   "error": "invalid DTQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
+   "error": "invalid TugQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
    "phase": "parse"
   },
   "229 WHERE with an unknown key": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: field foo not found in type dtql.condYAML",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  line 1: field foo not found in type tugql.condYAML",
    "phase": "parse"
   },
   "230 WHERE with an expression of two forms": {
-   "error": "invalid DTQL: comparison left: expression must set exactly one expression form, but several are set",
+   "error": "invalid TugQL: comparison left: expression must set exactly one expression form, but several are set",
    "phase": "parse"
   },
   "231 WHERE with an empty expression": {
-   "error": "invalid DTQL: comparison left: expression must set exactly one expression form",
+   "error": "invalid TugQL: comparison left: expression must set exactly one expression form",
    "phase": "parse"
   },
   "232 WHERE with a non-scalar value": {
-   "error": "invalid DTQL: comparison right: value must be a scalar",
+   "error": "invalid TugQL: comparison right: value must be a scalar",
    "phase": "parse"
   },
   "233 WHERE with a field of an unknown source": {
-   "error": "invalid DTQL: join_scope at where.left.source: unknown alias \"zz\"",
+   "error": "invalid TugQL: join_scope at where.left.source: unknown alias \"zz\"",
    "phase": "parse"
   },
   "234 WHERE field against field through a join": {
@@ -2375,51 +2375,51 @@
    ]
   },
   "261 empty and": {
-   "error": "invalid DTQL: \"AND\" group must have at least one condition",
+   "error": "invalid TugQL: \"AND\" group must have at least one condition",
    "phase": "parse"
   },
   "262 empty or": {
-   "error": "invalid DTQL: \"OR\" group must have at least one condition",
+   "error": "invalid TugQL: \"OR\" group must have at least one condition",
    "phase": "parse"
   },
   "263 and null": {
-   "error": "invalid DTQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
+   "error": "invalid TugQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
    "phase": "parse"
   },
   "264 and as an object": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!map into []dtql.condYAML",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!map into []tugql.condYAML",
    "phase": "parse"
   },
   "265 and mixed with or": {
-   "error": "invalid DTQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
+   "error": "invalid TugQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
    "phase": "parse"
   },
   "266 and mixed with a comparison": {
-   "error": "invalid DTQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
+   "error": "invalid TugQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
    "phase": "parse"
   },
   "267 and with an invalid child": {
-   "error": "group condition #1: invalid DTQL: comparison requires both left and right",
+   "error": "group condition #1: invalid TugQL: comparison requires both left and right",
    "phase": "parse"
   },
   "268 and with a non-object child": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!int `1` into dtql.condYAML",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!int `1` into tugql.condYAML",
    "phase": "parse"
   },
   "269 and with an empty child": {
-   "error": "group condition #0: invalid DTQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
+   "error": "group condition #0: invalid TugQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
    "phase": "parse"
   },
   "270 or with an unknown source in a child": {
-   "error": "invalid DTQL: join_scope at where.conditions[1].left.source: unknown alias \"zz\"",
+   "error": "invalid TugQL: join_scope at where.conditions[1].left.source: unknown alias \"zz\"",
    "phase": "parse"
   },
   "271 and with an unknown key": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: field foo not found in type dtql.condYAML",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  line 1: field foo not found in type tugql.condYAML",
    "phase": "parse"
   },
   "272 group inside group with an invalid operator": {
-   "error": "group condition #0: group condition #0: invalid DTQL: unknown comparison operator \"like\"",
+   "error": "group condition #0: group condition #0: invalid TugQL: unknown comparison operator \"like\"",
    "phase": "parse"
   },
   "273 yaml and group": {
@@ -2567,11 +2567,11 @@
    ]
   },
   "281 HAVING group with a non-grouped field": {
-   "error": "invalid DTQL: aggregation: HAVING condition #0: HAVING left operand: \"s.genre\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: HAVING condition #0: HAVING left operand: \"s.genre\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "282 HAVING group with an empty list": {
-   "error": "invalid DTQL: having: invalid DTQL: \"AND\" group must have at least one condition",
+   "error": "invalid TugQL: having: invalid TugQL: \"AND\" group must have at least one condition",
    "phase": "parse"
   },
   "283 HAVING group short-circuits an In": {
@@ -2939,7 +2939,7 @@
    ]
   },
   "303 alias with a source inside an expression": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"s.n\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: \"s.n\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "304 alias of a field column inside an expression": {
@@ -2967,7 +2967,7 @@
    ]
   },
   "305 unknown name inside an expression order key": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"nope\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: \"nope\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "306 alias named like a source field in an aggregate query": {
@@ -3020,7 +3020,7 @@
    ]
   },
   "308 negative limit": {
-   "error": "invalid DTQL: query_shape at limit and offset must be non-negative",
+   "error": "invalid TugQL: query_shape at limit and offset must be non-negative",
    "phase": "parse"
   },
   "309 offset zero": {
@@ -3058,7 +3058,7 @@
    ]
   },
   "310 negative offset": {
-   "error": "invalid DTQL: query_shape at limit and offset must be non-negative",
+   "error": "invalid TugQL: query_shape at limit and offset must be non-negative",
    "phase": "parse"
   },
   "311 offset past the end": {
@@ -3097,7 +3097,7 @@
    ]
   },
   "314 from alias null": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  from.alias must be a string",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  from.alias must be a string",
    "phase": "parse"
   },
   "315 empty groupBy": {
@@ -3212,15 +3212,15 @@
    ]
   },
   "320 unknown top-level key": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: field bogus not found in type dtql.document",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  line 1: field bogus not found in type tugql.document",
    "phase": "parse"
   },
   "321 yaml with a duplicate key": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 3: mapping key \"columns\" already defined at line 2",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  line 3: mapping key \"columns\" already defined at line 2",
    "phase": "parse"
   },
   "322 yaml with two documents": {
-   "error": "invalid DTQL-YAML: multiple documents are not allowed",
+   "error": "invalid TugQL YAML: multiple documents are not allowed",
    "phase": "parse"
   },
   "323 isNull on a null column in a joined WHERE": {
@@ -3535,11 +3535,11 @@
    "rows": []
   },
   "348 isNull with an empty operand": {
-   "error": "invalid DTQL: isNull operand: expression must set exactly one expression form",
+   "error": "invalid TugQL: isNull operand: expression must set exactly one expression form",
    "phase": "parse"
   },
   "349 isNull and isNotNull together": {
-   "error": "invalid DTQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
+   "error": "invalid TugQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
    "phase": "parse"
   },
   "35 order by sum over all-null group (Monk qty null) asc": {
@@ -3567,43 +3567,43 @@
    ]
   },
   "350 isNull mixed with a comparison": {
-   "error": "invalid DTQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
+   "error": "invalid TugQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
    "phase": "parse"
   },
   "351 isNull mixed with a group": {
-   "error": "invalid DTQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
+   "error": "invalid TugQL: condition mixes forms: exactly one of comparison (op/left/right), and, or, exists, notExists, isNull or isNotNull is allowed",
    "phase": "parse"
   },
   "352 isNull with an unknown alias": {
-   "error": "invalid DTQL: join_scope at where.operand.source: unknown alias \"zzz\"",
+   "error": "invalid TugQL: join_scope at where.operand.source: unknown alias \"zzz\"",
    "phase": "parse"
   },
   "353 isNull with two expression forms": {
-   "error": "invalid DTQL: isNull operand: expression must set exactly one expression form, but several are set",
+   "error": "invalid TugQL: isNull operand: expression must set exactly one expression form, but several are set",
    "phase": "parse"
   },
   "354 isNull with an unknown key in the operand": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field bogus not found in expression",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  field bogus not found in expression",
    "phase": "parse"
   },
   "355 isNull as a join predicate": {
-   "error": "invalid DTQL: join_shape at from.joins[0].on[0]: ON predicate must be a comparison",
+   "error": "invalid TugQL: join_shape at from.joins[0].on[0]: ON predicate must be a comparison",
    "phase": "parse"
   },
   "356 isNull over a values list": {
-   "error": "invalid DTQL: query_shape at where.isNull: a values list is not a scalar to test",
+   "error": "invalid TugQL: query_shape at where.isNull: a values list is not a scalar to test",
    "phase": "parse"
   },
   "357 isNull over a parameter": {
-   "error": "invalid DTQL: query_shape at where.isNull: a param is not a value to test",
+   "error": "invalid TugQL: query_shape at where.isNull: a param is not a value to test",
    "phase": "parse"
   },
   "358 isNull over a star": {
-   "error": "invalid DTQL: query_shape at where.isNull: star is not a value to test",
+   "error": "invalid TugQL: query_shape at where.isNull: star is not a value to test",
    "phase": "parse"
   },
   "359 isNull in WHERE over an aggregate": {
-   "error": "invalid DTQL: query_shape at where.isNull: an aggregate has no value in where; test it in having",
+   "error": "invalid TugQL: query_shape at where.isNull: an aggregate has no value in where; test it in having",
    "phase": "parse"
   },
   "36 order by avg over all-null group asc": {
@@ -3631,15 +3631,15 @@
    ]
   },
   "360 HAVING isNull over a field that is not grouped": {
-   "error": "invalid DTQL: aggregation: HAVING operand: \"s.v\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: HAVING operand: \"s.v\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "361 isNull given as a scalar": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  expression must be a mapping",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  expression must be a mapping",
    "phase": "parse"
   },
   "362 isNull null is no condition": {
-   "error": "invalid DTQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
+   "error": "invalid TugQL: condition must be a comparison (op/left/right), a group (and/or), exists/notExists or isNull/isNotNull",
    "phase": "parse"
   },
   "363 isNull null beside a comparison is the comparison": {
@@ -3672,7 +3672,7 @@
    ]
   },
   "38 aggregate key, no groupBy, with plain field column": {
-   "error": "invalid DTQL: aggregation: selected expression \"s.artist\" is neither aggregated nor present in GROUP BY",
+   "error": "invalid TugQL: aggregation: selected expression \"s.artist\" is neither aggregated nor present in GROUP BY",
    "phase": "parse"
   },
   "40 desc:false explicit": {
@@ -3695,7 +3695,7 @@
    ]
   },
   "41 nested aggregate in key sum(sum(qty))": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: nested aggregates are not supported",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: nested aggregates are not supported",
    "phase": "parse"
   },
   "42 overflow key 1e308*qty*100 desc": {
@@ -3703,27 +3703,27 @@
    "phase": "plan"
   },
   "50 unknown key descending:true": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field descending not found in expression",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  field descending not found in expression",
    "phase": "parse"
   },
   "51 unknown key direction:desc": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field direction not found in expression",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  field direction not found in expression",
    "phase": "parse"
   },
   "52 extra as": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field as not found in expression",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  field as not found in expression",
    "phase": "parse"
   },
   "53 star key": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"*\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: \"*\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "54 values key": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"(1,2)\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: \"(1,2)\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "55 source without field": {
-   "error": "invalid DTQL: orderBy #0: source is valid only with field",
+   "error": "invalid TugQL: orderBy #0: source is valid only with field",
    "phase": "parse"
   },
   "60 ungrouped join: param order key": {
@@ -3760,27 +3760,27 @@
    ]
   },
   "63 ungrouped join: aggregate-only key with a plain column": {
-   "error": "invalid DTQL: aggregation: selected expression \"s.id\" is neither aggregated nor present in GROUP BY",
+   "error": "invalid TugQL: aggregation: selected expression \"s.id\" is neither aggregated nor present in GROUP BY",
    "phase": "parse"
   },
   "64 grouped: sum(*) order key": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: SUM(*) is not supported",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: SUM(*) is not supported",
    "phase": "parse"
   },
   "65 grouped: count(distinct *) order key": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: COUNT(DISTINCT *) is not supported",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: COUNT(DISTINCT *) is not supported",
    "phase": "parse"
   },
   "66 grouped: min(distinct x) order key": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: DISTINCT is not supported for MIN",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: DISTINCT is not supported for MIN",
    "phase": "parse"
   },
   "67 grouped: aggregate with two arguments as order key": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: SUM requires exactly one argument",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: SUM requires exactly one argument",
    "phase": "parse"
   },
   "68 grouped: aggregate without arguments as order key": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: SUM requires exactly one argument",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: SUM requires exactly one argument",
    "phase": "parse"
   },
   "69 grouped: key combining an aggregate and a group key": {
@@ -3792,23 +3792,23 @@
    ]
   },
   "70 grouped: desc that is not a boolean": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!str `descending` into bool",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!str `descending` into bool",
    "phase": "parse"
   },
   "71 grouped: unknown key beside a field key": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field extra not found in expression",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  field extra not found in expression",
    "phase": "parse"
   },
   "72 grouped: two expression forms in one key": {
-   "error": "invalid DTQL: orderBy #0: expression must set exactly one expression form, but several are set",
+   "error": "invalid TugQL: orderBy #0: expression must set exactly one expression form, but several are set",
    "phase": "parse"
   },
   "73 grouped: empty order key": {
-   "error": "invalid DTQL: orderBy #0: expression must set exactly one expression form",
+   "error": "invalid TugQL: orderBy #0: expression must set exactly one expression form",
    "phase": "parse"
   },
   "74 grouped: order key with only desc": {
-   "error": "invalid DTQL: orderBy #0: expression must set exactly one expression form",
+   "error": "invalid TugQL: orderBy #0: expression must set exactly one expression form",
    "phase": "parse"
   },
   "75 grouped: group key not selected used as order key": {
@@ -3850,15 +3850,15 @@
    ]
   },
   "77 grouped: plain column that is not a group key": {
-   "error": "invalid DTQL: aggregation: selected expression \"s.artist\" is neither aggregated nor present in GROUP BY",
+   "error": "invalid TugQL: aggregation: selected expression \"s.artist\" is neither aggregated nor present in GROUP BY",
    "phase": "parse"
   },
   "78 no groupBy: plain column beside an aggregate column": {
-   "error": "invalid DTQL: aggregation: selected expression \"s.artist\" is neither aggregated nor present in GROUP BY",
+   "error": "invalid TugQL: aggregation: selected expression \"s.artist\" is neither aggregated nor present in GROUP BY",
    "phase": "parse"
   },
   "79 grouped: constant column": {
-   "error": "invalid DTQL: aggregation: selected expression \"1\" is neither aggregated nor present in GROUP BY",
+   "error": "invalid TugQL: aggregation: selected expression \"1\" is neither aggregated nor present in GROUP BY",
    "phase": "parse"
   },
   "80 grouped: aggregate column mixing a group key": {
@@ -3869,11 +3869,11 @@
    ]
   },
   "81 groupBy containing an aggregate": {
-   "error": "invalid DTQL: aggregation: GROUP BY expression #0 contains an aggregate",
+   "error": "invalid TugQL: aggregation: GROUP BY expression #0 contains an aggregate",
    "phase": "parse"
   },
   "82 grouped: wildcard column": {
-   "error": "invalid DTQL: aggregation: aggregate SELECT column #0 cannot be a wildcard",
+   "error": "invalid TugQL: aggregation: aggregate SELECT column #0 cannot be a wildcard",
    "phase": "parse"
   },
   "83 groupBy without columns projects the group key": {
@@ -4004,11 +4004,11 @@
    ]
   },
   "89 unknown alias as order key": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"nope\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: \"nope\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "90 alias with a source as order key": {
-   "error": "invalid DTQL: aggregation: ORDER BY expression #0: \"s.purchases\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
+   "error": "invalid TugQL: aggregation: ORDER BY expression #0: \"s.purchases\" is neither an aggregate, SELECT alias, nor GROUP BY expression",
    "phase": "parse"
   },
   "91 unqualified fields in a single aliased source": {
@@ -4293,11 +4293,11 @@
    ]
   },
   "A11 isNull over empty values": {
-   "error": "invalid DTQL: query_shape at where.isNull: a values list is not a scalar to test",
+   "error": "invalid TugQL: query_shape at where.isNull: a values list is not a scalar to test",
    "phase": "parse"
   },
   "A13 unqualified ambiguous operand": {
-   "error": "invalid DTQL: join_field at where.operand.source: unqualified JOIN field requires schema metadata",
+   "error": "invalid TugQL: join_field at where.operand.source: unqualified JOIN field requires schema metadata",
    "phase": "parse"
   },
   "A14 HAVING isNull over count star": {
@@ -4386,15 +4386,15 @@
    ]
   },
   "A27 isNull operand is a list": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  expression must be a mapping",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  expression must be a mapping",
    "phase": "parse"
   },
   "A28 isNull over nested isNull": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  field isNull not found in expression",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  field isNull not found in expression",
    "phase": "parse"
   },
   "A30 isNull inside on beside a comparison": {
-   "error": "invalid DTQL: join_shape at from.joins[0].on[1]: ON predicate must be a comparison",
+   "error": "invalid TugQL: join_shape at from.joins[0].on[1]: ON predicate must be a comparison",
    "phase": "parse"
   },
   "A31 yaml form": {
@@ -4408,11 +4408,11 @@
    ]
   },
   "A32 isNull wrong case key": {
-   "error": "invalid DTQL-YAML: yaml: unmarshal errors:\n  line 36: field isnull not found in type dtql.condYAML",
+   "error": "invalid TugQL YAML: yaml: unmarshal errors:\n  line 36: field isnull not found in type tugql.condYAML",
    "phase": "parse"
   },
   "A33 right join null-extended left": {
-   "error": "invalid DTQL: join_type at from.joins[0].type: unsupported join type \"right\"",
+   "error": "invalid TugQL: join_type at from.joins[0].type: unsupported join type \"right\"",
    "phase": "parse"
   },
   "A34 isNotNull over aggregate-free binary of two sources": {

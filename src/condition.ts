@@ -1,7 +1,7 @@
-import type { DTQLComparison, DTQLCondition, DTQLConditionGroup, DTQLExpression, DTQLNullTest, DTQLQueryFilter, QueryOperator, RecursiveDTQLExpression } from "./query.js";
+import type { TugQLComparison, TugQLCondition, TugQLConditionGroup, TugQLExpression, TugQLNullTest, TugQLQueryFilter, QueryOperator, RecursiveTugQLExpression } from "./query.js";
 
 /** A condition that is neither an `and`/`or` group: a comparison or a null test. */
-export type DTQLLeaf = DTQLComparison | DTQLNullTest;
+export type TugQLLeaf = TugQLComparison | TugQLNullTest;
 
 /** True for the `In` and `NotIn` membership operators. */
 export function isMembership(operator: QueryOperator): boolean {
@@ -9,12 +9,12 @@ export function isMembership(operator: QueryOperator): boolean {
 }
 
 /** True when the condition is an `and`/`or` group rather than one comparison. */
-export function isConditionGroup(condition: DTQLCondition): condition is DTQLConditionGroup {
+export function isConditionGroup(condition: TugQLCondition): condition is TugQLConditionGroup {
   return "kind" in condition && (condition.kind === "and" || condition.kind === "or");
 }
 
 /** True for an `isNull` / `isNotNull` condition. */
-export function isNullTest(condition: DTQLCondition): condition is DTQLNullTest {
+export function isNullTest(condition: TugQLCondition): condition is TugQLNullTest {
   return "kind" in condition && (condition.kind === "is-null" || condition.kind === "is-not-null");
 }
 
@@ -25,7 +25,7 @@ export function isNullTest(condition: DTQLCondition): condition is DTQLNullTest 
  * and an aggregate has a value only in `having`. Go rejects the same shapes at
  * parse, with the same wording.
  */
-export function nullOperandProblem(operand: DTQLExpression | RecursiveDTQLExpression, having: boolean): string | undefined {
+export function nullOperandProblem(operand: TugQLExpression | RecursiveTugQLExpression, having: boolean): string | undefined {
   switch (operand.kind) {
     case "values": return "a values list is not a scalar to test";
     case "star": return "star is not a value to test";
@@ -37,7 +37,7 @@ export function nullOperandProblem(operand: DTQLExpression | RecursiveDTQLExpres
 }
 
 /** The expressions a leaf condition reads, each with the key that locates it in an error path. */
-export function leafOperands(leaf: DTQLLeaf): readonly (readonly [string, DTQLExpression])[] {
+export function leafOperands(leaf: TugQLLeaf): readonly (readonly [string, TugQLExpression])[] {
   return "operand" in leaf ? [["operand", leaf.operand]] : [["left", leaf.left], ["right", leaf.right]];
 }
 
@@ -45,12 +45,12 @@ export function leafOperands(leaf: DTQLLeaf): readonly (readonly [string, DTQLEx
  * A null test as Go decides it: never unknown. `value` is what the operand
  * evaluated to; an undefined (missing) value counts as null.
  */
-export function nullTestTruth(test: DTQLNullTest, value: unknown): Truth {
+export function nullTestTruth(test: TugQLNullTest, value: unknown): Truth {
   return ((value === null || value === undefined) === (test.kind === "is-null")) ? "true" : "false";
 }
 
 /** Rewrites the compact field-versus-literal filter as the general comparison it stands for. */
-export function toCondition(filter: DTQLQueryFilter | DTQLCondition): DTQLCondition {
+export function toCondition(filter: TugQLQueryFilter | TugQLCondition): TugQLCondition {
   if (!("field" in filter)) return filter;
   const value = filter.value as string | number | boolean | null;
   return {
@@ -67,7 +67,7 @@ export function toCondition(filter: DTQLQueryFilter | DTQLCondition): DTQLCondit
  * the path that locates it (`where`, `having.and[1]`, ...), the way Go's
  * executor reports it.
  */
-export function walkLeaves(condition: DTQLCondition, path: string, visit: (leaf: DTQLLeaf, path: string) => void): void {
+export function walkLeaves(condition: TugQLCondition, path: string, visit: (leaf: TugQLLeaf, path: string) => void): void {
   if (!isConditionGroup(condition)) {
     visit(condition, path);
     return;
@@ -76,7 +76,7 @@ export function walkLeaves(condition: DTQLCondition, path: string, visit: (leaf:
 }
 
 /** Visits every expression a condition reads, with its path (`where.left`, `having.and[0].operand`, ...). */
-export function walkConditionExpressions(condition: DTQLCondition, path: string, visit: (expression: DTQLExpression, path: string) => void): void {
+export function walkConditionExpressions(condition: TugQLCondition, path: string, visit: (expression: TugQLExpression, path: string) => void): void {
   walkLeaves(condition, path, (leaf, leafPath) => { for (const [key, expression] of leafOperands(leaf)) visit(expression, `${leafPath}.${key}`); });
 }
 
@@ -90,7 +90,7 @@ export function walkConditionExpressions(condition: DTQLCondition, path: string,
  */
 export type Truth = "true" | "false" | "unknown";
 
-export function evaluateCondition(condition: DTQLCondition, leaf: (leaf: DTQLLeaf, path: string) => Truth, path: string): Truth {
+export function evaluateCondition(condition: TugQLCondition, leaf: (leaf: TugQLLeaf, path: string) => Truth, path: string): Truth {
   if (!isConditionGroup(condition)) return leaf(condition, path);
   const stopOn: Truth = condition.kind === "or" ? "true" : "false";
   let unknown = false;
