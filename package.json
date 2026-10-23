@@ -52,6 +52,6 @@
     "vitest": "5.0.1"
   },
   "dependencies": {
-    "yaml": "2.8.2"
+    "yaml": "^2.9.1"
   }
 }
