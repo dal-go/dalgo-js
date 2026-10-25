@@ -1,0 +1,10 @@
+{
+ "cases": [
+  {"name": "50 unknown key descending:true", "query": {"from": {"database": "chinook", "name": "Sale", "alias": "s"}, "groupBy": [{"field": "artist", "source": "s"}], "columns": [{"field": "artist", "source": "s"}], "orderBy": [{"aggregate": {"function": "count", "args": [{"star": true}]}, "descending": true}, {"field": "artist", "source": "s"}]}},
+  {"name": "51 unknown key direction:desc", "query": {"from": {"database": "chinook", "name": "Sale", "alias": "s"}, "groupBy": [{"field": "artist", "source": "s"}], "columns": [{"field": "artist", "source": "s"}], "orderBy": [{"aggregate": {"function": "count", "args": [{"star": true}]}, "direction": "desc"}, {"field": "artist", "source": "s"}]}},
+  {"name": "52 extra as", "query": {"from": {"database": "chinook", "name": "Sale", "alias": "s"}, "groupBy": [{"field": "artist", "source": "s"}], "columns": [{"field": "artist", "source": "s"}], "orderBy": [{"aggregate": {"function": "count", "args": [{"star": true}]}, "as": "x"}, {"field": "artist", "source": "s"}]}},
+  {"name": "53 star key", "query": {"from": {"database": "chinook", "name": "Sale", "alias": "s"}, "groupBy": [{"field": "artist", "source": "s"}], "columns": [{"field": "artist", "source": "s"}], "orderBy": [{"star": true}]}},
+  {"name": "54 values key", "query": {"from": {"database": "chinook", "name": "Sale", "alias": "s"}, "groupBy": [{"field": "artist", "source": "s"}], "columns": [{"field": "artist", "source": "s"}], "orderBy": [{"values": [1, 2]}]}},
+  {"name": "55 source without field", "query": {"from": {"database": "chinook", "name": "Sale", "alias": "s"}, "groupBy": [{"field": "artist", "source": "s"}], "columns": [{"field": "artist", "source": "s"}], "orderBy": [{"aggregate": {"function": "count", "args": [{"star": true}]}, "source": "s"}]}}
+ ]
+}

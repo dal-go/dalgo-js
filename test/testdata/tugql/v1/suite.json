@@ -1,0 +1,2165 @@
+{
+  "format": "tugql-golden-suite",
+  "version": 1,
+  "cases": [
+    {
+      "name": "basic",
+      "source": "from Invoice\nselect InvoiceId, Total",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "columns": [
+              {
+                "field": "InvoiceId"
+              },
+              {
+                "field": "Total"
+              }
+            ],
+            "from": {
+              "name": "Invoice"
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n    columns:\n        - field: InvoiceId\n        - field: Total\n"
+      }
+    },
+    {
+      "name": "parameters",
+      "source": "parameters (\n  @CustomerId integer required\n  @MinTotal decimal default 0\n)\nfrom Invoice as i\nwhere i.CustomerId = @CustomerId\nselect i.InvoiceId, i.Total",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "parameters": [
+            {
+              "name": "CustomerId",
+              "type": "integer",
+              "required": true
+            },
+            {
+              "name": "MinTotal",
+              "type": "decimal",
+              "default": "0"
+            }
+          ],
+          "query": {
+            "columns": [
+              {
+                "field": "InvoiceId",
+                "source": "i"
+              },
+              {
+                "field": "Total",
+                "source": "i"
+              }
+            ],
+            "from": {
+              "alias": "i",
+              "name": "Invoice"
+            },
+            "where": {
+              "left": {
+                "field": "CustomerId",
+                "source": "i"
+              },
+              "op": "==",
+              "right": {
+                "param": "CustomerId"
+              }
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nparameters:\n    - name: CustomerId\n      type: integer\n      required: true\n    - name: MinTotal\n      type: decimal\n      default: \"0\"\nquery:\n    from:\n        name: Invoice\n        alias: i\n    where:\n        op: ==\n        left:\n            field: CustomerId\n            source: i\n        right:\n            param: CustomerId\n    columns:\n        - field: InvoiceId\n          source: i\n        - field: Total\n          source: i\n"
+      }
+    },
+    {
+      "name": "cte",
+      "source": "with Invoices as (\n  from Invoice as i\n  select i.CustomerId\n)\nfrom Invoices as v\nselect v.CustomerId",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "definitions": [
+            {
+              "kind": "cte",
+              "name": "Invoices",
+              "query": {
+                "query": {
+                  "columns": [
+                    {
+                      "field": "CustomerId",
+                      "source": "i"
+                    }
+                  ],
+                  "from": {
+                    "alias": "i",
+                    "name": "Invoice"
+                  }
+                }
+              }
+            }
+          ],
+          "query": {
+            "columns": [
+              {
+                "field": "CustomerId",
+                "source": "v"
+              }
+            ],
+            "from": {
+              "alias": "v",
+              "name": "Invoices"
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\ndefinitions:\n    - kind: cte\n      name: Invoices\n      query:\n        query:\n            from:\n                name: Invoice\n                alias: i\n            columns:\n                - field: CustomerId\n                  source: i\nquery:\n    from:\n        name: Invoices\n        alias: v\n    columns:\n        - field: CustomerId\n          source: v\n"
+      }
+    },
+    {
+      "name": "import-using",
+      "source": "with CustomerTotals from \"./queries/customer-totals\"\n  using (\n    @MinTotal = @MinimumSpend\n  )\nfrom CustomerTotals\nselect CustomerId",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "definitions": [
+            {
+              "kind": "import",
+              "name": "CustomerTotals",
+              "path": "./queries/customer-totals",
+              "using": [
+                {
+                  "name": "MinTotal",
+                  "expression": {
+                    "param": "MinimumSpend"
+                  }
+                }
+              ]
+            }
+          ],
+          "query": {
+            "columns": [
+              {
+                "field": "CustomerId"
+              }
+            ],
+            "from": {
+              "name": "CustomerTotals"
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\ndefinitions:\n    - kind: import\n      name: CustomerTotals\n      path: ./queries/customer-totals\n      using:\n        - name: MinTotal\n          expression:\n            param: MinimumSpend\nquery:\n    from:\n        name: CustomerTotals\n    columns:\n        - field: CustomerId\n"
+      }
+    },
+    {
+      "name": "select-block",
+      "source": "from Invoice\nselect (\n  InvoiceId\n  Total as Total\n)",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "columns": [
+              {
+                "field": "InvoiceId"
+              },
+              {
+                "as": "Total",
+                "field": "Total"
+              }
+            ],
+            "from": {
+              "name": "Invoice"
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n    columns:\n        - field: InvoiceId\n        - field: Total\n          as: Total\n"
+      }
+    },
+    {
+      "name": "compact-parenthesized-select",
+      "source": "from Invoice\nselect (InvoiceId)",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "columns": [
+              {
+                "field": "InvoiceId"
+              }
+            ],
+            "from": {
+              "name": "Invoice"
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n    columns:\n        - field: InvoiceId\n"
+      }
+    },
+    {
+      "name": "scalar-call",
+      "source": "from Invoice as i\nselect COALESCE(i.Note, 'a,b') as Note",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "columns": [
+              {
+                "as": "Note",
+                "call": {
+                  "args": [
+                    {
+                      "field": "Note",
+                      "source": "i"
+                    },
+                    {
+                      "value": "a,b"
+                    }
+                  ],
+                  "function": "COALESCE"
+                }
+              }
+            ],
+            "from": {
+              "alias": "i",
+              "name": "Invoice"
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n        alias: i\n    columns:\n        - call:\n            function: COALESCE\n            args:\n                - field: Note\n                  source: i\n                - value: a,b\n          as: Note\n"
+      }
+    },
+    {
+      "name": "scalar-with-cte",
+      "source": "from Invoice as i\nselect (\n  i.InvoiceId as ID\n  CustomerName as (\n    with Customers as (\n      from Customer as c\n      select c.CustomerId, c.FirstName\n    )\n    from Customers as c\n    where c.CustomerId = i.CustomerId\n    select c.FirstName\n  )\n)",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "columns": [
+              {
+                "as": "ID",
+                "field": "InvoiceId",
+                "source": "i"
+              },
+              {
+                "as": "CustomerName",
+                "query": {
+                  "definitions": [
+                    {
+                      "kind": "cte",
+                      "name": "Customers",
+                      "query": {
+                        "query": {
+                          "columns": [
+                            {
+                              "field": "CustomerId",
+                              "source": "c"
+                            },
+                            {
+                              "field": "FirstName",
+                              "source": "c"
+                            }
+                          ],
+                          "from": {
+                            "alias": "c",
+                            "name": "Customer"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "query": {
+                    "columns": [
+                      {
+                        "field": "FirstName",
+                        "source": "c"
+                      }
+                    ],
+                    "from": {
+                      "alias": "c",
+                      "name": "Customers"
+                    },
+                    "where": {
+                      "left": {
+                        "field": "CustomerId",
+                        "source": "c"
+                      },
+                      "op": "==",
+                      "right": {
+                        "field": "CustomerId",
+                        "source": "i"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "from": {
+              "alias": "i",
+              "name": "Invoice"
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n        alias: i\n    columns:\n        - field: InvoiceId\n          source: i\n          as: ID\n        - query:\n            definitions:\n                - kind: cte\n                  name: Customers\n                  query:\n                    query:\n                        from:\n                            name: Customer\n                            alias: c\n                        columns:\n                            - field: CustomerId\n                              source: c\n                            - field: FirstName\n                              source: c\n            query:\n                from:\n                    name: Customers\n                    alias: c\n                where:\n                    op: ==\n                    left:\n                        field: CustomerId\n                        source: c\n                    right:\n                        field: CustomerId\n                        source: i\n                columns:\n                    - field: FirstName\n                      source: c\n          as: CustomerName\n"
+      }
+    },
+    {
+      "name": "join-inferred-on",
+      "source": "from Invoice as i\njoin Customer as c\nselect i.InvoiceId",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "columns": [
+              {
+                "field": "InvoiceId",
+                "source": "i"
+              }
+            ],
+            "from": {
+              "alias": "i",
+              "joins": [
+                {
+                  "from": {
+                    "alias": "c",
+                    "name": "Customer"
+                  },
+                  "on": []
+                }
+              ],
+              "name": "Invoice"
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n        alias: i\n        joins:\n            - from:\n                name: Customer\n                alias: c\n              \"on\": []\n    columns:\n        - field: InvoiceId\n          source: i\n"
+      }
+    },
+    {
+      "name": "join-shorthand-on",
+      "source": "from Invoice as i\njoin Customer as c\n  on CustomerId\nselect i.InvoiceId",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "columns": [
+              {
+                "field": "InvoiceId",
+                "source": "i"
+              }
+            ],
+            "from": {
+              "alias": "i",
+              "joins": [
+                {
+                  "from": {
+                    "alias": "c",
+                    "name": "Customer"
+                  },
+                  "on": [
+                    {
+                      "left": {
+                        "field": "CustomerId"
+                      },
+                      "op": "relationship"
+                    }
+                  ]
+                }
+              ],
+              "name": "Invoice"
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n        alias: i\n        joins:\n            - from:\n                name: Customer\n                alias: c\n              \"on\":\n                - op: relationship\n                  left:\n                    field: CustomerId\n    columns:\n        - field: InvoiceId\n          source: i\n"
+      }
+    },
+    {
+      "name": "unsupported-statement",
+      "source": "from Invoice\nnonsense\nselect InvoiceId",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "unsupported_statement",
+            "message": "unrecognized or unsupported TugQL construct",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 2,
+                "column": 9
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "same-line-clause",
+      "source": "from Invoice select InvoiceId",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "multiple_clauses_same_line",
+            "message": "each query clause must start on its own line",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 14
+              },
+              "end": {
+                "line": 1,
+                "column": 20
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "signed-typed-defaults",
+      "source": "parameters (\n  @Min integer default -9007199254740991\n  @Rate decimal default -12.50\n  @Date date default '2024-02-29'\n)\nfrom T\nselect Id",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "parameters": [
+            {
+              "name": "Min",
+              "type": "integer",
+              "default": -9007199254740991
+            },
+            {
+              "name": "Rate",
+              "type": "decimal",
+              "default": "-12.50"
+            },
+            {
+              "name": "Date",
+              "type": "date",
+              "default": "2024-02-29"
+            }
+          ],
+          "query": {
+            "from": {
+              "name": "T"
+            },
+            "columns": [
+              {
+                "field": "Id"
+              }
+            ]
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nparameters:\n    - name: Min\n      type: integer\n      default: -9007199254740991\n    - name: Rate\n      type: decimal\n      default: \"-12.50\"\n    - name: Date\n      type: date\n      default: \"2024-02-29\"\nquery:\n    from:\n        name: T\n    columns:\n        - field: Id\n"
+      }
+    },
+    {
+      "name": "date-time-full-name-defaults",
+      "source": "parameters (\n  @When datetime default '2026-10-10T12:30:00Z'\n  @At timestamp default '2026-10-10T12:30:00.123Z'\n)\nfrom T\nselect Id",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "parameters": [
+            {
+              "name": "When",
+              "type": "datetime",
+              "default": "2026-10-10T12:30:00Z"
+            },
+            {
+              "name": "At",
+              "type": "timestamp",
+              "default": "2026-10-10T12:30:00.123Z"
+            }
+          ],
+          "query": {
+            "from": {
+              "name": "T"
+            },
+            "columns": [
+              {
+                "field": "Id"
+              }
+            ]
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nparameters:\n    - name: When\n      type: datetime\n      default: \"2026-10-10T12:30:00Z\"\n    - name: At\n      type: timestamp\n      default: \"2026-10-10T12:30:00.123Z\"\nquery:\n    from:\n        name: T\n    columns:\n        - field: Id\n"
+      }
+    },
+    {
+      "name": "invalid-decimal-default",
+      "source": "parameters (\n  @Amount decimal default 'NaN'\n)\nfrom T\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_parameter",
+            "message": "DECIMAL DEFAULT requires a finite decimal literal",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 3
+              },
+              "end": {
+                "line": 2,
+                "column": 32
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "invalid-date-default",
+      "source": "parameters (\n  @When date default '2026-02-30'\n)\nfrom T\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_parameter",
+            "message": "DATE DEFAULT must be a real YYYY-MM-DD date",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 3
+              },
+              "end": {
+                "line": 2,
+                "column": 34
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "invalid-datetime-default",
+      "source": "parameters (\n  @When datetime default '2026-10-10 12:30:00'\n)\nfrom T\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_parameter",
+            "message": "datetime DEFAULT must be a valid RFC3339 timestamp",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 3
+              },
+              "end": {
+                "line": 2,
+                "column": 47
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "parameter-type-alias-rejected",
+      "source": "parameters (\n  @Id int required\n)\nfrom T\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_parameter",
+            "message": "unsupported parameter type \"int\"",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 3
+              },
+              "end": {
+                "line": 2,
+                "column": 19
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "qualified-keyword-spelling-is-identifier",
+      "source": "from Invoice as i\nselect i.Date\n",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "from": {
+              "name": "Invoice",
+              "alias": "i"
+            },
+            "columns": [
+              {
+                "field": "Date",
+                "source": "i"
+              }
+            ]
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n        alias: i\n    columns:\n        - field: Date\n          source: i\n"
+      }
+    },
+    {
+      "name": "function-name-is-identifier",
+      "source": "from Invoice as i\nselect Date(i.InvoiceId) as Day\n",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "from": {
+              "name": "Invoice",
+              "alias": "i"
+            },
+            "columns": [
+              {
+                "as": "Day",
+                "call": {
+                  "function": "Date",
+                  "args": [
+                    {
+                      "field": "InvoiceId",
+                      "source": "i"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n        alias: i\n    columns:\n        - call:\n            function: Date\n            args:\n                - field: InvoiceId\n                  source: i\n          as: Day\n"
+      }
+    },
+    {
+      "name": "mixed-field-case-preserves-identifier",
+      "source": "FROM Invoice AS i\nSELECT i.date\n",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "from": {
+              "name": "Invoice",
+              "alias": "i"
+            },
+            "columns": [
+              {
+                "field": "date",
+                "source": "i"
+              }
+            ]
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n        alias: i\n    columns:\n        - field: date\n          source: i\n"
+      }
+    },
+    {
+      "name": "mixed-keyword-case-single-diagnostic",
+      "source": "FROM Invoice AS i\nwhere i.Id = 1\nSELECT i.Id\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "keyword_case",
+            "message": "reserved words must be consistently lowercase or uppercase",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 2,
+                "column": 6
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "expression-continuation-valid-indent",
+      "source": "from Invoice\nwhere (InvoiceId =\n  1)\nselect InvoiceId",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "columns": [
+              {
+                "field": "InvoiceId"
+              }
+            ],
+            "from": {
+              "name": "Invoice"
+            },
+            "where": {
+              "left": {
+                "field": "InvoiceId"
+              },
+              "op": "==",
+              "right": {
+                "value": 1
+              }
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: Invoice\n    where:\n        op: ==\n        left:\n            field: InvoiceId\n        right:\n            value: 1\n    columns:\n        - field: InvoiceId\n"
+      }
+    },
+    {
+      "name": "expression-continuation-invalid-indent",
+      "source": "from Invoice\nwhere (InvoiceId =\n 1)\nselect InvoiceId",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "indentation",
+            "message": "spaces must be used in two-space levels",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 2
+              },
+              "end": {
+                "line": 3,
+                "column": 4
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "invalid-timestamp-single-digit-hour",
+      "source": "parameters (\n  @Bad timestamp default '2024-01-01T0:00:00Z'\n)\nfrom T\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_parameter",
+            "message": "timestamp DEFAULT must be a valid RFC3339 timestamp",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 3
+              },
+              "end": {
+                "line": 2,
+                "column": 47
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "invalid-timestamp-offset-hour",
+      "source": "parameters (\n  @Bad timestamp default '2024-01-01T00:00:00+24:00'\n)\nfrom T\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_parameter",
+            "message": "timestamp DEFAULT must be a valid RFC3339 timestamp",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 3
+              },
+              "end": {
+                "line": 2,
+                "column": 53
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "invalid-timestamp-offset-minute",
+      "source": "parameters (\n  @Bad timestamp default '2024-01-01T00:00:00+00:60'\n)\nfrom T\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_parameter",
+            "message": "timestamp DEFAULT must be a valid RFC3339 timestamp",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 3
+              },
+              "end": {
+                "line": 2,
+                "column": 53
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "invalid-timestamp-comma-fraction",
+      "source": "parameters (\n  @Bad timestamp default '2024-01-01T00:00:00,123Z'\n)\nfrom T\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_parameter",
+            "message": "timestamp DEFAULT must be a valid RFC3339 timestamp",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 3
+              },
+              "end": {
+                "line": 2,
+                "column": 52
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "select-expression-over-depth",
+      "source": "from T\nselect 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 as Total",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_select",
+            "message": "expression nesting exceeds 128",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 2,
+                "column": 270
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "where-expression-over-depth",
+      "source": "from T\nwhere 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 > 0",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "document_depth_exceeded",
+            "message": "TugQL semantic tree depth exceeds 128",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 1,
+                "column": 7
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "scalar-nested-expression-over-depth",
+      "source": "from T\nselect (\n  Total as (\n    from U\n    select 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 as Total\n  )\n)",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_select",
+            "message": "expression nesting exceeds 128",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 7,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "cte-expression-over-depth",
+      "source": "with C as (\n  from T\n  select 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 as Total\n)\nfrom C\nselect Total",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "document_depth_exceeded",
+            "message": "TugQL semantic tree depth exceeds 128",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 7
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "having-count-after-where",
+      "source": "parameters (\n  @MinInvoices integer default 2\n)\nfrom Invoice as i\nwhere i.InvoiceId > 1\ngroup by i.CustomerId\nhaving COUNT(*) >= @MinInvoices\norder by i.CustomerId asc\nselect i.CustomerId, COUNT(*) as InvoiceCount",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "parameters": [
+            {
+              "name": "MinInvoices",
+              "type": "integer",
+              "default": 2
+            }
+          ],
+          "query": {
+            "columns": [
+              {
+                "field": "CustomerId",
+                "source": "i"
+              },
+              {
+                "aggregate": {
+                  "args": [
+                    {
+                      "star": true
+                    }
+                  ],
+                  "function": "COUNT"
+                },
+                "as": "InvoiceCount"
+              }
+            ],
+            "from": {
+              "alias": "i",
+              "name": "Invoice"
+            },
+            "groupBy": [
+              {
+                "field": "CustomerId",
+                "source": "i"
+              }
+            ],
+            "having": {
+              "left": {
+                "aggregate": {
+                  "args": [
+                    {
+                      "star": true
+                    }
+                  ],
+                  "function": "COUNT"
+                }
+              },
+              "op": ">=",
+              "right": {
+                "param": "MinInvoices"
+              }
+            },
+            "orderBy": [
+              {
+                "field": "CustomerId",
+                "source": "i"
+              }
+            ],
+            "where": {
+              "left": {
+                "field": "InvoiceId",
+                "source": "i"
+              },
+              "op": ">",
+              "right": {
+                "value": 1
+              }
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nparameters:\n    - name: MinInvoices\n      type: integer\n      default: 2\nquery:\n    from:\n        name: Invoice\n        alias: i\n    where:\n        op: '>'\n        left:\n            field: InvoiceId\n            source: i\n        right:\n            value: 1\n    groupBy:\n        - field: CustomerId\n          source: i\n    having:\n        op: '>='\n        left:\n            aggregate:\n                function: COUNT\n                args:\n                    - star: true\n        right:\n            param: MinInvoices\n    orderBy:\n        - field: CustomerId\n          source: i\n    columns:\n        - field: CustomerId\n          source: i\n        - aggregate:\n            function: COUNT\n            args:\n                - star: true\n          as: InvoiceCount\n"
+      }
+    },
+    {
+      "name": "having-before-group-by-is-invalid",
+      "source": "from Invoice as i\nhaving COUNT(*) >= 2\ngroup by i.CustomerId\nselect i.CustomerId",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "clause_order",
+            "message": "query clauses are out of order",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 22
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "having-after-order-by-is-invalid",
+      "source": "from Invoice as i\ngroup by i.CustomerId\norder by i.CustomerId asc\nhaving COUNT(*) >= 1\nselect i.CustomerId",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "clause_order",
+            "message": "query clauses are out of order",
+            "span": {
+              "start": {
+                "line": 4,
+                "column": 1
+              },
+              "end": {
+                "line": 4,
+                "column": 21
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-select-needs-block-single-item",
+      "source": "from Invoice\nselect\n  InvoiceId",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_select",
+            "message": "multiline SELECT requires '(' on the SELECT header line",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 12
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-select-needs-block-comma-list",
+      "source": "from Invoice\nselect\n  InvoiceId,\n  Total",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_select",
+            "message": "multiline SELECT requires '(' on the SELECT header line",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 4,
+                "column": 8
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-select-needs-block-wrapped-compact-header",
+      "source": "from Invoice\nselect InvoiceId,\n  Total",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_select",
+            "message": "multiline SELECT requires '(' on the SELECT header line",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 8
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-select-needs-block-header-inline-item",
+      "source": "from Invoice\nselect (InvoiceId\n)",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_select",
+            "message": "multiline SELECT requires '(' on the SELECT header line",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-select-span-crlf-tab-unicode",
+      "source": "from T\r\nselect\r\n\t\"\u540d\"",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_select",
+            "message": "multiline SELECT requires '(' on the SELECT header line",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 5
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-string-lf",
+      "source": "from T\nwhere Name = 'a\nb'\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 14
+              },
+              "end": {
+                "line": 2,
+                "column": 16
+              }
+            }
+          },
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 2
+              },
+              "end": {
+                "line": 3,
+                "column": 3
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-string-crlf",
+      "source": "from T\r\nwhere Name = 'a\r\nb'\r\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 14
+              },
+              "end": {
+                "line": 2,
+                "column": 16
+              }
+            }
+          },
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 2
+              },
+              "end": {
+                "line": 3,
+                "column": 3
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-string-cr",
+      "source": "from T\rwhere Name = 'a\rb'\rselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 14
+              },
+              "end": {
+                "line": 2,
+                "column": 16
+              }
+            }
+          },
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 2
+              },
+              "end": {
+                "line": 3,
+                "column": 3
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-string-escaped-quotes",
+      "source": "from T\nwhere Name = 'a''b\nc'\nselect Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 14
+              },
+              "end": {
+                "line": 2,
+                "column": 19
+              }
+            }
+          },
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 2
+              },
+              "end": {
+                "line": 3,
+                "column": 3
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-quoted-identifier",
+      "source": "from \"In\nvoice\"\nselect *",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 6
+              },
+              "end": {
+                "line": 1,
+                "column": 9
+              }
+            }
+          },
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 6
+              },
+              "end": {
+                "line": 2,
+                "column": 7
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-string-mixed-case-cte",
+      "source": "WiTh X As (\n  FrOm T\n  SeLeCt Id\n  WhErE Name = 'a\nb'\n)\nFrOm X\nSeLeCt Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 4,
+                "column": 16
+              },
+              "end": {
+                "line": 4,
+                "column": 18
+              }
+            }
+          },
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 2
+              },
+              "end": {
+                "line": 5,
+                "column": 3
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "singleline-quoted-escapes-tabs-unicode",
+      "source": "from \"Order\"\"Line\t\u96ea\" as \"A\t\u96ea\"\nwhere \"A\t\u96ea\".\"Note\" = 'FROM -- SELECT''s\t\u96ea'\nselect \"A\t\u96ea\".\"Id\"",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "columns": [
+              {
+                "field": "Id",
+                "source": "A\t\u96ea"
+              }
+            ],
+            "from": {
+              "alias": "A\t\u96ea",
+              "name": "Order\"Line\t\u96ea"
+            },
+            "where": {
+              "left": {
+                "field": "Note",
+                "source": "A\t\u96ea"
+              },
+              "op": "==",
+              "right": {
+                "value": "FROM -- SELECT's\t\u96ea"
+              }
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: \"Order\\\"Line\\t\u96ea\"\n        alias: \"A\\t\u96ea\"\n    where:\n        op: ==\n        left:\n            field: Note\n            source: \"A\\t\u96ea\"\n        right:\n            value: \"FROM -- SELECT's\\t\u96ea\"\n    columns:\n        - field: Id\n          source: \"A\\t\u96ea\"\n"
+      }
+    },
+    {
+      "name": "compact-select-expression-in-scalar-subquery",
+      "source": "from T as t\nselect (\n  Value as (\n    from U as u\n    select (u.Id + 1) as Id\n  )\n)",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "columns": [
+              {
+                "as": "Value",
+                "query": {
+                  "query": {
+                    "columns": [
+                      {
+                        "as": "Id",
+                        "binary": {
+                          "left": {
+                            "field": "Id",
+                            "source": "u"
+                          },
+                          "op": "+",
+                          "right": {
+                            "value": 1
+                          }
+                        }
+                      }
+                    ],
+                    "from": {
+                      "alias": "u",
+                      "name": "U"
+                    }
+                  }
+                }
+              }
+            ],
+            "from": {
+              "alias": "t",
+              "name": "T"
+            }
+          }
+        },
+        "diagnostics": [],
+        "yaml": "format: tugqtree\nversion: 1\nquery:\n    from:\n        name: T\n        alias: t\n    columns:\n        - query:\n            query:\n                from:\n                    name: U\n                    alias: u\n                columns:\n                    - binary:\n                        op: +\n                        left:\n                            field: Id\n                            source: u\n                        right:\n                            value: 1\n                      as: Id\n          as: Value\n"
+      }
+    },
+    {
+      "name": "multiline-quoted-identifier-crlf-unicode-cte",
+      "source": "WiTh X As (\r\n  FrOm \"\ud83d\ude00\tIn\r\nvoice\r\n  SeLeCt Id\r\n)\r\nFrOm X\r\nSeLeCt Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 8
+              },
+              "end": {
+                "line": 2,
+                "column": 13
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "multiline-quoted-identifier-cr-unicode-cte",
+      "source": "WiTh X As (\r  FrOm \"\ud83d\ude00\tIn\rvoice\r  SeLeCt Id\r)\rFrOm X\rSeLeCt Id",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "unterminated_quote",
+            "message": "quoted value cannot continue across lines",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 8
+              },
+              "end": {
+                "line": 2,
+                "column": 13
+              }
+            }
+          }
+        ],
+        "yaml": ""
+      }
+    },
+    {
+      "name": "malformed-exists-exists-60",
+      "source": "from T\nwhere exists (\n  from T\n  select 1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1 as Total\n)\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "malformed-exists-exists-61",
+      "source": "from T\nwhere exists (\n  from T\n  select 1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1 as Total\n)\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "malformed-exists-exists-62",
+      "source": "from T\nwhere exists (\n  from T\n  select 1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1 as Total\n)\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "malformed-exists-exists-63",
+      "source": "from T\nwhere exists (\n  from T\n  select 1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1 as Total\n)\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "malformed-exists-exists-64",
+      "source": "from T\nwhere exists (\n  from T\n  select 1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1 as Total\n)\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "malformed-exists-exists-65",
+      "source": "from T\nwhere exists (\n  from T\n  select 1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1 as Total\n)\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-exists-malformed-multiline-comparison",
+      "source": "FROM T\nWHERE EXISTS (\n  FROM U\n  WHERE U.Id =\n)\nSELECT A\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-not-exists-malformed-multiline-comparison",
+      "source": "FROM T\nWHERE NOT EXISTS (\n  FROM U\n  WHERE U.Id =\n)\nSELECT A\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-exists-complete-unsupported-form",
+      "source": "FROM T\nWHERE EXISTS (\n  FROM U\n  WHERE U.Id = 1\n)\nSELECT A\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-not-exists-complete-unsupported-form",
+      "source": "FROM T\nWHERE NOT EXISTS (\n  FROM U\n  WHERE U.Id = 1\n)\nSELECT A\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-nested-exists-after-or",
+      "source": "FROM T\nWHERE A = 1 OR EXISTS (\n  FROM U\n  WHERE U.Id = 1\n)\nSELECT A\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-not-exists-malformed-comparison-crlf",
+      "source": "FROM T\r\nWHERE NOT EXISTS (\r\n  FROM U\r\n  WHERE U.Id =\r\n)\r\nSELECT A\r\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "unsupported condition",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-nested-operator-trailing-rhs",
+      "source": "FROM T\nWHERE (\n  (A = 1) >\n)\nSELECT A\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "comparison requires left and right expressions",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 4,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-nested-and-outer-operator",
+      "source": "FROM T\nWHERE (\n  (A = 1 AND B = 2) >\n)\nSELECT A\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "comparison requires left and right expressions",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 4,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-nested-or-outer-operator",
+      "source": "FROM T\nWHERE (\n  (A = 1 OR B = 2) >\n)\nSELECT A\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "comparison requires left and right expressions",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 4,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-multiline-trailing-comparison-control",
+      "source": "FROM T\nWHERE (\n  A = 1\n  AND B =\n)\nSELECT A\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "comparison requires left and right expressions",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-nested-parens-empty-right-control-crlf",
+      "source": "FROM T\r\nWHERE (\r\n  A = 1\r\n  AND (B = )\r\n)\r\nSELECT A\r\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "comparison requires left and right expressions",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-where-multiline-or-trailing-right-control",
+      "source": "FROM T\nWHERE (A = 1 OR\n  B = )\nSELECT A\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "comparison requires left and right expressions",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 8
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-parity-unicode-astral-incomplete-comparison",
+      "source": "from T\nwhere \"😀\" =\nselect Id\n",
+      "expected": {
+        "tree": null,
+        "diagnostics": [
+          {
+            "code": "invalid_condition",
+            "message": "comparison requires left and right expressions",
+            "span": {
+              "start": {
+                "line": 2,
+                "column": 1
+              },
+              "end": {
+                "line": 2,
+                "column": 12
+              }
+            }
+          }
+        ],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-control-valid-multiline-and",
+      "source": "from T\nwhere (\n  A = 1\n  and B = 2\n)\nselect A\n",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "from": {
+              "name": "T"
+            },
+            "where": {
+              "and": [
+                {
+                  "op": "==",
+                  "left": {
+                    "field": "A"
+                  },
+                  "right": {
+                    "value": 1
+                  }
+                },
+                {
+                  "op": "==",
+                  "left": {
+                    "field": "B"
+                  },
+                  "right": {
+                    "value": 2
+                  }
+                }
+              ]
+            },
+            "columns": [
+              {
+                "field": "A"
+              }
+            ]
+          }
+        },
+        "diagnostics": [],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-control-valid-arithmetic-comparison",
+      "source": "from T\nwhere A + 1 > B * 2\nselect A\n",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "from": {
+              "name": "T"
+            },
+            "where": {
+              "op": ">",
+              "left": {
+                "binary": {
+                  "op": "+",
+                  "left": {
+                    "field": "A"
+                  },
+                  "right": {
+                    "value": 1
+                  }
+                }
+              },
+              "right": {
+                "binary": {
+                  "op": "*",
+                  "left": {
+                    "field": "B"
+                  },
+                  "right": {
+                    "value": 2
+                  }
+                }
+              }
+            },
+            "columns": [
+              {
+                "field": "A"
+              }
+            ]
+          }
+        },
+        "diagnostics": [],
+        "yaml": "",
+        "sourceExact": true
+      }
+    },
+    {
+      "name": "condition-control-valid-unicode-crlf",
+      "source": "from \"T雪\"\r\nwhere \"A雪\" = 1\r\nselect \"A雪\"\r\n",
+      "expected": {
+        "tree": {
+          "format": "tugqtree",
+          "version": 1,
+          "query": {
+            "from": {
+              "name": "T雪"
+            },
+            "where": {
+              "op": "==",
+              "left": {
+                "field": "A雪"
+              },
+              "right": {
+                "value": 1
+              }
+            },
+            "columns": [
+              {
+                "field": "A雪"
+              }
+            ]
+          }
+        },
+        "diagnostics": [],
+        "yaml": "",
+        "sourceExact": true
+      }
+    }
+  ]
+}

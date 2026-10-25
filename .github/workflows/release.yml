@@ -1,0 +1,313 @@
+name: Release @dalgo/core
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version-pr:
+        description: Original merged version pull request number
+        required: true
+        type: string
+      version-merge-sha:
+        description: Full merge commit SHA of that version pull request
+        required: true
+        type: string
+
+concurrency:
+  group: release-core
+  cancel-in-progress: false
+
+jobs:
+  version-pr:
+    name: Update version pull request
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Create or update the reviewed version pull request
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          changeset=$(find .changeset -maxdepth 1 -type f -name '*.md' ! -name README.md -print -quit)
+          [[ -n "$changeset" ]] || exit 0
+
+          pnpm version-packages
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B changeset-release/main
+          git add --all
+          git commit -m 'chore: version @dalgo/core'
+
+          remote_sha=$(git ls-remote --heads origin refs/heads/changeset-release/main | cut -f1)
+          if [[ -n "$remote_sha" ]]; then
+            git push \
+              --force-with-lease="refs/heads/changeset-release/main:$remote_sha" \
+              origin HEAD:refs/heads/changeset-release/main
+          else
+            git push origin HEAD:refs/heads/changeset-release/main
+          fi
+
+          pr_number=$(gh pr list \
+            --base main \
+            --head changeset-release/main \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+          manual_pr=false
+          if [[ -z "$pr_number" ]]; then
+            create_error=$(mktemp)
+            trap 'rm -f "$create_error"' EXIT
+            if gh pr create \
+              --base main \
+              --head changeset-release/main \
+              --title 'chore: version @dalgo/core' \
+              --body 'Automated Changesets version pull request for @dalgo/core.' 2>"$create_error"; then
+              :
+            elif grep -Fq 'GitHub Actions is not permitted to create or approve pull requests' "$create_error"; then
+              # Repository/organization policy is separate from pull-requests: write.
+              # Preserve the generated branch for an authorized local WB PR route.
+              manual_pr=true
+            else
+              cat "$create_error" >&2
+              exit 1
+            fi
+            pr_number=$(gh pr list \
+              --base main \
+              --head changeset-release/main \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty')
+          fi
+          if [[ -n "$pr_number" ]]; then
+            echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
+            echo 'manual-pr-required=false' >> "$GITHUB_OUTPUT"
+          elif [[ "$manual_pr" == true ]]; then
+            echo '::warning::Actions PR creation is disabled. The generated version branch requires an authorized local WB pull request.'
+            echo 'manual-pr-required=true' >> "$GITHUB_OUTPUT"
+            {
+              echo '### Version pull request requires a local maintainer'
+              echo
+              echo "Generated branch: changeset-release/main at $(git rev-parse HEAD)."
+              echo "Review the existing branch: https://github.com/$GITHUB_REPOSITORY/compare/main...changeset-release/main"
+              echo
+              echo 'Open or adopt that exact branch through wb pr create with base main and title chore: version @dalgo/core. Do not regenerate or duplicate it.'
+              echo 'The repository or organization disables Allow GitHub Actions to create and approve pull requests. No setting or credential change was attempted.'
+              echo 'Branch CI is dispatched below. This handoff does not authorize npm publication or resolve npm trusted publisher permissions.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Version pull request creation did not produce an open pull request.' >&2
+            exit 1
+          fi
+          gh workflow run ci.yml --ref changeset-release/main
+
+  authorize-release:
+    name: Verify merged version pull request
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      eligible: ${{ steps.verify.outputs.eligible }}
+      version: ${{ steps.verify.outputs.version }}
+      tag: ${{ steps.verify.outputs.tag }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Require the generated marker and merged version pull request
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          VERSION_PR: ${{ inputs.version-pr }}
+          VERSION_MERGE_SHA: ${{ inputs.version-merge-sha }}
+        run: |
+          set -euo pipefail
+          printf 'eligible=false\n' > "$GITHUB_OUTPUT"
+
+          [[ "$REF" == 'refs/heads/main' ]] || exit 1
+          if [[ "$EVENT" == 'workflow_dispatch' ]]; then
+            [[ "$VERSION_PR" =~ ^[1-9][0-9]*$ ]] || exit 1
+            [[ "$VERSION_MERGE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+            [[ "$(gh api "/repos/$REPOSITORY/branches/main" --jq '.commit.sha')" == "$SHA" ]] || exit 1
+            git merge-base --is-ancestor "$VERSION_MERGE_SHA" "$SHA"
+            # All tracked inputs must match the reviewed release, including build scripts,
+            # lockfile and documentation. Only this release workflow may be repaired.
+            git diff --exit-code "$VERSION_MERGE_SHA" "$SHA" -- . ':!.github/workflows/release.yml'
+            release_sha=$VERSION_MERGE_SHA
+          else
+            [[ "$EVENT" == 'push' ]] || exit 1
+            release_sha=$SHA
+          fi
+
+          version=$(node -p "require('./package.json').version")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || exit 1
+          marker=".changeset/releases/core@v${version}.json"
+          if [[ ! -f "$marker" ]]; then
+            [[ "$EVENT" == 'push' ]] && exit 0
+            exit 1
+          fi
+          jq -e --arg version "$version" '
+            .schemaVersion == 1 and
+            .package == "@dalgo/core" and
+            .version == $version and
+            .tag == ("core@v" + $version) and
+            (.previousVersion | type == "string")
+          ' "$marker" >/dev/null
+
+          if [[ "$EVENT" == 'workflow_dispatch' ]]; then
+            prs=$(gh api "/repos/$REPOSITORY/pulls/$VERSION_PR" | jq '[.]')
+          else
+            prs=$(gh api "/repos/$REPOSITORY/commits/$release_sha/pulls")
+          fi
+          pr=$(jq -c --arg repository "$REPOSITORY" --arg sha "$release_sha" '[.[] | select(
+            .merged_at != null and
+            .merge_commit_sha == $sha and
+            .base.repo.full_name == $repository and
+            .head.repo.full_name == $repository and
+            .base.ref == "main" and
+            .head.ref == "changeset-release/main" and
+            .title == "chore: version @dalgo/core"
+          )] | if length == 1 then .[0] else empty end' <<< "$prs")
+          if [[ -z "$pr" ]]; then
+            [[ "$EVENT" == 'push' ]] && exit 0
+            exit 1
+          fi
+
+          pr_number=$(jq -r '.number' <<< "$pr")
+          files=$(gh api --paginate --slurp "/repos/$REPOSITORY/pulls/$pr_number/files")
+          jq -e --arg marker "$marker" '
+            flatten as $entries | $entries | map(.filename) as $files |
+            ($files | index("package.json")) != null and
+            ($files | index("CHANGELOG.md")) != null and
+            any($entries[]; .filename == $marker and .status == "added")
+          ' <<< "$files" >/dev/null
+
+          # Prove the generated marker describes the actual version transition.
+          before=$(git show "$release_sha^:package.json")
+          after=$(git show "$release_sha:package.json")
+          original_marker=$(git show "$release_sha:$marker")
+          [[ "$(jq -r '.name' <<< "$after")" == '@dalgo/core' ]] || exit 1
+          [[ "$(jq -r '.version' <<< "$after")" == "$version" ]] || exit 1
+          [[ "$(jq -r '.previousVersion' <<< "$original_marker")" == "$(jq -r '.version' <<< "$before")" ]] || exit 1
+          [[ "$(jq -cS 'del(.version)' <<< "$before")" == "$(jq -cS 'del(.version)' <<< "$after")" ]] || exit 1
+          [[ "$(jq -cS . <<< "$original_marker")" == "$(jq -cS . "$marker")" ]] || exit 1
+
+          {
+            echo "eligible=true"
+            echo "version=$version"
+            echo "tag=core@v$version"
+          } >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish reviewed version
+    needs: authorize-release
+    if: needs.authorize-release.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    environment: npm
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+      - name: Verify release identity and registry state
+        id: registry
+        env:
+          VERSION: ${{ needs.authorize-release.outputs.version }}
+          SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$(node -p "require('./package.json').name")" == '@dalgo/core' ]] || exit 1
+          [[ "$(node -p "require('./package.json').version")" == "$VERSION" ]] || exit 1
+          [[ "$(git rev-parse HEAD)" == "$SHA" ]] || exit 1
+          if [[ "$EVENT" == 'workflow_dispatch' ]]; then
+            [[ "$(gh api "/repos/$REPOSITORY/branches/main" --jq '.commit.sha')" == "$SHA" ]] || exit 1
+          fi
+          npm_version=$(npm --version)
+          [[ "$(printf '%s\n' '11.5.1' "$npm_version" | sort -V | head -n1)" == '11.5.1' ]] || exit 1
+          # Network/auth/server errors are never evidence that a version is absent.
+          metadata_file=$(mktemp)
+          trap 'rm -f "$metadata_file"' EXIT
+          http_status=$(curl --silent --show-error --retry 2 --output "$metadata_file" \
+            --write-out '%{http_code}' "https://registry.npmjs.org/@dalgo%2fcore/$VERSION")
+          metadata=$(cat "$metadata_file")
+          if [[ "$http_status" == '200' ]]; then
+            [[ "$EVENT" != 'workflow_dispatch' ]] || exit 1 # A retry only publishes an absent version.
+            [[ "$(jq -r '.name' <<< "$metadata")" == '@dalgo/core' ]] || exit 1
+            [[ "$(jq -r '.version' <<< "$metadata")" == "$VERSION" ]] || exit 1
+            [[ "$(jq -r '.gitHead' <<< "$metadata")" == "$SHA" ]] || exit 1
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          elif [[ "$http_status" == '404' ]]; then
+            jq -e --arg error "version not found: $VERSION" '. == $error' <<< "$metadata" >/dev/null
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          else
+            echo "Registry lookup failed with HTTP $http_status" >&2
+            exit 1
+          fi
+      - name: Publish with npm trusted publishing
+        if: steps.registry.outputs.publish == 'true'
+        run: pnpm release:publish
+      - name: Verify npm provenance commit and create package tag
+        env:
+          VERSION: ${{ needs.authorize-release.outputs.version }}
+          TAG: ${{ needs.authorize-release.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            metadata=$(npm view "@dalgo/core@$VERSION" name version gitHead --json 2>/dev/null || true)
+            if [[ "$(jq -r '.gitHead // empty' <<< "$metadata")" == "$SHA" ]]; then
+              break
+            fi
+            if [[ "$attempt" == 12 ]]; then
+              echo "npm metadata did not confirm gitHead $SHA" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          [[ "$(jq -r '.name' <<< "$metadata")" == '@dalgo/core' ]] || exit 1
+          [[ "$(jq -r '.version' <<< "$metadata")" == "$VERSION" ]] || exit 1
+          if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null; then
+            [[ "$(git rev-list -n 1 "$TAG")" == "$SHA" ]] || exit 1
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" "$SHA" -m "@dalgo/core $TAG"
+          git push origin "refs/tags/$TAG"

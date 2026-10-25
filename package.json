@@ -1,6 +1,6 @@
 {
-  "name": "@dal-go/dalgo",
-  "version": "0.1.0",
+  "name": "@dalgo/core",
+  "version": "0.8.0",
   "description": "Database abstraction layer for TypeScript and browser applications",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
@@ -16,12 +16,20 @@
     "LICENSE",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "pnpm lint && pnpm test && pnpm build",
+    "check": "node tools/verify-tugql-fixtures.mjs --local-only && eslint . && vitest run && tsc -p tsconfig.build.json",
+    "changeset": "changeset",
     "lint": "eslint .",
+    "prepare": "npm run build",
+    "release:publish": "npm publish --access public --provenance",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "verify:tugql-fixtures": "node tools/verify-tugql-fixtures.mjs",
+    "test:watch": "vitest",
+    "version-packages": "node scripts/version-packages.mjs"
   },
   "repository": {
     "type": "git",
@@ -36,10 +44,14 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "@changesets/cli": "3.0.3",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
     "vitest": "5.0.1"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
   }
 }
