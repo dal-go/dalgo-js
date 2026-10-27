@@ -3,7 +3,7 @@
   "version": "0.8.0",
   "description": "Database abstraction layer for TypeScript and browser applications",
   "type": "module",
-  "packageManager": "pnpm@11.20.0",
+  "packageManager": "pnpm@11.28.9",
   "sideEffects": false,
   "exports": {
     ".": {
@@ -48,7 +48,7 @@
     "@eslint/js": "10.0.1",
     "eslint": "10.13.0",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.70.0",
+    "typescript-eslint": "8.72.1",
     "vitest": "5.0.5"
   },
   "dependencies": {
