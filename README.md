@@ -220,6 +220,48 @@ current query engine cannot guarantee exact decimal or timestamp comparison
 semantics, so resolution rejects those parameter types explicitly while their
 authoring syntax and values remain representable.
 
+### Slash paths, path variables and context variables
+
+A `FROM` or `JOIN` source may name a nested (sub)collection with `/` as the
+separator: the last segment is the collection `name`, and the segments before
+it, joined with `/`, are the `schema` (the parent document path).
+
+```sql
+from spaces/{SneatUserPersonalSpaceID}/ext/datatug/projects as p
+```
+
+parses to `from: {schema: "spaces/{SneatUserPersonalSpaceID}/ext/datatug",
+name: "projects", alias: "p"}`. A segment is a bare word, a quoted identifier
+(`.../datatug/"user projects"`, which may not contain `{`, `}` or `/`), or a
+substituted segment `{name}` written without spaces; a literal id that starts
+with a digit or contains `-` must be quoted. `/` must touch the segments on
+both sides, one path may not mix `.` and `/`, and `//` touching a segment is an
+`empty_path_segment` error rather than a comment (`from users // note` is still
+a comment). `{name}` is allowed only in a slash path. Printing writes a schema
+that contains `/` or a `{name}` segment back in slash form; a two-segment path
+prints dotted (`users/projects` prints as `users.projects`) because the tree
+does not record the separator. The shared Go vectors live in
+`test/testdata/tugql/slash-paths/cases.json`, a byte-for-byte copy of
+`dal-go/dalgo` `tugql/testdata/slash-paths/cases.json`.
+
+`resolveTugQL` takes two more context options:
+
+- `contextVariables`: a map of name to string supplied by the host from the
+  session, never typed by the user. Each name counts as a declared and bound
+  `string` parameter, usable as `@name` in a value position and as a `{name}`
+  path segment. A query that declares a parameter with the same name fails
+  with `reserved_parameter`; a caller binding with that name is ignored.
+- `schemaless`: resolve against a document store such as Firestore. The
+  `authorizedSchemas` check is skipped, any source and field name is accepted,
+  and a query without `SELECT` keeps an open projection (`columns` is empty).
+
+The resolver replaces each `{name}` segment of a `schema` or `name` with the
+value of a declared parameter or context variable; the stored tree keeps the
+literal `{name}`. It refuses, naming the variable and before anything runs, a
+value that is missing or empty, is not a string, contains `/`, is `.` or `..`,
+or matches `__.*__` (`invalid_path_value`, for example
+`projectId must be a single path segment (no /)`).
+
 ### Comments
 
 In the text form a comment is `--` or `//` to the end of the line. Both are
