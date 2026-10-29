@@ -181,6 +181,20 @@ export interface TugQLResolveContext {
   readonly relationships: readonly TugQLRelationship[];
   readonly pinnedImports: readonly TugQLPinnedImport[];
   readonly bindings?: readonly { readonly name: string; readonly set: boolean; readonly value?: unknown }[];
+  /**
+   * Values the host application supplies from the session, never typed by the
+   * user (DataTug: `SneatUserID`, `SneatUserPersonalSpaceID`). Each name counts
+   * as a declared and bound `string` parameter, usable as `@name` in a value
+   * position and as a `{name}` path segment. A query that declares a parameter
+   * with the same name fails with `reserved_parameter`.
+   */
+  readonly contextVariables?: Readonly<Record<string, string>>;
+  /**
+   * Resolve against a schemaless document store (e.g. Firestore): skip the
+   * `authorizedSchemas` check, accept any source and any field name, and leave
+   * the projection of a query without SELECT open (resolved `columns` is empty).
+   */
+  readonly schemaless?: boolean;
 }
 
 export interface TugQLOutputColumn {
@@ -698,20 +712,104 @@ function parseExpressionPrimary(parser: ExpressionParser): Readonly<Record<strin
   return { field: name };
 }
 
-function parseFrom(tokens: readonly Token[]): Readonly<Record<string, unknown>> {
+/** A FROM/JOIN source-path error that carries its own diagnostic code and position. */
+class PathError extends Error {
+  public constructor(public readonly code: string, message: string, public readonly span: TugQLSpan) { super(message); }
+}
+
+interface PathSegment {
+  readonly text: string;
+  readonly span: TugQLSpan;
+  readonly quoted: boolean;
+  readonly substituted: boolean;
+}
+
+function tokensTouch(left: Token, right: Token): boolean {
+  return left.endOffset === right.startOffset;
+}
+
+function isSymbol(token: Token | undefined, text: string): boolean {
+  return token?.kind === "symbol" && token.text === text;
+}
+
+function isIdentifierToken(token: Token | undefined): boolean {
+  return token?.kind === "word" || token?.kind === "quoted-identifier";
+}
+
+/** Reads the path segment at tokens[at]: a word, a quoted identifier, or `{name}` written as three touching tokens. */
+function parsePathSegment(tokens: readonly Token[], at: number): { readonly segment: PathSegment; readonly next: number } {
+  const token = tokens[at]!;
+  if (isSymbol(token, "{")) {
+    const word = tokens[at + 1];
+    const close = tokens[at + 2];
+    if (word === undefined || close === undefined || !tokensTouch(token, word) || !tokensTouch(word, close) || word.kind !== "word" || !isSymbol(close, "}")) {
+      throw new PathError("invalid_substituted_segment", "a substituted segment is written {name} with no spaces", token.span);
+    }
+    const span = { start: token.span.start, end: close.span.end };
+    const after = tokens[at + 3];
+    if (after !== undefined && tokensTouch(close, after) && !isSymbol(after, "/") && !isSymbol(after, ".")) {
+      throw new PathError("invalid_substituted_segment", "{name} must be a whole path segment", span);
+    }
+    return { segment: { text: `{${word.text}}`, span, quoted: false, substituted: true }, next: at + 3 };
+  }
+  if (!isIdentifierToken(token)) throw new PathError("invalid_path_segment", "a path segment must be a word, a quoted identifier or {name}", token.span);
+  const after = tokens[at + 1];
+  if (after !== undefined && isSymbol(after, "{") && tokensTouch(token, after)) {
+    throw new PathError("invalid_substituted_segment", "{name} must be a whole path segment", token.span);
+  }
+  const quoted = token.kind === "quoted-identifier";
+  return { segment: { text: quoted ? token.value : token.text, span: token.span, quoted, substituted: false }, next: at + 1 };
+}
+
+/**
+ * Reads the dotted or slash-separated source path at the start of a FROM/JOIN
+ * clause. A `//` comment touching the last segment is an empty segment, not a
+ * comment. Mirrors dal-go/dalgo tugql parseTugQLSourcePath.
+ */
+function parseSourcePath(tokens: readonly Token[], comments: readonly Token[]): { readonly from: Record<string, unknown>; readonly next: number } {
+  if (isSymbol(tokens[0], "/")) throw new PathError("empty_path_segment", "a path may not start with '/'", tokens[0]!.span);
+  let read = parsePathSegment(tokens, 0);
+  const segments = [read.segment];
+  let at = read.next;
+  let separator = "";
+  let last = tokens[at - 1]!;
+  while (isSymbol(tokens[at], ".") || isSymbol(tokens[at], "/")) {
+    const sep = tokens[at]!;
+    if (separator !== "" && sep.text !== separator) throw new PathError("mixed_path_separators", "a path may not mix '.' and '/'", sep.span);
+    separator = sep.text;
+    const following = tokens[at + 1];
+    if (separator === "/") {
+      if (!tokensTouch(last, sep)) throw new PathError("detached_path_separator", "'/' must touch the path segments on both sides", sep.span);
+      // The lexer reads a touching "//" as a comment, so a final '/' is never followed by one.
+      if (following === undefined) throw new PathError("empty_path_segment", "a path may not end with '/'", sep.span);
+      if (!tokensTouch(sep, following)) throw new PathError("detached_path_separator", "'/' must touch the path segments on both sides", sep.span);
+    } else if (!isIdentifierToken(following) && !isSymbol(following, "{")) throw new Error("expected identifier after '.'");
+    read = parsePathSegment(tokens, at + 1);
+    segments.push(read.segment);
+    at = read.next;
+    last = tokens[at - 1]!;
+  }
+  const touching = comments.find((comment) => comment.text.startsWith("//") && comment.startOffset === last.endOffset);
+  if (touching !== undefined) {
+    const start = { line: touching.span.start.line, column: touching.span.start.column + 1 };
+    throw new PathError("empty_path_segment", "empty path segment: '//' inside a path", { start, end: { line: start.line, column: start.column + 1 } });
+  }
+  for (const segment of segments) {
+    if (segment.substituted && separator !== "/") throw new PathError("invalid_substituted_segment", "{name} segments are allowed only in a '/' path", segment.span);
+    if (segment.quoted && segment.text === "") throw new PathError("empty_path_segment", "a quoted path segment may not be empty", segment.span);
+    if (segment.quoted && /[{}/]/u.test(segment.text)) throw new PathError("invalid_quoted_segment", "a quoted path segment may not contain '{', '}' or '/'", segment.span);
+  }
+  const parts = segments.map((segment) => segment.text);
+  const from: Record<string, unknown> = { name: parts.at(-1)! };
+  if (parts.length > 1) from.schema = parts.slice(0, -1).join(separator === "" ? "." : separator);
+  return { from, next: at };
+}
+
+function parseFrom(tokens: readonly Token[], comments: readonly Token[]): Readonly<Record<string, unknown>> {
   if (tokens.length === 0) throw new Error("source name is required");
   const first = tokens[0]!;
-  if (first.kind !== "word" && first.kind !== "quoted-identifier") throw new Error("source name must be an identifier");
-  const parts = [first.kind === "quoted-identifier" ? first.value : first.text];
-  let at = 1;
-  while (tokens[at]?.text === ".") {
-    const part = tokens[at + 1];
-    if (part === undefined || (part.kind !== "word" && part.kind !== "quoted-identifier")) throw new Error("expected identifier after '.'");
-    parts.push(part.kind === "quoted-identifier" ? part.value : part.text);
-    at += 2;
-  }
-  const from: Record<string, unknown> = { name: parts.at(-1)! };
-  if (parts.length > 1) from.schema = parts.slice(0, -1).join(".");
+  if (!isIdentifierToken(first) && !isSymbol(first, "{") && !isSymbol(first, "/")) throw new Error("source name must be an identifier");
+  const { from, next: at } = parseSourcePath(tokens, comments);
   if (at < tokens.length) {
     if (!keyword(tokens[at], "as") || at + 2 !== tokens.length) throw new Error("aliases require AS followed by one identifier");
     const alias = tokens[at + 1]!;
@@ -895,9 +993,11 @@ function parseQuery(source: string): { readonly query?: TugQLQueryDocument; read
   }
   if (clauses.length === 0 || clauses[0]?.name !== "from") diagnostics.push(diagnostic("expected_from", "a TugQL query must begin with FROM", zeroSpan));
   if (diagnostics.length > 0) return { diagnostics, spans: clauses.map((clause, i) => ({ path: `query.clauses[${i.toString()}]`, span: clause.span })) };
+  const commentTokens = tokenized.tokens.filter((token) => token.kind === "comment");
   let rootFrom: Record<string, unknown>;
-  try { rootFrom = { ...parseFrom(clauses[0]!.tokens) }; }
+  try { rootFrom = { ...parseFrom(clauses[0]!.tokens, commentTokens) }; }
   catch (error) {
+    if (error instanceof PathError) return { diagnostics: [diagnostic(error.code, error.message, error.span)], spans: [] };
     const derivedClose = clauses[0]!.tokens[0]?.text === "("
       ? lines.find((line) => line.tokens[0]?.text === ")" && line.tokens.length > 1)
       : undefined;
@@ -912,7 +1012,7 @@ function parseQuery(source: string): { readonly query?: TugQLQueryDocument; read
     try {
       switch (clause.name) {
         case "join": case "left join": {
-          const join: Record<string, unknown> = { from: parseFrom(clause.tokens), on: [] as unknown[] };
+          const join: Record<string, unknown> = { from: parseFrom(clause.tokens, commentTokens), on: [] as unknown[] };
           if (clause.name === "left join") join.type = "left";
           joins.push(join); rootFrom.joins = joins; currentJoin = join; break;
         }
@@ -943,6 +1043,7 @@ function parseQuery(source: string): { readonly query?: TugQLQueryDocument; read
       }
       spans.push({ path: `query.${clause.name.replaceAll(" ", "_")}`, span: clause.span });
     } catch (error) {
+      if (error instanceof PathError) { diagnostics.push(diagnostic(error.code, error.message, error.span)); continue; }
       const message = errorMessage(error);
       const explicitCode = /^([a-z_]+): /u.exec(message)?.[1];
       const code = explicitCode ?? (clause.name === "from" ? "invalid_from" : clause.name === "select" ? "invalid_select" : clause.name === "limit" || clause.name === "offset" ? `invalid_${clause.name}` : clause.name === "group by" ? "invalid_group_by" : clause.name === "order by" ? "invalid_order_by" : "invalid_condition");
@@ -1375,8 +1476,14 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
     let expandedSemanticNodes = authoredNodes;
     const authoredRootQueryNodes = countTugQLQueryNodes(tree.query, maxSemanticNodes);
 
+    const schemaless = context.schemaless === true;
+    const contextValues = readContextVariables(context.contextVariables);
     const schemaTables = new Map<string, { readonly schema?: string; readonly database?: string; readonly version: string; readonly fields: Map<string, TugQLTypedField> }>();
-    for (const schema of context.authorizedSchemas) for (const table of schema.tables) {
+    // Schemaless sources accept every field the query names; the map is shared
+    // by all synthesized tables and grows as imported documents are expanded.
+    const schemalessFields = new Map<string, TugQLTypedField>();
+    if (schemaless) collectSchemalessFields(tree, schemalessFields);
+    for (const schema of schemaless ? [] : context.authorizedSchemas) for (const table of schema.tables) {
       const key = `${schema.database ?? ""}\0${schema.schema ?? ""}\0${table.name}`;
       if (schemaTables.has(key)) throw new ResolveFailure("ambiguous_schema", `duplicate authorized table ${table.name}`);
       schemaTables.set(key, { ...(schema.schema === undefined ? {} : { schema: schema.schema }), ...(schema.database === undefined ? {} : { database: schema.database }), version: schema.version, fields: new Map(table.fields.filter((field) => field.authorized).map((field) => [field.name, field])) });
@@ -1384,7 +1491,7 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
     const usedVersions = new Set<string>();
     const dependencies = new Map<string, TugQLDependencyReceipt>();
     const relationshipReceipts: TugQLResolved["relationships"][number][] = [];
-    const parameterValues = resolveParameters(tree.parameters ?? [], context.bindings ?? []);
+    const parameterValues = resolveParameters(tree.parameters ?? [], context.bindings ?? [], contextValues);
     validateParameterSemantics(tree.parameters ?? []);
     let expandedImportDocuments = 0;
 
@@ -1432,7 +1539,9 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
           }
           const expected = importedTree.parameters ?? [];
           const replacements = new Map<string, Readonly<Record<string, unknown>>>();
+          for (const [name, value] of contextValues) replacements.set(name, { value });
           for (const parameter of expected) {
+            if (contextValues.has(parameter.name) || RESERVED_CONTEXT_VARIABLES.has(parameter.name)) throw new ResolveFailure("reserved_parameter", `parameter @${parameter.name} has the name of a context variable`);
             const mapping = mappings.get(parameter.name);
             if (mapping === undefined) {
               if (parameter.required === true) throw new ResolveFailure("missing_import_mapping", `required saved-query parameter has no USING mapping: @${parameter.name}`);
@@ -1446,7 +1555,8 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
           const unknownMapping = [...mappings.keys()].find((name) => !expected.some((parameter) => parameter.name === name));
           if (unknownMapping !== undefined) throw new ResolveFailure("unknown_import_parameter", `saved query has no parameter @${unknownMapping}`);
           const substituted = substituteTreeParameters(importedTree, replacements);
-          const importedBody: TugQLBody = { ...(substituted.definitions === undefined ? {} : { definitions: substituted.definitions }), query: substituted.query };
+          if (schemaless) collectSchemalessFields(substituted, schemalessFields);
+          const importedBody = substitutePathSegments({ ...(substituted.definitions === undefined ? {} : { definitions: substituted.definitions }), query: substituted.query }, replacements) as TugQLBody;
           const loweredImportedBody = lowerBody(importedBody, new Map(), bindings, [...stack, normalized], normalized);
           visible.set(definition.name, loweredImportedBody);
           loweredDefinitions.push({ kind: "cte", name: definition.name, query: loweredImportedBody });
@@ -1512,9 +1622,13 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
           return { query: derivedQuery, ...(joins.length === 0 ? {} : { joins }) };
         }
         if (forwardNames.has(name)) throw new ResolveFailure("forward_cte_reference", `CTEs may reference only earlier definitions: ${name}`);
-        const table = schemaTables.get(key) ?? [...schemaTables.entries()].find(([candidateKey, item]) => item.fields.size > 0 && item.schema === schema && item.database === database && candidateKey.endsWith(`\0${name}`))?.[1];
+        let table = schemaTables.get(key) ?? [...schemaTables.entries()].find(([candidateKey, item]) => item.fields.size > 0 && item.schema === schema && item.database === database && candidateKey.endsWith(`\0${name}`))?.[1];
+        if (table === undefined && schemaless) {
+          table = { ...(schema === undefined ? {} : { schema }), ...(database === undefined ? {} : { database }), version: "", fields: schemalessFields };
+          schemaTables.set(key, table);
+        }
         if (table === undefined) throw new ResolveFailure("unauthorized_source", `source is not present in authorized schemas: ${name}`);
-        usedVersions.add(table.version);
+        if (!schemaless) usedVersions.add(table.version);
         const rawJoins = Array.isArray(raw.joins) ? raw.joins as Record<string, unknown>[] : [];
         const leftRelations: { readonly table: string; readonly source: string; readonly database?: string; readonly schema?: string }[] = [{
           table: name,
@@ -1615,7 +1729,7 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
       };
       cloned.from = relation(from);
       preflightTugQLTree({ format: TUGQL_TREE_FORMAT, version: TUGQL_VERSION, query: cloned as unknown as TugQLQueryDocument }, true);
-      if (!Array.isArray(cloned.columns)) {
+      if (!Array.isArray(cloned.columns) && !schemaless) {
         const visibleDefinitions: TugQLDefinition[] = [...visible].map(([name, body]) => ({ kind: "cte", name, query: body }));
         const projected = inferOutputColumns(input, visibleDefinitions, schemaTables, context.relationships);
         cloned.columns = projected.map((column) => {
@@ -1670,20 +1784,21 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
       return value;
     };
 
-    const loweredRootBody = lowerBody({ ...(tree.definitions === undefined ? {} : { definitions: tree.definitions }), query: tree.query }, new Map(), parameterValues, [], context.importingPath);
+    const rootBody = substitutePathSegments({ ...(tree.definitions === undefined ? {} : { definitions: tree.definitions }), query: tree.query }, parameterValues) as TugQLBody;
+    const loweredRootBody = lowerBody(rootBody, new Map(), parameterValues, [], context.importingPath);
     const finalExpandedRootQueryNodes = countTugQLQueryNodes(loweredRootBody.query, maxSemanticNodes);
     expandedSemanticNodes = chargeSemanticNodes(expandedSemanticNodes, Math.max(0, finalExpandedRootQueryNodes - authoredRootQueryNodes));
     preflightTugQLTree({ format: TUGQL_TREE_FORMAT, version: TUGQL_VERSION, query: loweredRootBody.query }, true);
     const rootDefinitions = loweredRootBody.definitions ?? [];
-    validateSafeOperations(loweredRootBody.query, rootDefinitions, schemaTables, context.relationships);
+    validateSafeOperations(loweredRootBody.query, rootDefinitions, schemaTables, context.relationships, schemaless);
     const validateDefinition = (definition: TugQLDefinition): void => {
       if (definition.kind !== "cte") return;
       const nested = definition.query.definitions ?? [];
-      validateSafeOperations(definition.query.query, nested, schemaTables, context.relationships);
+      validateSafeOperations(definition.query.query, nested, schemaTables, context.relationships, schemaless);
       for (const child of nested) validateDefinition(child);
     };
     for (const definition of rootDefinitions) validateDefinition(definition);
-    const inferredColumns = inferOutputColumns(loweredRootBody.query, [], schemaTables, context.relationships);
+    const inferredColumns = schemaless && !Array.isArray(loweredRootBody.query.columns) ? [] : inferOutputColumns(loweredRootBody.query, [], schemaTables, context.relationships);
     const recursiveDoc = stripInternalLineage(loweredRootBody.query) as TugQLQueryDocument;
     const schemas: TugQLSchema = { tables: [...schemaTables.entries()].map(([key, table]) => ({ ...(table.schema === undefined ? {} : { schema: table.schema }), name: key.split("\0").at(-1) ?? "", fields: [...table.fields.keys()] })) };
     const unsupportedFunction = findFunctionCall(recursiveDoc);
@@ -2082,12 +2197,13 @@ function stableJSON(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function resolveParameters(parameters: readonly TugQLParameter[], bindings: NonNullable<TugQLResolveContext["bindings"]>): ReadonlyMap<string, unknown> {
+function resolveParameters(parameters: readonly TugQLParameter[], bindings: NonNullable<TugQLResolveContext["bindings"]>, contextValues: ReadonlyMap<string, string>): ReadonlyMap<string, unknown> {
   const values = new Map<string, unknown>();
   const provided = new Map<string, NonNullable<TugQLResolveContext["bindings"]>[number]>();
   const declared = new Set<string>();
   for (const parameter of parameters) {
     if (parameter.name.length === 0 || declared.has(parameter.name)) throw new ResolveFailure("duplicate_parameter", "parameter names must be non-empty and unique");
+    if (contextValues.has(parameter.name) || RESERVED_CONTEXT_VARIABLES.has(parameter.name)) throw new ResolveFailure("reserved_parameter", `parameter @${parameter.name} has the name of a context variable`);
     declared.add(parameter.name);
     const type = parameter.type.toLowerCase();
     if (!["integer", "decimal", "string", "boolean", "date", "datetime", "timestamp"].includes(type)) throw new ResolveFailure("unsupported_parameter_type", `unsupported parameter type ${parameter.type}`);
@@ -2099,6 +2215,8 @@ function resolveParameters(parameters: readonly TugQLParameter[], bindings: NonN
   }
   for (const binding of bindings) {
     if (provided.has(binding.name)) throw new ResolveFailure("duplicate_binding", `binding appears more than once: @${binding.name}`);
+    // A context variable is bound by the host; a caller binding cannot override it.
+    if (contextValues.has(binding.name)) { provided.set(binding.name, binding); continue; }
     if (!declared.has(binding.name)) throw new ResolveFailure("unknown_binding", `binding has no declared parameter: @${binding.name}`);
     provided.set(binding.name, binding);
   }
@@ -2116,7 +2234,100 @@ function resolveParameters(parameters: readonly TugQLParameter[], bindings: NonN
     }
     values.set(parameter.name, { value });
   }
+  for (const [name, value] of contextValues) values.set(name, { value });
   return values;
+}
+
+/** The field type of a schemaless source: unknown until the backend returns data. */
+const SCHEMALESS_FIELD_TYPE = "any";
+
+/**
+ * DataTug context-variable names. They are reserved for every caller: a query
+ * may not declare a parameter with one of these names, and a missing value is
+ * refused as "has no value".
+ */
+const RESERVED_CONTEXT_VARIABLES: ReadonlySet<string> = new Set(["SneatUserID", "SneatUserPersonalSpaceID"]);
+
+function readContextVariables(input: unknown): ReadonlyMap<string, string> {
+  const values = new Map<string, string>();
+  if (input === undefined) return values;
+  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new ResolveFailure("invalid_context_variable", "contextVariables must map names to strings");
+  for (const [name, value] of Object.entries(input as Readonly<Record<string, unknown>>)) {
+    if (name.length === 0) throw new ResolveFailure("invalid_context_variable", "context variable names must be non-empty");
+    if (typeof value !== "string") throw new ResolveFailure("invalid_context_variable", `context variable ${name} must be a string`);
+    values.set(name, value);
+  }
+  return values;
+}
+
+/** Adds every field name the tree references to a schemaless source's field map. */
+function collectSchemalessFields(value: unknown, fields: Map<string, TugQLTypedField>): void {
+  if (Array.isArray(value)) { for (const item of value) collectSchemalessFields(item, fields); return; }
+  if (value === null || typeof value !== "object") return;
+  const record = value as Readonly<Record<string, unknown>>;
+  if (typeof record.field === "string" && !fields.has(record.field)) fields.set(record.field, { name: record.field, type: SCHEMALESS_FIELD_TYPE, authorized: true });
+  for (const [key, item] of Object.entries(record)) if (key !== "comments") collectSchemalessFields(item, fields);
+}
+
+const substitutedPathSegment = /^\{([\p{L}_][\p{L}\p{N}_$]*)\}$/u;
+
+/**
+ * Replaces a whole `{name}` path segment with the bound value of `name` (a
+ * declared parameter or a context variable). The value must be one safe
+ * document-store path segment; anything else is refused before execution.
+ */
+function substitutePathSegment(segment: string, values: ReadonlyMap<string, unknown>): string {
+  const match = substitutedPathSegment.exec(segment);
+  if (match === null) {
+    if (/[{}]/u.test(segment)) throw new ResolveFailure("invalid_substituted_segment", `{name} must be a whole path segment: ${JSON.stringify(segment)}`);
+    return segment;
+  }
+  const name = match[1]!;
+  const refuse = (message: string): never => { throw new ResolveFailure("invalid_path_value", `${name} ${message}`); };
+  const bound = asRecord(values.get(name));
+  if (bound === undefined) {
+    // A reserved context variable the host did not supply is a missing value, not an undeclared name.
+    if (RESERVED_CONTEXT_VARIABLES.has(name)) refuse("has no value");
+    throw new ResolveFailure("undeclared_parameter", `parameter is not declared: {${name}}`);
+  }
+  const value = bound.value;
+  if (value === undefined || value === null || value === "") refuse("has no value");
+  if (typeof value !== "string") return refuse("must be a string to be used as a path segment");
+  if (value.includes("/")) refuse("must be a single path segment (no /)");
+  if (value === "." || value === "..") refuse(`must be a single path segment (not ${value})`);
+  if (/^__.*__$/su.test(value)) refuse("must not match __.*__");
+  return value;
+}
+
+/** Reports whether any source schema or name in the value contains `{` or `}`. */
+function sourcePathsHaveBraces(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(sourcePathsHaveBraces);
+  if (value === null || typeof value !== "object") return false;
+  return Object.entries(value as Readonly<Record<string, unknown>>).some(([key, item]) => {
+    const relation = key === "from" ? asRecord(item) : undefined;
+    if (relation !== undefined && [relation.name, relation.schema].some((text) => typeof text === "string" && /[{}]/u.test(text))) return true;
+    return sourcePathsHaveBraces(item);
+  });
+}
+
+/** Substitutes `{name}` segments in the schema and name of every source in a query body. */
+function substitutePathSegments(value: unknown, values: ReadonlyMap<string, unknown>): unknown {
+  return sourcePathsHaveBraces(value) ? substituteSourcePaths(value, values) : value;
+}
+
+function substituteSourcePaths(value: unknown, values: ReadonlyMap<string, unknown>): unknown {
+  if (Array.isArray(value)) return value.map((item) => substituteSourcePaths(item, values));
+  if (value === null || typeof value !== "object") return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Readonly<Record<string, unknown>>)) {
+    const relation = key === "from" ? asRecord(item) : undefined;
+    if (relation !== undefined && typeof relation.name === "string") {
+      const substituted: Record<string, unknown> = { ...relation, name: substitutePathSegment(relation.name, values) };
+      if (typeof relation.schema === "string") substituted.schema = relation.schema.split("/").map((segment) => substitutePathSegment(segment, values)).join("/");
+      result[key] = substituteSourcePaths(substituted, values);
+    } else result[key] = substituteSourcePaths(item, values);
+  }
+  return result;
 }
 
 function parameterValueError(type: string, value: unknown, required: boolean): string | undefined {
@@ -2310,6 +2521,7 @@ function validateSafeOperations(
   definitions: readonly TugQLDefinition[],
   schemas: ReadonlyMap<string, { readonly database?: string; readonly schema?: string; readonly version: string; readonly fields: Map<string, TugQLTypedField> }>,
   relationships: readonly TugQLRelationship[],
+  schemaless = false,
 ): void {
   const unsupportedDecimal = (): never => { throw new ResolveFailure("unsupported_decimal_semantics", "exact DECIMAL/NUMERIC arithmetic or comparison is not supported by the current query engine"); };
   const unsupportedTemporal = (): never => { throw new ResolveFailure("unsupported_temporal_semantics", "temporal comparison or ordering is not supported by the current query engine"); };
@@ -2320,6 +2532,8 @@ function validateSafeOperations(
   const orderedOperators = new Set([">", ">=", "<", "<=", "gt", "gte", "lt", "lte"]);
   const compatibleOrderedTypes = (left: string, right: string, leftExpression: Readonly<Record<string, unknown>>, rightExpression: Readonly<Record<string, unknown>>): boolean => {
     if (numeric(left) && numeric(right)) return true;
+    // A schemaless field's type is unknown until the backend returns data.
+    if (schemaless && (left === SCHEMALESS_FIELD_TYPE || right === SCHEMALESS_FIELD_TYPE)) return true;
     if (left.toLowerCase() === "date" && typeof rightExpression.value === "string" && isValidISODate(rightExpression.value)) return true;
     if (right.toLowerCase() === "date" && typeof leftExpression.value === "string" && isValidISODate(leftExpression.value)) return true;
     const safeSameType = new Set(["string", "boolean", "date"]);

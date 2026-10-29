@@ -713,11 +713,36 @@ function printCondition(value: unknown, context: "" | "and" | "or"): string {
   return unsupported("condition has no text spelling");
 }
 
+/**
+ * Renders a source. A schema containing '/' or a {name} segment prints in
+ * slash form, any other source in dotted form. A segment the text form cannot
+ * spell (empty, or containing '{', '}' or '/' other than a whole {name} in a
+ * slash path) fails with unsupported_print. Mirrors dal-go/dalgo tugql
+ * printTugQLSource.
+ */
 function printSource(from: Rec): string {
-  const parts = optionalStr(from, "schema", "from") === "" ? [] : optionalStr(from, "schema", "from").split(".").map((part) => identText(part, true));
-  parts.push(identText(str(from.name, "from.name"), true));
+  const name = str(from.name, "from.name");
+  const schema = from.schema === undefined ? undefined : str(from.schema, "from.schema");
+  let segments = [name];
+  let separator = ".";
+  if (schema !== undefined) {
+    segments = [...schema.split("/"), name];
+    separator = segments.length > 2 || segments.some(isSubstitutedSegment) ? "/" : ".";
+    if (separator === ".") segments = [...schema.split("."), name];
+  }
+  const parts = segments.map((segment) => {
+    if (separator === "/" && isSubstitutedSegment(segment)) return segment;
+    if (segment === "" || /[{}/]/u.test(segment)) unsupported(`source path segment ${JSON.stringify(segment)} has no text spelling`);
+    return identText(segment, true);
+  });
+  const text = parts.join(separator);
   const alias = optionalStr(from, "alias", "from");
-  return alias === "" ? parts.join(".") : `${parts.join(".")} as ${identText(alias, true)}`;
+  return alias === "" ? text : `${text} as ${identText(alias, true)}`;
+}
+
+/** `{word}`: a substituted path segment. */
+function isSubstitutedSegment(segment: string): boolean {
+  return /^\{[\p{L}_][\p{L}\p{N}_$]*\}$/u.test(segment);
 }
 
 interface PrintUnit {
