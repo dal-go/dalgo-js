@@ -1541,7 +1541,7 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
           const replacements = new Map<string, Readonly<Record<string, unknown>>>();
           for (const [name, value] of contextValues) replacements.set(name, { value });
           for (const parameter of expected) {
-            if (contextValues.has(parameter.name)) throw new ResolveFailure("reserved_parameter", `parameter @${parameter.name} has the name of a context variable`);
+            if (contextValues.has(parameter.name) || RESERVED_CONTEXT_VARIABLES.has(parameter.name)) throw new ResolveFailure("reserved_parameter", `parameter @${parameter.name} has the name of a context variable`);
             const mapping = mappings.get(parameter.name);
             if (mapping === undefined) {
               if (parameter.required === true) throw new ResolveFailure("missing_import_mapping", `required saved-query parameter has no USING mapping: @${parameter.name}`);
@@ -2203,7 +2203,7 @@ function resolveParameters(parameters: readonly TugQLParameter[], bindings: NonN
   const declared = new Set<string>();
   for (const parameter of parameters) {
     if (parameter.name.length === 0 || declared.has(parameter.name)) throw new ResolveFailure("duplicate_parameter", "parameter names must be non-empty and unique");
-    if (contextValues.has(parameter.name)) throw new ResolveFailure("reserved_parameter", `parameter @${parameter.name} has the name of a context variable`);
+    if (contextValues.has(parameter.name) || RESERVED_CONTEXT_VARIABLES.has(parameter.name)) throw new ResolveFailure("reserved_parameter", `parameter @${parameter.name} has the name of a context variable`);
     declared.add(parameter.name);
     const type = parameter.type.toLowerCase();
     if (!["integer", "decimal", "string", "boolean", "date", "datetime", "timestamp"].includes(type)) throw new ResolveFailure("unsupported_parameter_type", `unsupported parameter type ${parameter.type}`);
@@ -2240,6 +2240,13 @@ function resolveParameters(parameters: readonly TugQLParameter[], bindings: NonN
 
 /** The field type of a schemaless source: unknown until the backend returns data. */
 const SCHEMALESS_FIELD_TYPE = "any";
+
+/**
+ * DataTug context-variable names. They are reserved for every caller: a query
+ * may not declare a parameter with one of these names, and a missing value is
+ * refused as "has no value".
+ */
+const RESERVED_CONTEXT_VARIABLES: ReadonlySet<string> = new Set(["SneatUserID", "SneatUserPersonalSpaceID"]);
 
 function readContextVariables(input: unknown): ReadonlyMap<string, string> {
   const values = new Map<string, string>();
@@ -2291,9 +2298,6 @@ function substitutePathSegment(segment: string, values: ReadonlyMap<string, unkn
   if (/^__.*__$/su.test(value)) refuse("must not match __.*__");
   return value;
 }
-
-/** DataTug context-variable names: a missing value of one of these is refused as "has no value". */
-const RESERVED_CONTEXT_VARIABLES: ReadonlySet<string> = new Set(["SneatUserID", "SneatUserPersonalSpaceID"]);
 
 /** Reports whether any source schema or name in the value contains `{` or `}`. */
 function sourcePathsHaveBraces(value: unknown): boolean {

@@ -46,6 +46,21 @@ describe("resolveTugQL contextVariables", () => {
       .toEqual([{ code: "reserved_parameter", message: "parameter @SneatUserID has the name of a context variable" }]);
   });
 
+  it("refuses a declared parameter with a reserved context-variable name even without contextVariables", () => {
+    expect(codes(resolve("parameters (\n  @SneatUserID string required\n)\nfrom users/{SneatUserID}/ext\n", { schemaless: true, bindings: [{ name: "SneatUserID", set: true, value: "someone-else" }] })))
+      .toEqual([{ code: "reserved_parameter", message: "parameter @SneatUserID has the name of a context variable" }]);
+  });
+
+  it("refuses a reserved name declared by an imported query", () => {
+    const parsed = parseTugQL("with Mine from './mine.tql'\nfrom Mine\n");
+    expect(parsed.diagnostics).toEqual([]);
+    const result = resolveTugQL(parsed.document, {
+      authorizedSchemas: [], relationships: [], schemaless: true, projectRoot: "/p", importingPath: "q.tql", projectRevision: "r1",
+      pinnedImports: [{ path: "mine.tql", revision: "r1", source: "parameters (\n  @SneatUserPersonalSpaceID string default 'x'\n)\nfrom spaces/{SneatUserPersonalSpaceID}/items\n" }],
+    });
+    expect(codes(result)).toEqual([{ code: "reserved_parameter", message: "parameter @SneatUserPersonalSpaceID has the name of a context variable" }]);
+  });
+
   it("refuses a context variable whose value is not a string", () => {
     expect(codes(resolve("from users\nselect id\n", { authorizedSchemas: [users], contextVariables: { SneatUserID: 7 as unknown as string } })))
       .toEqual([{ code: "invalid_context_variable", message: "context variable SneatUserID must be a string" }]);
