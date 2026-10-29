@@ -29,5 +29,16 @@
       "name": "comments.json",
       "format": "tugql-comments-suite"
     }
-  ]
+  ],
+  "slashPaths": {
+    "providerCommit": "625b79c0e4ce733ea2f31075dcadbfb28c21a54c",
+    "providerDirectory": "tugql/testdata/slash-paths",
+    "consumerDirectory": "test/testdata/tugql/slash-paths",
+    "fixtures": [
+      {
+        "name": "cases.json",
+        "format": "tugql-slash-paths-suite"
+      }
+    ]
+  }
 }

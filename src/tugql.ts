@@ -745,9 +745,18 @@ function parsePathSegment(tokens: readonly Token[], at: number): { readonly segm
     if (word === undefined || close === undefined || !tokensTouch(token, word) || !tokensTouch(word, close) || word.kind !== "word" || !isSymbol(close, "}")) {
       throw new PathError("invalid_substituted_segment", "a substituted segment is written {name} with no spaces", token.span);
     }
-    return { segment: { text: `{${word.text}}`, span: { start: token.span.start, end: close.span.end }, quoted: false, substituted: true }, next: at + 3 };
+    const span = { start: token.span.start, end: close.span.end };
+    const after = tokens[at + 3];
+    if (after !== undefined && tokensTouch(close, after) && !isSymbol(after, "/") && !isSymbol(after, ".")) {
+      throw new PathError("invalid_substituted_segment", "{name} must be a whole path segment", span);
+    }
+    return { segment: { text: `{${word.text}}`, span, quoted: false, substituted: true }, next: at + 3 };
   }
   if (!isIdentifierToken(token)) throw new PathError("invalid_path_segment", "a path segment must be a word, a quoted identifier or {name}", token.span);
+  const after = tokens[at + 1];
+  if (after !== undefined && isSymbol(after, "{") && tokensTouch(token, after)) {
+    throw new PathError("invalid_substituted_segment", "{name} must be a whole path segment", token.span);
+  }
   const quoted = token.kind === "quoted-identifier";
   return { segment: { text: quoted ? token.value : token.text, span: token.span, quoted, substituted: false }, next: at + 1 };
 }
@@ -774,7 +783,7 @@ function parseSourcePath(tokens: readonly Token[], comments: readonly Token[]): 
       // The lexer reads a touching "//" as a comment, so a final '/' is never followed by one.
       if (following === undefined) throw new PathError("empty_path_segment", "a path may not end with '/'", sep.span);
       if (!tokensTouch(sep, following)) throw new PathError("detached_path_separator", "'/' must touch the path segments on both sides", sep.span);
-    } else if (!isIdentifierToken(following)) throw new Error("expected identifier after '.'");
+    } else if (!isIdentifierToken(following) && !isSymbol(following, "{")) throw new Error("expected identifier after '.'");
     read = parsePathSegment(tokens, at + 1);
     segments.push(read.segment);
     at = read.next;
@@ -787,7 +796,8 @@ function parseSourcePath(tokens: readonly Token[], comments: readonly Token[]): 
   }
   for (const segment of segments) {
     if (segment.substituted && separator !== "/") throw new PathError("invalid_substituted_segment", "{name} segments are allowed only in a '/' path", segment.span);
-    if (segment.quoted && separator === "/" && /[{}/]/u.test(segment.text)) throw new PathError("invalid_quoted_segment", "a quoted path segment may not contain '{', '}' or '/'", segment.span);
+    if (segment.quoted && segment.text === "") throw new PathError("empty_path_segment", "a quoted path segment may not be empty", segment.span);
+    if (segment.quoted && /[{}/]/u.test(segment.text)) throw new PathError("invalid_quoted_segment", "a quoted path segment may not contain '{', '}' or '/'", segment.span);
   }
   const parts = segments.map((segment) => segment.text);
   const from: Record<string, unknown> = { name: parts.at(-1)! };

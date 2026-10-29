@@ -232,17 +232,21 @@ from spaces/{SneatUserPersonalSpaceID}/ext/datatug/projects as p
 
 parses to `from: {schema: "spaces/{SneatUserPersonalSpaceID}/ext/datatug",
 name: "projects", alias: "p"}`. A segment is a bare word, a quoted identifier
-(`.../datatug/"user projects"`, which may not contain `{`, `}` or `/`), or a
-substituted segment `{name}` written without spaces; a literal id that starts
-with a digit or contains `-` must be quoted. `/` must touch the segments on
+(`.../datatug/"user projects"`), or a substituted segment `{name}` written
+without spaces as a whole segment; a literal id that starts with a digit or
+contains `-` must be quoted. In any source path, slash or dotted, a quoted
+segment may not be empty or contain `{`, `}` or `/`. `/` must touch the segments on
 both sides, one path may not mix `.` and `/`, and `//` touching a segment is an
 `empty_path_segment` error rather than a comment (`from users // note` is still
 a comment). `{name}` is allowed only in a slash path. Printing writes a schema
 that contains `/` or a `{name}` segment back in slash form; a two-segment path
 prints dotted (`users/projects` prints as `users.projects`) because the tree
-does not record the separator. The shared Go vectors live in
-`test/testdata/tugql/slash-paths/cases.json`, a byte-for-byte copy of
-`dal-go/dalgo` `tugql/testdata/slash-paths/cases.json`.
+does not record the separator. A tree segment the text form cannot spell
+(empty, or containing `{`, `}` or `/` other than a whole `{name}` in a slash
+path) fails printing with `unsupported_print`. The shared Go vectors live in
+`test/testdata/tugql/slash-paths/` (`cases.json` and `manifest.sha256`),
+byte-for-byte copies of `dal-go/dalgo` `tugql/testdata/slash-paths/`, pinned in
+`.github/tugql-fixtures.json` and checked by `npm run verify:tugql-fixtures`.
 
 `resolveTugQL` takes two more context options:
 

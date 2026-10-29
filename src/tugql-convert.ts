@@ -713,15 +713,29 @@ function printCondition(value: unknown, context: "" | "and" | "or"): string {
   return unsupported("condition has no text spelling");
 }
 
+/**
+ * Renders a source. A schema containing '/' or a {name} segment prints in
+ * slash form, any other source in dotted form. A segment the text form cannot
+ * spell (empty, or containing '{', '}' or '/' other than a whole {name} in a
+ * slash path) fails with unsupported_print. Mirrors dal-go/dalgo tugql
+ * printTugQLSource.
+ */
 function printSource(from: Rec): string {
-  const schema = optionalStr(from, "schema", "from");
   const name = str(from.name, "from.name");
-  let text = printSlashPath(schema, name);
-  if (text === undefined) {
-    const parts = schema === "" ? [] : schema.split(".").map((part) => identText(part, true));
-    parts.push(identText(name, true));
-    text = parts.join(".");
+  const schema = from.schema === undefined ? undefined : str(from.schema, "from.schema");
+  let segments = [name];
+  let separator = ".";
+  if (schema !== undefined) {
+    segments = [...schema.split("/"), name];
+    separator = segments.length > 2 || segments.some(isSubstitutedSegment) ? "/" : ".";
+    if (separator === ".") segments = [...schema.split("."), name];
   }
+  const parts = segments.map((segment) => {
+    if (separator === "/" && isSubstitutedSegment(segment)) return segment;
+    if (segment === "" || /[{}/]/u.test(segment)) unsupported(`source path segment ${JSON.stringify(segment)} has no text spelling`);
+    return identText(segment, true);
+  });
+  const text = parts.join(separator);
   const alias = optionalStr(from, "alias", "from");
   return alias === "" ? text : `${text} as ${identText(alias, true)}`;
 }
@@ -729,25 +743,6 @@ function printSource(from: Rec): string {
 /** `{word}`: a substituted path segment. */
 function isSubstitutedSegment(segment: string): boolean {
   return /^\{[\p{L}_][\p{L}\p{N}_$]*\}$/u.test(segment);
-}
-
-/**
- * Renders a source in slash form when its schema contains '/' or a segment is
- * a {name} substitution, and every segment can be spelled in a slash path.
- * The tree does not record the separator, so a two-segment path without either
- * prints dotted. Mirrors dal-go/dalgo tugql printTugQLSlashPath.
- */
-function printSlashPath(schema: string, name: string): string | undefined {
-  if (schema === "") return undefined;
-  const segments = [...schema.split("/"), name];
-  let slash = schema.includes("/");
-  const parts: string[] = [];
-  for (const segment of segments) {
-    if (isSubstitutedSegment(segment)) { slash = true; parts.push(segment); continue; }
-    if (segment === "" || /[{}/]/u.test(segment)) return undefined;
-    parts.push(identText(segment, true));
-  }
-  return slash ? parts.join("/") : undefined;
 }
 
 interface PrintUnit {

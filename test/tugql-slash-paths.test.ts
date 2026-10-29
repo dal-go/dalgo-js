@@ -43,7 +43,7 @@ describe("TugQL slash paths (shared Go vectors)", () => {
   it("loads the vendored suite", () => {
     expect(vectors.format).toBe("tugql-slash-paths-suite");
     expect(vectors.version).toBe(1);
-    expect(vectors.cases.length).toBeGreaterThanOrEqual(26);
+    expect(vectors.cases.length).toBeGreaterThanOrEqual(47);
   });
 
   for (const vector of vectors.cases) {
@@ -52,8 +52,9 @@ describe("TugQL slash paths (shared Go vectors)", () => {
       const error = vector.expected.error;
       if (error !== undefined) {
         expect(parsed.document.tree).toBeUndefined();
-        expect(parsed.diagnostics.map((item) => ({ code: item.code, line: item.span.start.line, column: item.span.start.column })))
-          .toContainEqual({ code: error.code, line: error.line, column: error.column });
+        const first = parsed.diagnostics[0];
+        expect(first === undefined ? undefined : { code: first.code, line: first.span.start.line, column: first.span.start.column })
+          .toEqual({ code: error.code, line: error.line, column: error.column });
         return;
       }
       expect(parsed.diagnostics).toEqual([]);
@@ -72,40 +73,41 @@ describe("TugQL slash paths (shared Go vectors)", () => {
   }
 });
 
-describe("TugQL slash paths beyond the shared vectors", () => {
-  it("accepts slash paths in JOIN sources and prints them back", () => {
-    const parsed = parseTugQL("FROM spaces/{s}/ext/datatug/projects AS p\nJOIN spaces/{s}/ext/datatug/members AS m\n  ON m.project = p.id\nSELECT p.id");
-    expect(parsed.diagnostics).toEqual([]);
-    expect(printTugQL(parsed.document.tree!).source).toBe("from spaces/{s}/ext/datatug/projects as p\njoin spaces/{s}/ext/datatug/members as m\n  on m.project = p.id\nselect p.id");
-  });
+describe("TugQL slash-path printing beyond the shared vectors", () => {
+  const print = (from: Record<string, unknown>): ReturnType<typeof printTugQL> => printTugQL({ format: "tugqtree", version: 1, query: { from } });
 
-  it("reports a touching // in a JOIN source at the second slash", () => {
-    const parsed = parseTugQL("FROM a\nJOIN b//c\n  ON b.x = a.x");
-    expect(parsed.diagnostics[0]?.code).toBe("empty_path_segment");
-    expect(parsed.diagnostics[0]?.span.start).toEqual({ line: 2, column: 8 });
-  });
-
-  it("falls back to the dotted form when a segment cannot be spelled in a slash path", () => {
+  it("prints sources it can spell and re-parses them", () => {
     const cases: readonly [Record<string, string>, string][] = [
+      [{ name: "c" }, "c"],
       [{ schema: "a/b", name: "c" }, "a/b/c"],
-      [{ schema: "a/b{c", name: "d" }, "\"a/b{c\".d"],
-      [{ schema: "a/b", name: "x/y" }, "\"a/b\".\"x/y\""],
-      [{ schema: "a//b", name: "c" }, "\"a//b\".c"],
-      [{ schema: "a", name: "{1a}" }, "a.\"{1a}\""],
-      [{ schema: "a", name: "{a-b}" }, "a.\"{a-b}\""],
-      [{ schema: "a", name: "{}" }, "a.\"{}\""],
+      [{ schema: "a.b", name: "c" }, "a.b.c"],
       [{ schema: "{_s}", name: "from" }, "{_s}/\"from\""],
+      [{ schema: "main", name: "Order Items", alias: "i" }, "main.\"Order Items\" as i"],
     ];
     for (const [from, want] of cases) {
-      const printed = printTugQL({ format: "tugqtree", version: 1, query: { from } });
-      expect(printed.source).toBe(`from ${want}`);
-      expect(parseTugQL(`FROM ${want}`).diagnostics).toEqual([]);
+      expect(print(from)).toEqual({ source: `from ${want}`, diagnostics: [] });
+      expect(parseTugQL(`from ${want}`).diagnostics).toEqual([]);
     }
   });
 
-  it("keeps the dotted spelling of a schema-qualified source", () => {
-    const parsed = parseTugQL("FROM main.\"Order Items\" AS i");
-    expect(parsed.diagnostics).toEqual([]);
-    expect(parsed.document.tree!.query.from).toEqual({ schema: "main", name: "Order Items", alias: "i" });
+  it("refuses segments it cannot spell with unsupported_print", () => {
+    const cases: readonly Record<string, string>[] = [
+      { schema: "a/b{c", name: "d" },
+      { schema: "a/b", name: "x/y" },
+      { schema: "a//b", name: "c" },
+      { schema: "a", name: "{1a}" },
+      { schema: "a", name: "{a-b}" },
+      { schema: "a", name: "{}" },
+      { schema: "{x}.y", name: "z" },
+      { name: "{x}" },
+      { schema: "", name: "c" },
+    ];
+    for (const from of cases) {
+      const printed = print(from);
+      expect(printed.source).toBeUndefined();
+      expect(printed.diagnostics[0]?.code).toBe("unsupported_print");
+    }
+    const join = printTugQL({ format: "tugqtree", version: 1, query: { from: { name: "a", joins: [{ from: { schema: "a", name: "x/y" } }] } } });
+    expect(join.diagnostics[0]?.code).toBe("unsupported_print");
   });
 });

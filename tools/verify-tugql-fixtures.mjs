@@ -59,4 +59,33 @@ if (!localOnly) {
   }
 }
 
-console.log(localOnly ? "TugQL fixture manifest and schema verified" : `TugQL fixtures match Go provider ${provenance.providerCommit}`);
+// Slash-path vectors: a second Go fixture set with its own manifest and pin.
+const slash = provenance.slashPaths;
+if (slash === undefined || slash.providerDirectory !== "tugql/testdata/slash-paths" || slash.consumerDirectory !== "test/testdata/tugql/slash-paths" ||
+    !Array.isArray(slash.fixtures) || slash.fixtures.length !== 1 || slash.fixtures[0].name !== "cases.json" || slash.fixtures[0].format !== "tugql-slash-paths-suite") {
+  throw new Error("invalid TugQL slash-path fixture provenance");
+}
+const slashDir = join(root, slash.consumerDirectory);
+const slashManifest = readFileSync(join(slashDir, "manifest.sha256"));
+const slashRows = slashManifest.toString("utf8").trim().split(/\n/u);
+const slashMatch = slashRows.length === 1 ? /^([0-9a-f]{64})  tugql\/testdata\/slash-paths\/cases\.json$/u.exec(slashRows[0]) : null;
+if (slashMatch === null) throw new Error("slash-path manifest must contain exactly one cases.json row");
+const slashBytes = readFileSync(join(slashDir, "cases.json"));
+if (createHash("sha256").update(slashBytes).digest("hex") !== slashMatch[1]) throw new Error("slash-path cases.json does not match the vendored manifest digest");
+const slashSuite = JSON.parse(slashBytes.toString("utf8"));
+if (slashSuite.format !== "tugql-slash-paths-suite" || slashSuite.version !== 1 || !Array.isArray(slashSuite.cases)) {
+  throw new Error("slash-path cases.json has an unexpected format, version, or cases field");
+}
+if (!localOnly) {
+  const commit = slash.providerCommit;
+  if (!/^[0-9a-f]{40}$/u.test(commit)) throw new Error("slash-path Go provider commit is not pinned to an immutable 40-character SHA");
+  const fetch = spawnSync("git", ["fetch", "--no-tags", "--depth=1", provenance.providerRepository, commit], { cwd: root, encoding: "utf8" });
+  if (fetch.status !== 0) throw new Error(`could not fetch pinned slash-path Go provider ${commit}: ${fetch.stderr.trim()}`);
+  for (const name of ["cases.json", "manifest.sha256"]) {
+    const show = spawnSync("git", ["show", `${commit}:${slash.providerDirectory}/${name}`], { cwd: root, encoding: null, maxBuffer: 16 * 1024 * 1024 });
+    if (show.status !== 0) throw new Error(`pinned Go commit does not contain ${slash.providerDirectory}/${name}`);
+    if (!show.stdout.equals(readFileSync(join(slashDir, name)))) throw new Error(`slash-path ${name} differs from pinned Go provider ${commit}`);
+  }
+}
+
+console.log(localOnly ? "TugQL fixture manifest and schema verified" : `TugQL fixtures match Go provider ${provenance.providerCommit}; slash-path vectors match ${slash.providerCommit}`);
