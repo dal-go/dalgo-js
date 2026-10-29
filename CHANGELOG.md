@@ -1,5 +1,15 @@
 # @dalgo/core
 
+## 0.8.1
+
+### Patch Changes
+
+- b51dd2a: TugQL `FROM` and `JOIN` sources accept slash paths for nested collections (`from spaces/{space}/ext/datatug/projects`): the last segment is the name and the earlier ones, joined with `/`, the schema. Segments are words, quoted identifiers (never empty and, in any source path, without `{`, `}` or `/`), or a whole-segment `{name}`; `/` must touch its segments, `.` and `/` cannot be mixed, and a `//` touching a path segment is now an `empty_path_segment` error instead of a comment (`from users//note` no longer parses; `from users // note` still does). Printing writes such a schema back in slash form and fails with `unsupported_print` for a segment it cannot spell. The parser passes the shared Go vectors in `test/testdata/tugql/slash-paths/cases.json`.
+  
+  `resolveTugQL` accepts `contextVariables` (host-supplied string values that count as declared, bound parameters; declaring a parameter with the same name fails with `reserved_parameter`) and `schemaless` (skip `authorizedSchemas`, accept any source and field, leave a query without SELECT unprojected). `{name}` path segments are substituted from parameters and context variables, refusing a missing, empty, non-string, `/`-containing, `.`, `..` or `__.*__` value with `invalid_path_value` naming the variable.
+  
+  These checks apply to every caller of `resolveTugQL`, with or without `contextVariables`: a source `schema` or `name` in a tree-form document containing `{` or `}` other than a whole `{name}` segment now fails with `invalid_substituted_segment`, and a whole `{name}` segment is always substituted (a literal `{x}` table name is no longer resolved as-is). `SneatUserID` and `SneatUserPersonalSpaceID` are reserved: declaring a parameter with either name fails with `reserved_parameter`.
+
 ## 0.8.0
 
 ### Minor Changes
