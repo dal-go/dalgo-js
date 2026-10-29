@@ -93,7 +93,11 @@ describe("resolveTugQL {name} path substitution", () => {
     expect(codes(resolve("parameters (\n  @projectId string default ''\n)\nfrom projects/{projectId}/queries\n", { schemaless: true })))
       .toEqual([{ code: "invalid_path_value", message: "projectId has no value" }]);
     expect(codes(resolve("from spaces/{SneatUserPersonalSpaceID}/ext/datatug/projects\n", { schemaless: true })))
-      .toEqual([{ code: "undeclared_parameter", message: "parameter is not declared: {SneatUserPersonalSpaceID}" }]);
+      .toEqual([{ code: "invalid_path_value", message: "SneatUserPersonalSpaceID has no value" }]);
+    expect(codes(resolve("from spaces/{SneatUserPersonalSpaceID}/ext/datatug/projects\n", { schemaless: true, contextVariables: { SneatUserPersonalSpaceID: "" } })))
+      .toEqual([{ code: "invalid_path_value", message: "SneatUserPersonalSpaceID has no value" }]);
+    expect(codes(resolve("from spaces/{other}/projects\n", { schemaless: true })))
+      .toEqual([{ code: "undeclared_parameter", message: "parameter is not declared: {other}" }]);
   });
 
   it("refuses an unsafe context variable value", () => {
@@ -104,6 +108,17 @@ describe("resolveTugQL {name} path substitution", () => {
   it("refuses a non-string parameter value in a path", () => {
     expect(codes(resolve("parameters (\n  @n integer required\n)\nfrom spaces/{n}/items\n", { schemaless: true, bindings: [{ name: "n", set: true, value: 5 }] })))
       .toEqual([{ code: "invalid_path_value", message: "n must be a string to be used as a path segment" }]);
+  });
+
+  it("refuses a {name} that is not a whole segment in a tree-form source", () => {
+    const tree = { format: "tugqtree", version: 1, query: { from: { schema: "a.{SneatUserID}", name: "x" } } } as const;
+    expect(codes(resolveTugQL({ tree, sourceMetadata: { format: "tugql", version: 1 } }, { authorizedSchemas: [], relationships: [], pinnedImports: [], schemaless: true, contextVariables: context })))
+      .toEqual([{ code: "invalid_substituted_segment", message: "{name} must be a whole path segment: \"a.{SneatUserID}\"" }]);
+  });
+
+  it("leaves a query without braces in its sources untouched", () => {
+    const query = resolvedQuery(resolve("from spaces/abc/projects\nselect title\n", { schemaless: true }));
+    expect(query.from).toEqual({ schema: "spaces/abc", name: "projects" });
   });
 
   it("substitutes in JOIN sources too", () => {
@@ -129,6 +144,17 @@ describe("resolveTugQL schemaless", () => {
     expect(query.from).toEqual({ name: "users" });
     expect(query.columns).toEqual([{ field: "nickname" }, { field: "title", as: "t" }]);
     expect(result.resolved?.columns.map((column) => column.name)).toEqual(["nickname", "t"]);
+  });
+
+  it("keeps refusing ordered comparisons on an authorized field typed any without schemaless", () => {
+    const typedAny = { version: "v1", tables: [{ name: "users", fields: [{ name: "id", type: "string", authorized: true }, { name: "n", type: "any", authorized: true }] }] };
+    expect(codes(resolve("from users\nwhere n > 3\nselect id\n", { authorizedSchemas: [typedAny] })).map(({ code }) => code))
+      .toEqual(["unsupported_comparison_type"]);
+  });
+
+  it("refuses numeric aggregates over schemaless fields", () => {
+    expect(codes(resolve("from projects\nselect SUM(size) as total\n", { schemaless: true })).map(({ code }) => code))
+      .toEqual(["unsupported_output_type"]);
   });
 
   it("allows ordered comparisons on fields of unknown type", () => {

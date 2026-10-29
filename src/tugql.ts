@@ -1790,11 +1790,11 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
     expandedSemanticNodes = chargeSemanticNodes(expandedSemanticNodes, Math.max(0, finalExpandedRootQueryNodes - authoredRootQueryNodes));
     preflightTugQLTree({ format: TUGQL_TREE_FORMAT, version: TUGQL_VERSION, query: loweredRootBody.query }, true);
     const rootDefinitions = loweredRootBody.definitions ?? [];
-    validateSafeOperations(loweredRootBody.query, rootDefinitions, schemaTables, context.relationships);
+    validateSafeOperations(loweredRootBody.query, rootDefinitions, schemaTables, context.relationships, schemaless);
     const validateDefinition = (definition: TugQLDefinition): void => {
       if (definition.kind !== "cte") return;
       const nested = definition.query.definitions ?? [];
-      validateSafeOperations(definition.query.query, nested, schemaTables, context.relationships);
+      validateSafeOperations(definition.query.query, nested, schemaTables, context.relationships, schemaless);
       for (const child of nested) validateDefinition(child);
     };
     for (const definition of rootDefinitions) validateDefinition(definition);
@@ -2271,12 +2271,19 @@ const substitutedPathSegment = /^\{([\p{L}_][\p{L}\p{N}_$]*)\}$/u;
  */
 function substitutePathSegment(segment: string, values: ReadonlyMap<string, unknown>): string {
   const match = substitutedPathSegment.exec(segment);
-  if (match === null) return segment;
+  if (match === null) {
+    if (/[{}]/u.test(segment)) throw new ResolveFailure("invalid_substituted_segment", `{name} must be a whole path segment: ${JSON.stringify(segment)}`);
+    return segment;
+  }
   const name = match[1]!;
-  const bound = asRecord(values.get(name));
-  if (bound === undefined) throw new ResolveFailure("undeclared_parameter", `parameter is not declared: {${name}}`);
-  const value = bound.value;
   const refuse = (message: string): never => { throw new ResolveFailure("invalid_path_value", `${name} ${message}`); };
+  const bound = asRecord(values.get(name));
+  if (bound === undefined) {
+    // A reserved context variable the host did not supply is a missing value, not an undeclared name.
+    if (RESERVED_CONTEXT_VARIABLES.has(name)) refuse("has no value");
+    throw new ResolveFailure("undeclared_parameter", `parameter is not declared: {${name}}`);
+  }
+  const value = bound.value;
   if (value === undefined || value === null || value === "") refuse("has no value");
   if (typeof value !== "string") return refuse("must be a string to be used as a path segment");
   if (value.includes("/")) refuse("must be a single path segment (no /)");
@@ -2285,9 +2292,27 @@ function substitutePathSegment(segment: string, values: ReadonlyMap<string, unkn
   return value;
 }
 
+/** DataTug context-variable names: a missing value of one of these is refused as "has no value". */
+const RESERVED_CONTEXT_VARIABLES: ReadonlySet<string> = new Set(["SneatUserID", "SneatUserPersonalSpaceID"]);
+
+/** Reports whether any source schema or name in the value contains `{` or `}`. */
+function sourcePathsHaveBraces(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(sourcePathsHaveBraces);
+  if (value === null || typeof value !== "object") return false;
+  return Object.entries(value as Readonly<Record<string, unknown>>).some(([key, item]) => {
+    const relation = key === "from" ? asRecord(item) : undefined;
+    if (relation !== undefined && [relation.name, relation.schema].some((text) => typeof text === "string" && /[{}]/u.test(text))) return true;
+    return sourcePathsHaveBraces(item);
+  });
+}
+
 /** Substitutes `{name}` segments in the schema and name of every source in a query body. */
 function substitutePathSegments(value: unknown, values: ReadonlyMap<string, unknown>): unknown {
-  if (Array.isArray(value)) return value.map((item) => substitutePathSegments(item, values));
+  return sourcePathsHaveBraces(value) ? substituteSourcePaths(value, values) : value;
+}
+
+function substituteSourcePaths(value: unknown, values: ReadonlyMap<string, unknown>): unknown {
+  if (Array.isArray(value)) return value.map((item) => substituteSourcePaths(item, values));
   if (value === null || typeof value !== "object") return value;
   const result: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value as Readonly<Record<string, unknown>>)) {
@@ -2295,8 +2320,8 @@ function substitutePathSegments(value: unknown, values: ReadonlyMap<string, unkn
     if (relation !== undefined && typeof relation.name === "string") {
       const substituted: Record<string, unknown> = { ...relation, name: substitutePathSegment(relation.name, values) };
       if (typeof relation.schema === "string") substituted.schema = relation.schema.split("/").map((segment) => substitutePathSegment(segment, values)).join("/");
-      result[key] = substitutePathSegments(substituted, values);
-    } else result[key] = substitutePathSegments(item, values);
+      result[key] = substituteSourcePaths(substituted, values);
+    } else result[key] = substituteSourcePaths(item, values);
   }
   return result;
 }
@@ -2492,6 +2517,7 @@ function validateSafeOperations(
   definitions: readonly TugQLDefinition[],
   schemas: ReadonlyMap<string, { readonly database?: string; readonly schema?: string; readonly version: string; readonly fields: Map<string, TugQLTypedField> }>,
   relationships: readonly TugQLRelationship[],
+  schemaless = false,
 ): void {
   const unsupportedDecimal = (): never => { throw new ResolveFailure("unsupported_decimal_semantics", "exact DECIMAL/NUMERIC arithmetic or comparison is not supported by the current query engine"); };
   const unsupportedTemporal = (): never => { throw new ResolveFailure("unsupported_temporal_semantics", "temporal comparison or ordering is not supported by the current query engine"); };
@@ -2502,7 +2528,8 @@ function validateSafeOperations(
   const orderedOperators = new Set([">", ">=", "<", "<=", "gt", "gte", "lt", "lte"]);
   const compatibleOrderedTypes = (left: string, right: string, leftExpression: Readonly<Record<string, unknown>>, rightExpression: Readonly<Record<string, unknown>>): boolean => {
     if (numeric(left) && numeric(right)) return true;
-    if (left === SCHEMALESS_FIELD_TYPE || right === SCHEMALESS_FIELD_TYPE) return true;
+    // A schemaless field's type is unknown until the backend returns data.
+    if (schemaless && (left === SCHEMALESS_FIELD_TYPE || right === SCHEMALESS_FIELD_TYPE)) return true;
     if (left.toLowerCase() === "date" && typeof rightExpression.value === "string" && isValidISODate(rightExpression.value)) return true;
     if (right.toLowerCase() === "date" && typeof leftExpression.value === "string" && isValidISODate(leftExpression.value)) return true;
     const safeSameType = new Set(["string", "boolean", "date"]);

@@ -258,6 +258,8 @@ byte-for-byte copies of `dal-go/dalgo` `tugql/testdata/slash-paths/`, pinned in
 - `schemaless`: resolve against a document store such as Firestore. The
   `authorizedSchemas` check is skipped, any source and field name is accepted,
   and a query without `SELECT` keeps an open projection (`columns` is empty).
+  Schemaless fields are typed `any`: ordered comparisons on them are allowed,
+  but numeric aggregates (`SUM`, `AVG`) and arithmetic over them are refused.
 
 The resolver replaces each `{name}` segment of a `schema` or `name` with the
 value of a declared parameter or context variable; the stored tree keeps the
