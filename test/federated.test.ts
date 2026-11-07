@@ -210,5 +210,9 @@ describe("federated country sales", () => {
     expect(invoice.calls[0]?.limit).toBe(100);
     expect(invoice.calls[0]?.orders[0]).toEqual({ field: "id", direction: "desc" });
     expect(country.calls).toHaveLength(1);
+    const missing = executeJoinedTugQLQuery(invoice, parsed, {
+      resolveExecutor: (relation) => (relation.database === "orders" ? invoice : undefined) as unknown as QueryExecutor,
+    });
+    await expect(missing).rejects.toThrow(/returned no executor for database countries/u);
   });
 });

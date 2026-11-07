@@ -222,5 +222,7 @@ describe("TugQL cross-database edges", () => {
     await expect(unrouted).rejects.toThrow(/resolveExecutor/u);
     const rows = await executeRecursiveTugQLQuery(executor("x"), resolved.query, { resolveExecutor: (relation) => executor(relation.database ?? "") });
     expect(rows.records.map((record) => record.data)).toEqual([{ Id: 7 }]);
+    const missing = executeRecursiveTugQLQuery(executor("x"), resolved.query, { resolveExecutor: () => undefined as unknown as QueryExecutor });
+    await expect(missing).rejects.toThrow(/returned no executor for database sales/u);
   });
 });

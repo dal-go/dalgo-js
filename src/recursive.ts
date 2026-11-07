@@ -154,7 +154,8 @@ async function evaluateRelation(executor: QueryExecutor, relation: RecursiveTugQ
     if (source === undefined) shape(path, "schema-qualified relation requires resolveSource");
     if (relation.database !== undefined && options.resolveExecutor === undefined) shape(path, "database-qualified relation requires resolveExecutor");
     cancelled(budget, path);
-    const scanner = relation.database === undefined ? executor : (options.resolveExecutor?.(relation) ?? executor);
+    const scanner = relation.database === undefined ? executor : options.resolveExecutor?.(relation);
+    if (scanner === undefined) shape(path, `resolveExecutor returned no executor for database ${relation.database ?? ""}`);
     const page = await scanner.query<Data>({ source, filters: [], orders: [], limit: budget.maxFetchedRows + 1 });
     cancelled(budget, path);
     requireUnannotatedQueryInput(page);
@@ -638,11 +639,11 @@ function parseQuery(value: Record<string, unknown>, schema: TugQLSchema, path: s
 
 /**
  * Finds the authorized table of a relation. A qualified relation matches only
- * its own database's tables; an unqualified one prefers the default database.
+ * its own database's tables; an unqualified one only the default database's.
  */
 function findTable(schema: TugQLSchema, name: string | undefined, relationSchema: string | undefined, database: string | undefined): TugQLSchema["tables"][number] | undefined {
   const candidates = schema.tables.filter((item) => item.name === name && (relationSchema === undefined || item.schema === relationSchema));
-  return database === undefined ? (candidates.find((item) => item.database === undefined) ?? candidates[0]) : candidates.find((item) => item.database === database);
+  return candidates.find((item) => item.database === database);
 }
 
 function parseRelation(value: unknown, schema: TugQLSchema, path: string): RecursiveTugQLRelation {
