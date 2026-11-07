@@ -30,6 +30,8 @@ export interface RecursiveQueryExecutionOptions {
   readonly maxRetainedBytes?: number;
   readonly signal?: AbortSignal;
   readonly resolveSource?: (relation: RecursiveTugQLRelation) => StructuredQuery<Data>["source"];
+  /** Selects the executor that scans a database-qualified table. Required when the query has one. */
+  readonly resolveExecutor?: (relation: RecursiveTugQLRelation) => QueryExecutor;
   /** Required only for caller-constructed ASTs; parsed documents carry a private binding. */
   readonly schema?: TugQLSchema;
 }
@@ -150,8 +152,10 @@ async function evaluateRelation(executor: QueryExecutor, relation: RecursiveTugQ
     if (relation.name === undefined) shape(path, "table relation needs name");
     const source = options.resolveSource?.(relation) ?? (relation.schema === undefined ? { kind: "collection" as const, name: relation.name } : undefined);
     if (source === undefined) shape(path, "schema-qualified relation requires resolveSource");
+    if (relation.database !== undefined && options.resolveExecutor === undefined) shape(path, "database-qualified relation requires resolveExecutor");
     cancelled(budget, path);
-    const page = await executor.query<Data>({ source, filters: [], orders: [], limit: budget.maxFetchedRows + 1 });
+    const scanner = relation.database === undefined ? executor : (options.resolveExecutor?.(relation) ?? executor);
+    const page = await scanner.query<Data>({ source, filters: [], orders: [], limit: budget.maxFetchedRows + 1 });
     cancelled(budget, path);
     requireUnannotatedQueryInput(page);
     if (page.nextCursor !== undefined) shape(path, "leaf relation scan is paginated");
@@ -456,7 +460,7 @@ function bindRelation(relation: RecursiveTugQLRelation, schema: TugQLSchema, out
     if (!root && reserved.has(alias)) shape(sourcePath, `duplicate source alias ${alias}`);
     let fields: BoundSource;
     if (value.kind === "table") {
-      const table = schema.tables.find((item) => item.name === value.name && (value.schema === undefined || item.schema === value.schema));
+      const table = findTable(schema, value.name, value.schema, value.database);
       if (table === undefined) shape(sourcePath, `unknown table ${value.name ?? ""}`);
       fields = new Set(table.fields);
     } else {
@@ -632,18 +636,28 @@ function parseQuery(value: Record<string, unknown>, schema: TugQLSchema, path: s
   return result;
 }
 
+/**
+ * Finds the authorized table of a relation. A qualified relation matches only
+ * its own database's tables; an unqualified one prefers the default database.
+ */
+function findTable(schema: TugQLSchema, name: string | undefined, relationSchema: string | undefined, database: string | undefined): TugQLSchema["tables"][number] | undefined {
+  const candidates = schema.tables.filter((item) => item.name === name && (relationSchema === undefined || item.schema === relationSchema));
+  return database === undefined ? (candidates.find((item) => item.database === undefined) ?? candidates[0]) : candidates.find((item) => item.database === database);
+}
+
 function parseRelation(value: unknown, schema: TugQLSchema, path: string): RecursiveTugQLRelation {
-  const source = raw(value, path); keys(source, new Set(["name", "schema", "alias", "as", "query", "joins"]), path);
+  const source = raw(value, path); keys(source, new Set(["name", "database", "schema", "alias", "as", "query", "joins"]), path);
   const hasName = source.name !== undefined; const hasQuery = source.query !== undefined;
   if (hasName === hasQuery) shape(path, "requires exactly one of name or query");
   const joins = source.joins === undefined ? [] : list(source.joins, `${path}.joins`).map((item, index) => parseJoin(raw(item, `${path}.joins[${index.toString()}]`), schema, `${path}.joins[${index.toString()}]`));
   if (hasName) {
     const name = text(source.name, `${path}.name`); const relationSchema = source.schema === undefined ? undefined : text(source.schema, `${path}.schema`);
-    if (!schema.tables.some((table) => table.name === name && (relationSchema === undefined || table.schema === relationSchema))) shape(path, `unknown table ${name}`);
+    const database = source.database === undefined ? undefined : text(source.database, `${path}.database`);
+    if (findTable(schema, name, relationSchema, database) === undefined) shape(path, `unknown table ${name}`);
     const alias = source.alias ?? source.as; if (source.alias !== undefined && source.as !== undefined) shape(path, "alias and as cannot both be set");
-    return { kind: "table", name, ...(relationSchema === undefined ? {} : { schema: relationSchema }), ...(alias === undefined ? {} : { alias: text(alias, `${path}.alias`) }), joins: joins as RecursiveTugQLRelation["joins"] };
+    return { kind: "table", name, ...(database === undefined ? {} : { database }), ...(relationSchema === undefined ? {} : { schema: relationSchema }), ...(alias === undefined ? {} : { alias: text(alias, `${path}.alias`) }), joins: joins as RecursiveTugQLRelation["joins"] };
   }
-  if (source.schema !== undefined || source.alias !== undefined || source.as !== undefined) shape(path, "derived alias belongs in query.as");
+  if (source.database !== undefined || source.schema !== undefined || source.alias !== undefined || source.as !== undefined) shape(path, "derived alias belongs in query.as");
   return { kind: "query", query: parseQuery(raw(source.query, `${path}.query`), schema, `${path}.query`), joins: joins as RecursiveTugQLRelation["joins"] };
 }
 
@@ -710,7 +724,7 @@ function parseExpression(value: unknown, schema: TugQLSchema, path: string): Rec
   shape(path, "unknown expression");
 }
 
-function writeRelation(value: RecursiveTugQLRelation): Record<string, unknown> { const joins = value.joins.length === 0 ? {} : { joins: value.joins.map((join) => ({ ...(join.type === "inner" ? {} : { type: join.type }), from: writeRelation(join.from), on: join.on.map((item) => ({ left: item.left, op: "==", right: item.right })), ...(join.hints === undefined ? {} : { hints: { algorithms: [...join.hints.algorithms] } }) })) }; return value.kind === "table" ? { ...(value.schema === undefined ? {} : { schema: value.schema }), name: value.name, ...(value.alias === undefined ? {} : { alias: value.alias }), ...joins } : { query: serializeRecursiveTugQL(value.query ?? shape("relation", "query relation needs query")), ...joins }; }
+function writeRelation(value: RecursiveTugQLRelation): Record<string, unknown> { const joins = value.joins.length === 0 ? {} : { joins: value.joins.map((join) => ({ ...(join.type === "inner" ? {} : { type: join.type }), from: writeRelation(join.from), on: join.on.map((item) => ({ left: item.left, op: "==", right: item.right })), ...(join.hints === undefined ? {} : { hints: { algorithms: [...join.hints.algorithms] } }) })) }; return value.kind === "table" ? { ...(value.database === undefined ? {} : { database: value.database }), ...(value.schema === undefined ? {} : { schema: value.schema }), name: value.name, ...(value.alias === undefined ? {} : { alias: value.alias }), ...joins } : { query: serializeRecursiveTugQL(value.query ?? shape("relation", "query relation needs query")), ...joins }; }
 function writeCondition(value: RecursiveTugQLCondition): Record<string, unknown> { if (value.kind === "exists") return { exists: { query: serializeRecursiveTugQL(value.query) } }; if (value.kind === "not-exists") return { notExists: { query: serializeRecursiveTugQL(value.query) } }; if (value.kind === "and" || value.kind === "or") return { [value.kind]: value.conditions.map(writeCondition) }; if (value.kind === "is-null" || value.kind === "is-not-null") return { [value.kind === "is-null" ? "isNull" : "isNotNull"]: writeExpression(value.operand) }; const comparison = value as Extract<RecursiveTugQLCondition, { readonly kind: "comparison" }>; return { left: writeExpression(comparison.left), op: comparison.operator === "in" ? "In" : comparison.operator === "not-in" ? "NotIn" : comparison.operator, right: writeExpression(comparison.right) }; }
 function writeExpression(value: RecursiveTugQLExpression): Record<string, unknown> { if (value.kind === "query") return { query: serializeRecursiveTugQL(value.query) }; if (value.kind === "field") return { field: value.field.field, ...(value.field.source === "" ? {} : { source: value.field.source }) }; if (value.kind === "literal") return { value: value.value }; if (value.kind === "values") return { values: value.values }; if (value.kind === "star") return { star: true }; if (value.kind === "binary") return { binary: { op: value.operator, left: writeExpression(value.left), right: writeExpression(value.right) } }; if (value.kind === "aggregate") return { aggregate: { function: value.function, args: value.args.map(writeExpression), ...(value.distinct === true ? { distinct: true } : {}) } }; shape("expression", `cannot serialize ${value.kind}`); }
 function raw(value: unknown, path: string): Record<string, unknown> { if (typeof value === "string") { const parsed = parseYamlDocument(value, { prettyErrors: false, strict: true, uniqueKeys: true }); if (parsed.errors.length > 0) shape(path, "invalid YAML"); return raw(parsed.toJS(), path); } if (value === null || Array.isArray(value) || typeof value !== "object") shape(path, "must be object"); return { ...(value as Record<string, unknown>) }; }

@@ -239,6 +239,8 @@ export interface RecursiveTugQLQuery {
 export interface RecursiveTugQLRelation {
   readonly kind: "table" | "query";
   readonly name?: string;
+  /** Declared database alias whose executor scans this table; absent means the caller's default database. */
+  readonly database?: string;
   readonly schema?: string;
   readonly alias?: string;
   readonly query?: RecursiveTugQLQuery;

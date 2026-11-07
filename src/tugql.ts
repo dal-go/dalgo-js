@@ -3,6 +3,7 @@
 import { parseRecursiveTugQL } from "./recursive.js";
 import type { TugQLSchema } from "./tugql-yaml.js";
 import type { RecursiveTugQLQuery } from "./query.js";
+import { targetHasPassword, validDatabaseName, validateTugQLTreeDatabases } from "./tugql-databases.js";
 
 /** Versioned TugQL and TugQTree authoring adapters. */
 export const TUGQL_VERSION = 1 as const;
@@ -26,6 +27,18 @@ export interface TugQLDiagnostic {
   readonly code: string;
   readonly message: string;
   readonly span: TugQLSpan;
+}
+
+/**
+ * One database alias declared by the root `databases (` block. `name` is an
+ * unquoted word that is not a reserved keyword, unique case-insensitively.
+ * `target` is an optional opaque reference that must not carry a password; when
+ * it is absent the caller binds the alias. A source reads a declared database
+ * by carrying the alias as its `database`.
+ */
+export interface TugQLDatabase {
+  readonly name: string;
+  readonly target?: string;
 }
 
 export interface TugQLParameter {
@@ -90,7 +103,7 @@ export interface TugQLCommentGroup {
  * or generated SQL.
  *
  * `anchors` maps a TugQTree path to the comments of the clause-level element at
- * that path: `parameters`, `definitions[i]`, `query.from`,
+ * that path: `databases`, `parameters`, `definitions[i]`, `query.from`,
  * `query.from.joins[k]`, `query.from.joins[k].on[j]`, `query.where`,
  * `query.groupBy`, `query.having`, `query.orderBy`, `query.limit` and
  * `query.columns` (the SELECT clause). A comment with no clean anchor (inside a
@@ -106,6 +119,7 @@ export interface TugQLComments {
 export interface TugQLTree {
   readonly format: typeof TUGQL_TREE_FORMAT;
   readonly version: typeof TUGQL_VERSION;
+  readonly databases?: readonly TugQLDatabase[];
   readonly parameters?: readonly TugQLParameter[];
   readonly definitions?: readonly TugQLDefinition[];
   readonly query: TugQLQueryDocument;
@@ -401,7 +415,7 @@ function tokenizeTugQL(source: string): { readonly tokens: readonly Token[]; rea
       continue;
     }
     const pair = source.slice(offset, offset + 2);
-    if (["<=", ">=", "!=", "<>", "==", "||", "&&"].includes(pair)) { advance(); advance(); push("symbol", start, startLine, startColumn); continue; }
+    if (["<=", ">=", "!=", "<>", "==", "||", "&&", "::"].includes(pair)) { advance(); advance(); push("symbol", start, startLine, startColumn); continue; }
     if ("(),.*+-/%=<>;".includes(current)) { advance(); push("symbol", start, startLine, startColumn); continue; }
     // Any other character is a lone symbol, as in the Go lexer; the parser reports where it is not allowed.
     advance();
@@ -469,8 +483,27 @@ function keyword(token: Token | undefined, value: string): boolean {
   return token?.kind === "word" && token.value.toLowerCase() === value;
 }
 
+/**
+ * Whether tokens[index] is the word of a `databases (` header line. Elsewhere
+ * `databases` is an ordinary identifier, so a source or field of that name keeps
+ * its meaning. Comment tokens are not part of the line's code.
+ */
+function isDatabasesHeader(tokens: readonly Token[], index: number): boolean {
+  const token = tokens[index];
+  if (token?.kind !== "word" || token.value.toLowerCase() !== "databases") return false;
+  const line = token.span.start.line;
+  let before: Token | undefined;
+  for (let i = index - 1; i >= 0; i -= 1) if (tokens[i]!.kind !== "comment") { before = tokens[i]; break; }
+  const after: Token[] = [];
+  for (let i = index + 1; i < tokens.length && after.length < 2; i += 1) if (tokens[i]!.kind !== "comment") after.push(tokens[i]!);
+  return before?.span.start.line !== line
+    && after[0]?.text === "(" && after[0].span.start.line === line
+    && after[1]?.span.start.line !== line;
+}
+
 function isKeywordRole(tokens: readonly Token[], index: number): boolean {
   const token = tokens[index];
+  if (token?.kind === "word" && token.value.toLowerCase() === "databases") return isDatabasesHeader(tokens, index);
   if (token?.kind !== "word" || !lowerKeywords.has(token.value.toLowerCase())) return false;
   if (tokens[index - 1]?.text === ".") return false;
   if (tokens[index + 1]?.text === "(" && !["select", "parameters", "as"].includes(token.value.toLowerCase())) return false;
@@ -805,11 +838,104 @@ function parseSourcePath(tokens: readonly Token[], comments: readonly Token[]): 
   return { from, next: at };
 }
 
+/**
+ * Parses the root `databases (` block that starts at lines[start]. Each
+ * declaration is `alias` or `alias = '<target>'`.
+ */
+function parseDatabases(lines: readonly SourceLine[], start: number): { readonly databases: readonly TugQLDatabase[]; readonly spans: readonly TugQLSpan[]; readonly next: number; readonly diagnostics: readonly TugQLDiagnostic[] } {
+  const header = lines[start]!;
+  if (header.tokens.length !== 2 || header.tokens[1]!.text !== "(") {
+    return { databases: [], spans: [], next: start + 1, diagnostics: [diagnostic("invalid_databases", "DATABASES must be followed by '(' on its header line", spanForLine(header))] };
+  }
+  const diagnostics: TugQLDiagnostic[] = [];
+  if (header.indent !== "") diagnostics.push(diagnostic("indentation", "DATABASES must be a top-level block", spanForLine(header)));
+  const close = findBlockClose(lines, start + 1, header.indent);
+  if (close < 0) {
+    diagnostics.push(diagnostic("unclosed_databases", "DATABASES block must close with ')' on its own line", spanForLine(header)));
+    return { databases: [], spans: [], next: lines.length, diagnostics };
+  }
+  const databases: TugQLDatabase[] = [];
+  const spans: TugQLSpan[] = [];
+  const seen = new Set<string>();
+  let indentUnit = "";
+  for (let i = start + 1; i < close; i += 1) {
+    const line = lines[i]!;
+    if (line.tokens.length === 0) continue;
+    const level = line.indent.startsWith(header.indent) ? line.indent.slice(header.indent.length) : line.indent;
+    const span = spanForLine(line);
+    if ((level !== "  " && level !== "\t") || (indentUnit !== "" && indentUnit !== level)) {
+      diagnostics.push(diagnostic("indentation", "database declarations must be indented one consistent structural level", span));
+      continue;
+    }
+    indentUnit = level;
+    const parsed = parseDatabaseDeclaration(line.tokens);
+    let failure = "failure" in parsed ? parsed.failure : undefined;
+    if (failure === undefined && "database" in parsed && seen.has(parsed.database.name.toLowerCase())) {
+      failure = { code: "duplicate_database", message: `database alias is declared more than once: ${parsed.database.name}` };
+    }
+    if (failure !== undefined || !("database" in parsed)) {
+      diagnostics.push(diagnostic(failure!.code, failure!.message, span));
+      continue;
+    }
+    seen.add(parsed.database.name.toLowerCase());
+    databases.push(parsed.database);
+    spans.push(span);
+  }
+  return { databases, spans, next: close + 1, diagnostics };
+}
+
+function parseDatabaseDeclaration(tokens: readonly Token[]): { readonly database: TugQLDatabase } | { readonly failure: { readonly code: string; readonly message: string } } {
+  const name = tokens[0]!;
+  if (name.kind !== "word" || !validDatabaseName(name.text)) {
+    return { failure: { code: "invalid_database", message: `database alias ${JSON.stringify(name.text)} must be an unquoted word that is not a reserved keyword` } };
+  }
+  if (tokens.length === 1) return { database: { name: name.text } };
+  const target = tokens[2];
+  if (tokens.length !== 3 || tokens[1]!.text !== "=" || target!.kind !== "string" || target!.text.length === 2) {
+    return { failure: { code: "invalid_database", message: "a database declaration is alias or alias = '<target>' with a non-empty single-quoted target" } };
+  }
+  if (targetHasPassword(target!.value)) return { failure: { code: "database_credentials", message: `database target must not carry a password: ${name.text}` } };
+  return { database: { name: name.text, target: target!.value } };
+}
+
+/**
+ * Checks a parsed root document. After a clean parse every touching `word ::`
+ * token pair is a source qualifier, at any query level, so the token stream
+ * locates each one exactly.
+ */
+function sourceDatabaseDiagnostics(databases: readonly TugQLDatabase[], spans: readonly TugQLSpan[], tokens: readonly Token[]): TugQLDiagnostic[] {
+  const code = tokens.filter((token) => token.kind !== "comment");
+  const used = new Set<string>();
+  const undeclared: TugQLDiagnostic[] = [];
+  for (let i = 0; i + 1 < code.length; i += 1) {
+    if (!isSymbol(code[i + 1], "::")) continue;
+    const name = code[i]!.text;
+    used.add(name);
+    if (!databases.some((database) => database.name === name)) undeclared.push(diagnostic("undeclared_database", `source reads undeclared database alias ${JSON.stringify(name)}`, code[i]!.span));
+  }
+  const unused = databases.flatMap((database, index) => used.has(database.name) ? [] : [diagnostic("unused_database", `database alias is declared but no source reads it: ${database.name}`, spans[index]!)]);
+  return [...unused, ...undeclared];
+}
+
+/** Reads an optional leading `alias::` qualifier of a FROM/JOIN source; returns the alias and the index of the path after it. */
+function parseSourceDatabase(tokens: readonly Token[]): { readonly database?: string; readonly start: number } {
+  if (tokens.length < 2 || !isSymbol(tokens[1], "::")) return { start: 0 };
+  const alias = tokens[0]!;
+  if (tokens.length < 3 || !tokensTouch(alias, tokens[1]!) || !tokensTouch(tokens[1]!, tokens[2]!) || alias.kind !== "word" || !validDatabaseName(alias.text)) {
+    throw new Error("a database qualifier is alias::path, with an unquoted alias and no spaces around '::'");
+  }
+  return { database: alias.text, start: 2 };
+}
+
 function parseFrom(tokens: readonly Token[], comments: readonly Token[]): Readonly<Record<string, unknown>> {
   if (tokens.length === 0) throw new Error("source name is required");
   const first = tokens[0]!;
   if (!isIdentifierToken(first) && !isSymbol(first, "{") && !isSymbol(first, "/")) throw new Error("source name must be an identifier");
-  const { from, next: at } = parseSourcePath(tokens, comments);
+  const qualifier = parseSourceDatabase(tokens);
+  const path = parseSourcePath(tokens.slice(qualifier.start), comments);
+  const from = path.from;
+  if (qualifier.database !== undefined) from.database = qualifier.database;
+  const at = path.next + qualifier.start;
   if (at < tokens.length) {
     if (!keyword(tokens[at], "as") || at + 2 !== tokens.length) throw new Error("aliases require AS followed by one identifier");
     const alias = tokens[at + 1]!;
@@ -948,7 +1074,11 @@ function parseScalarColumn(item: readonly Token[], source: string): Readonly<Rec
   for (const line of bodyLines) if (line.trim().length > 0 && !isCommentOnlyLine(line) && !line.startsWith(prefix)) throw new Error("nested query body must add one structural indentation level");
   const bodyText = bodyLines.map((line) => line.startsWith(prefix) ? line.slice(prefix.length) : line).join("\n");
   const parsed = parseDocumentInner(bodyText, false, 1);
-  if (parsed.diagnostics.length > 0 || parsed.document.tree === undefined) throw new Error(`nested scalar query: ${parsed.diagnostics[0]?.message ?? "invalid nested query"}`);
+  if (parsed.diagnostics.length > 0 || parsed.document.tree === undefined) {
+    const first = parsed.diagnostics[0];
+    if (first?.code === "nested_databases") throw new PathError(first.code, first.message, shiftSpan(first.span, startLine, prefix.length));
+    throw new Error(`nested scalar query: ${first?.message ?? "invalid nested query"}`);
+  }
   const name = item[0]!.kind === "quoted-identifier" ? item[0]!.value : item[0]!.text;
   const tree = parsed.document.tree;
   return { query: { ...(tree.definitions === undefined ? {} : { definitions: tree.definitions }), query: tree.query }, as: name };
@@ -1192,6 +1322,24 @@ function parseDocumentInner(source: string, allowParameters: boolean, depth: num
   const commentUnits: CommentUnit[] = [];
   let index = 0;
   while (index < lines.length && lines[index]!.tokens.length === 0) index += 1;
+  let databases: readonly TugQLDatabase[] = [];
+  let databaseSpans: readonly TugQLSpan[] = [];
+  // DATABASES may open only the root document. Anywhere else, before the main
+  // query, it is consumed and reported as nested_databases.
+  const databasesAt = (atRootStart: boolean): void => {
+    while (index < lines.length && lines[index]!.tokens.length === 0) index += 1;
+    if (index >= lines.length || !keyword(lines[index]!.tokens[0], "databases")) return;
+    if (!atRootStart || !allowParameters) diagnostics.push(diagnostic("nested_databases", "DATABASES is declared once, at the start of the root document", spanForLine(lines[index]!)));
+    const block = parseDatabases(lines, index);
+    diagnostics.push(...block.diagnostics);
+    if (atRootStart) {
+      databases = block.databases;
+      databaseSpans = block.spans;
+      commentUnits.push({ path: "databases", first: lines[index]!.number, last: lines[block.next - 1]!.number });
+    }
+    index = block.next;
+  };
+  databasesAt(true);
   const parameters: TugQLParameter[] = [];
   if (index < lines.length && keyword(lines[index]!.tokens[0], "parameters")) {
     if (!allowParameters) diagnostics.push(diagnostic("nested_parameters", "PARAMETERS is declared once and shared by nested queries", spanForLine(lines[index]!)));
@@ -1223,7 +1371,7 @@ function parseDocumentInner(source: string, allowParameters: boolean, depth: num
   }
   const definitions: TugQLDefinition[] = [];
   while (index < lines.length) {
-    while (index < lines.length && lines[index]!.tokens.length === 0) index += 1;
+    databasesAt(false);
     if (index >= lines.length || !keyword(lines[index]!.tokens[0], "with")) break;
     if (lines[index]!.indent !== "") diagnostics.push(diagnostic("indentation", "WITH declarations must not be indented", spanForLine(lines[index]!)));
     const parsed = parseDefinition(lines, rawLines, index, depth);
@@ -1243,10 +1391,12 @@ function parseDocumentInner(source: string, allowParameters: boolean, depth: num
   const tree = queryResult.query === undefined || diagnostics.length > 0 ? undefined : {
     format: TUGQL_TREE_FORMAT,
     version: TUGQL_VERSION,
+    ...(databases.length === 0 ? {} : { databases }),
     ...(parameters.length === 0 ? {} : { parameters }),
     ...(definitions.length === 0 ? {} : { definitions }),
     query: queryResult.query,
   } satisfies TugQLTree;
+  if (depth === 0 && diagnostics.length === 0) diagnostics.push(...sourceDatabaseDiagnostics(databases, databaseSpans, lexed.tokens));
   if (diagnostics.length === 0) diagnostics.push(...keywordDiagnostics);
   const finalDiagnostics = uniqueDiagnostics(diagnostics);
   if (finalDiagnostics.length === 0 && tree !== undefined && depth === 0) {
@@ -1473,6 +1623,8 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
     if (header.format !== TUGQL_TREE_FORMAT || header.version !== TUGQL_VERSION) return fail("unsupported_version", "unsupported TugQTree format or version");
     validateTugQLTree(tree);
     if (parsed !== undefined && stableJSON(withoutComments(tree)) !== stableJSON(withoutComments(parsed.document.tree))) return fail("source_tree_mismatch", "TugQL source and semantic tree do not describe the same query");
+    const databaseFailure = validateTugQLTreeDatabases(tree, false);
+    if (databaseFailure !== undefined) return fail(databaseFailure.code, databaseFailure.message);
     let expandedSemanticNodes = authoredNodes;
     const authoredRootQueryNodes = countTugQLQueryNodes(tree.query, maxSemanticNodes);
 
@@ -1529,6 +1681,7 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
             throw new ResolveFailure("invalid_import", `import ${normalized} is not a valid TugQL document`);
           }
           const importedTree = imported.document.tree;
+          if ((importedTree.databases ?? []).length > 0) throw new ResolveFailure("nested_databases", `an imported saved query cannot declare DATABASES: ${normalized}`);
           const importedNodes = preflightTugQLTree(importedTree);
           expandedSemanticNodes = chargeSemanticNodes(expandedSemanticNodes, importedNodes);
           validateParameterSemantics(importedTree.parameters ?? []);
@@ -1653,13 +1806,17 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
           const joinedFrom = join.from as Record<string, unknown>;
           const rightSource = stringField(joinedFrom, "alias") || stringField(joinedFrom, "name");
           const joinType = typeof join.type === "string" && join.type.toLowerCase() === "left" ? "left" : "inner";
+          // Relationship metadata names no database, so it relates only sources of the joined source's own database.
+          const joinedDatabase = typeof joinedFrom.database === "string" ? joinedFrom.database : "";
+          const priorRelations = leftRelations.filter((leftRelation) => (leftRelation.database ?? "") === joinedDatabase);
+          const crossesDatabases = priorRelations.length !== leftRelations.length;
           let predicates: Record<string, unknown>[];
           if (Array.isArray(join.on) && join.on.length > 0) {
             if (join.on.length === 1 && (join.on[0] as Record<string, unknown>).op === "relationship") {
               const shorthand = (join.on[0] as Record<string, unknown>).left;
               if (!isFieldNode(shorthand)) throw new ResolveFailure("invalid_join_condition", "relationship shorthand requires one field reference");
               const candidates = context.relationships.flatMap((candidate) => {
-                return leftRelations.flatMap((leftRelation) => {
+                return priorRelations.flatMap((leftRelation) => {
                   const reversed = relationshipIsReversed(candidate, leftRelation.table, stringField(joinedFrom, "name"), leftRelation.source, rightSource);
                   if (!candidate.exactTypedEquality || reversed === undefined) return [];
                   const pair = candidate.pairs.find((item) => reversed
@@ -1668,6 +1825,7 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
                   return pair === undefined ? [] : [{ candidate, pair, reversed, leftRelation }];
                 });
               });
+              if (candidates.length === 0 && crossesDatabases) throw new ResolveFailure("cross_database_relationship", "a join between sources of different databases must state its ON condition");
               if (candidates.length !== 1) throw new ResolveFailure("relationship_required", candidates.length === 0 ? "ON shorthand does not identify an authorized relationship" : "ON shorthand matches multiple authorized relationships");
               const match = candidates[0]!;
               validateRelationshipFields(match.candidate, match.leftRelation, joinedFrom, match.reversed);
@@ -1683,7 +1841,7 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
                 return { left: fieldToRecursive(item.left), op: "==", right: fieldToRecursive(item.right) };
               });
               const relationMatches = context.relationships.flatMap((candidate) => {
-                return leftRelations.flatMap((leftRelation) => {
+                return priorRelations.flatMap((leftRelation) => {
                   const reversed = relationshipIsReversed(candidate, leftRelation.table, stringField(joinedFrom, "name"), leftRelation.source, rightSource);
                   return candidate.exactTypedEquality && reversed !== undefined && relationshipPredicatesMatch(predicates, candidate, leftRelation.source, rightSource, reversed)
                     ? [{ candidate, reversed, leftRelation }] : [];
@@ -1701,11 +1859,12 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
             }
           } else {
             const candidates = context.relationships.flatMap((candidate) => {
-              return leftRelations.flatMap((leftRelation) => {
+              return priorRelations.flatMap((leftRelation) => {
                 const reversed = relationshipIsReversed(candidate, leftRelation.table, stringField(joinedFrom, "name"), leftRelation.source, rightSource);
                 return candidate.exactTypedEquality && reversed !== undefined ? [{ candidate, reversed, leftRelation }] : [];
               });
             });
+            if (candidates.length === 0 && crossesDatabases) throw new ResolveFailure("cross_database_relationship", "a join between sources of different databases must state its ON condition");
             if (candidates.length > 1) throw new ResolveFailure("ambiguous_relationship", "more than one authorized exact relationship connects the joined sources");
             if (candidates.length === 0) throw new ResolveFailure("relationship_not_found", "no authorized exact relationship connects the joined sources");
             const { candidate: chosen, reversed, leftRelation } = candidates[0]!;
@@ -1723,9 +1882,9 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
           joins.push({ ...(join.type === undefined ? {} : { type: join.type }), from: joinRelation, on: loweredPredicates });
           // Bound composition as each joined body is inserted. Each component
           // was preflighted independently before it was copied here.
-          countTugQLQueryNodes({ name, ...(schema === undefined ? {} : { schema }), joins }, maxSemanticNodes);
+          countTugQLQueryNodes({ name, ...(database === undefined ? {} : { database }), ...(schema === undefined ? {} : { schema }), joins }, maxSemanticNodes);
         }
-        return { ...(schema === undefined ? {} : { schema }), name, ...(typeof raw.alias === "string" ? { alias: raw.alias } : {}), ...(joins.length === 0 ? {} : { joins }) };
+        return { ...(database === undefined ? {} : { database }), ...(schema === undefined ? {} : { schema }), name, ...(typeof raw.alias === "string" ? { alias: raw.alias } : {}), ...(joins.length === 0 ? {} : { joins }) };
       };
       cloned.from = relation(from);
       preflightTugQLTree({ format: TUGQL_TREE_FORMAT, version: TUGQL_VERSION, query: cloned as unknown as TugQLQueryDocument }, true);
@@ -1800,7 +1959,7 @@ export function resolveTugQL(document: TugQLDocument, context: TugQLResolveConte
     for (const definition of rootDefinitions) validateDefinition(definition);
     const inferredColumns = schemaless && !Array.isArray(loweredRootBody.query.columns) ? [] : inferOutputColumns(loweredRootBody.query, [], schemaTables, context.relationships);
     const recursiveDoc = stripInternalLineage(loweredRootBody.query) as TugQLQueryDocument;
-    const schemas: TugQLSchema = { tables: [...schemaTables.entries()].map(([key, table]) => ({ ...(table.schema === undefined ? {} : { schema: table.schema }), name: key.split("\0").at(-1) ?? "", fields: [...table.fields.keys()] })) };
+    const schemas: TugQLSchema = { tables: [...schemaTables.entries()].map(([key, table]) => ({ ...(table.database === undefined ? {} : { database: table.database }), ...(table.schema === undefined ? {} : { schema: table.schema }), name: key.split("\0").at(-1) ?? "", fields: [...table.fields.keys()] })) };
     const unsupportedFunction = findFunctionCall(recursiveDoc);
     if (unsupportedFunction !== undefined) throw new ResolveFailure("unsupported_function", `unsupported_function: scalar function ${JSON.stringify(unsupportedFunction)} is not executable by DALgo`);
     if (containsBareStar(recursiveDoc)) throw new ResolveFailure("unsupported_projection", "wildcard projection cannot be resolved to a stable typed output");
@@ -1891,7 +2050,12 @@ function withoutComments(tree: TugQLTree | undefined): unknown {
 }
 
 function validateTugQLTree(tree: TugQLTree): void {
-  validateKeys(tree, ["format", "version", "parameters", "definitions", "query", "comments"], "tree");
+  validateKeys(tree, ["format", "version", "databases", "parameters", "definitions", "query", "comments"], "tree");
+  if (!Array.isArray(tree.databases ?? [])) invalidTree("databases must be an array");
+  for (const database of tree.databases ?? []) {
+    validateKeys(database, ["name", "target"], "database");
+    if (typeof database.name !== "string" || (database.target !== undefined && typeof database.target !== "string")) invalidTree("database name and target must be strings");
+  }
   if (!Array.isArray(tree.parameters ?? [])) invalidTree("parameters must be an array");
   for (const parameter of tree.parameters ?? []) {
     validateKeys(parameter, ["name", "type", "required", "default"], "parameter");
@@ -1911,6 +2075,8 @@ function preflightTugQLTree(tree: TugQLTree, ignoreInternalLineage = false): num
     pending.push({ value, depth, kind });
   };
   enqueue(tree.query, 0);
+  // A declaration is a leaf: two strings checked by its own validator.
+  for (const database of tree.databases ?? []) enqueue(database, 0, "parameter");
   for (const parameter of tree.parameters ?? []) enqueue(parameter, 0, "parameter");
   for (const definition of tree.definitions ?? []) enqueue(definition, 0, "definition");
   while (pending.length > 0) {
@@ -3028,7 +3194,7 @@ function reindentTugQL(source: string, options: TugQLFormatOptions, originalToke
       level = queryDepth + scalarDepth;
       blocks.push({ kind: "select-items", level });
       scalarDepth += 1;
-    } else if (keyword(tokens[0], "parameters") && tokens[1]?.text === "(") {
+    } else if ((keyword(tokens[0], "parameters") && tokens[1]?.text === "(") || (tokens.length === 2 && isDatabasesHeader(tokens, 0))) {
       level = 0; blocks.push({ kind: "parameters", level });
     } else if (keyword(tokens[0], "with") && keyword(tokens[2], "as") && tokens[3]?.text === "(") {
       level = queryDepth + scalarDepth; blocks.push({ kind: "cte", level }); queryDepth += 1;

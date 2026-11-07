@@ -2,7 +2,8 @@
 
 import { LineCounter, Parser, isMap, isScalar, isSeq, parseDocument } from "yaml";
 import { parseTugQL } from "./tugql.js";
-import type { TugQLComment, TugQLCommentGroup, TugQLComments, TugQLDiagnostic, TugQLTree } from "./tugql.js";
+import { validateTugQLTreeDatabases } from "./tugql-databases.js";
+import type { TugQLComment, TugQLCommentGroup, TugQLComments, TugQLDatabase, TugQLDiagnostic, TugQLTree } from "./tugql.js";
 
 /**
  * Conversion between the TugQL text form and the structured TugQL YAML form.
@@ -39,7 +40,7 @@ type Shape =
   | "expr" | "aggregate" | "binary" | "call" | "plain";
 
 const keyOrder: Readonly<Record<Shape, readonly string[]>> = {
-  tree: ["format", "version", "parameters", "definitions", "query"],
+  tree: ["format", "version", "databases", "parameters", "definitions", "query"],
   param: ["name", "type", "required", "default"],
   definition: ["kind", "name", "query", "path", "using"],
   body: ["definitions", "query"],
@@ -384,7 +385,7 @@ export function tugqlToYaml(source: string): { readonly yaml?: string; readonly 
 // ---------------------------------------------------------------------------
 // YAML reading
 
-const anchorPaths = new Set(["parameters", "query.from", "query.where", "query.groupBy", "query.having", "query.orderBy", "query.limit", "query.columns"]);
+const anchorPaths = new Set(["databases", "parameters", "query.from", "query.where", "query.groupBy", "query.having", "query.orderBy", "query.limit", "query.columns"]);
 
 function isAnchorPath(path: string): boolean {
   if (anchorPaths.has(path)) return true;
@@ -735,7 +736,9 @@ function printSource(from: Rec): string {
     if (segment === "" || /[{}/]/u.test(segment)) unsupported(`source path segment ${JSON.stringify(segment)} has no text spelling`);
     return identText(segment, true);
   });
-  const text = parts.join(separator);
+  let text = parts.join(separator);
+  // validateTugQLTreeDatabases admitted only declared, printable aliases.
+  if (from.database !== undefined) text = `${str(from.database, "from.database")}::${text}`;
   const alias = optionalStr(from, "alias", "from");
   return alias === "" ? text : `${text} as ${identText(alias, true)}`;
 }
@@ -793,7 +796,7 @@ function printQueryUnits(queryValue: unknown, indent: string, base: string): Pri
   }
   const from = record(query.from, "from");
   checkKeys(from, ["database", "scan", "schema", "name", "alias", "as", "query", "joins"], "from");
-  if (from.database !== undefined || from.scan !== undefined || from.query !== undefined) unsupported("from database, scan and query have no text spelling");
+  if (from.scan !== undefined || from.query !== undefined) unsupported("from scan and query have no text spelling");
   const units: PrintUnit[] = [{ path: anchor(".from"), lines: [`${indent}from ${printSource(from)}`] }];
   list(from.joins, "joins").forEach((joinValue, k) => {
     const join = record(joinValue, "join");
@@ -801,7 +804,7 @@ function printQueryUnits(queryValue: unknown, indent: string, base: string): Pri
     const joinFrom = asRec(join.from);
     const type = optionalStr(join, "type", "join");
     if (joinFrom?.name === undefined || joinFrom.name === "" || join.hints !== undefined || (type !== "" && type !== "left")
-      || list(joinFrom.joins, "joins").length > 0 || joinFrom.database !== undefined || joinFrom.scan !== undefined || joinFrom.query !== undefined) {
+      || list(joinFrom.joins, "joins").length > 0 || joinFrom.scan !== undefined || joinFrom.query !== undefined) {
       unsupported(`join ${k.toString()} has no text spelling`);
     }
     const joinPath = anchor(`.from.joins[${k.toString()}]`);
@@ -869,10 +872,19 @@ function printCommentLines(indent: string, comments: readonly TugQLComment[]): s
 }
 
 function printTree(tree: TugQLTree): string {
-  checkKeys(tree as unknown as Rec, ["format", "version", "parameters", "definitions", "query", "comments"], "tree");
+  checkKeys(tree as unknown as Rec, ["format", "version", "databases", "parameters", "definitions", "query", "comments"], "tree");
   const header = tree as { readonly format: unknown; readonly version: unknown };
   if (header.format !== "tugqtree" || header.version !== 1) invalid("unsupported TugQTree format or version");
   validateComments(tree.comments);
+  const databases = list(tree.databases, "databases").map((value): TugQLDatabase => {
+    const database = record(value, "database");
+    checkKeys(database, ["name", "target"], "database");
+    const target = database.target === undefined ? "" : str(database.target, "database target");
+    return { name: str(database.name, "database name"), ...(target === "" ? {} : { target }) };
+  });
+  if ((tree as { readonly query?: unknown }).query === undefined) invalid("query is required");
+  const databaseFailure = validateTugQLTreeDatabases({ databases, definitions: tree.definitions, query: tree.query }, true);
+  if (databaseFailure !== undefined) throw new ConversionError(databaseFailure.code, databaseFailure.message);
   const comments = tree.comments;
   const used = new Set<string>();
   const lines: string[] = [];
@@ -887,6 +899,9 @@ function printTree(tree: TugQLTree): string {
     lines.push(group.trailing === undefined ? first : `${first} -- ${group.trailing.text}`.trimEnd());
     lines.push(...unit.lines.slice(1));
   };
+  if (databases.length > 0) {
+    emit({ path: "databases", lines: ["databases (", ...databases.map((database) => `  ${database.name}${database.target === undefined ? "" : ` = ${quoteString(database.target)}`}`), ")"] }, "");
+  }
   const parameters = list(tree.parameters, "parameters");
   if (parameters.length > 0) {
     emit({ path: "parameters", lines: ["parameters (", ...parameters.map((parameter) => `  ${printParameter(parameter)}`), ")"] }, "");
@@ -942,6 +957,19 @@ export function yamlToTugQL(yaml: string): { readonly source?: string; readonly 
   const tree = asRec(data);
   if (tree === undefined) return { diagnostics: [conversionDiagnostic("invalid_tree", "TugQTree must be a mapping")] };
   if (tree.format !== "tugqtree" || tree.version !== 1) return { diagnostics: [conversionDiagnostic("invalid_tree", "unsupported TugQTree format or version")] };
+  if (tree.databases !== undefined) {
+    const declarations = tree.databases;
+    if (!Array.isArray(declarations)) return { diagnostics: [conversionDiagnostic("invalid_tree", "databases must be a sequence")] };
+    for (const [index, declaration] of (declarations as unknown[]).entries()) {
+      const item = asRec(declaration);
+      const bad = item === undefined ? "must be a mapping"
+        : Object.keys(item).find((key) => key !== "name" && key !== "target") !== undefined ? "has an unknown field"
+          : typeof item.name !== "string" || item.name === "" ? "name must be a non-empty string"
+            : item.target !== undefined && (typeof item.target !== "string" || item.target === "") ? "target must be a non-empty string"
+              : undefined;
+      if (bad !== undefined) return { diagnostics: [conversionDiagnostic("invalid_tree", `databases[${index.toString()}]: ${bad}`)] };
+    }
+  }
   const comments = readYamlComments(yaml, document.contents, lines);
   return printTugQL({ ...(tree as unknown as TugQLTree), ...(comments === undefined ? {} : { comments }) });
 }
