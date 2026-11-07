@@ -8,7 +8,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const provenance = JSON.parse(readFileSync(join(root, ".github/tugql-fixtures.json"), "utf8"));
 const localOnly = process.argv.includes("--local-only");
 const expectedFormats = new Map(provenance.fixtures.map(({ name, format }) => [name, format]));
-const requiredNames = ["suite.json", "resolve.json", "format.json", "execute.json", "budget.json", "comments.json"];
+const requiredNames = ["suite.json", "resolve.json", "format.json", "execute.json", "budget.json", "comments.json", "cross-database.json"];
 
 if (provenance.schema !== "dalgo.tugql-fixture-provenance.v1" ||
     provenance.providerDirectory !== "tugql/testdata/tugql/v1" ||
@@ -20,7 +20,7 @@ if (provenance.schema !== "dalgo.tugql-fixture-provenance.v1" ||
 const consumerDir = join(root, provenance.consumerDirectory);
 const manifest = readFileSync(join(consumerDir, "manifest.sha256"));
 const manifestRows = manifest.toString("utf8").trim().split(/\n/u).map((line) => {
-  const match = /^([0-9a-f]{64})  tugql\/testdata\/tugql\/v1\/([a-z]+)\.json$/u.exec(line);
+  const match = /^([0-9a-f]{64})  tugql\/testdata\/tugql\/v1\/([a-z-]+)\.json$/u.exec(line);
   if (match === null) throw new Error(`invalid manifest row: ${line}`);
   return [ `${match[2]}.json`, match[1] ];
 });
@@ -33,7 +33,7 @@ for (const name of requiredNames) {
   const digest = createHash("sha256").update(bytes).digest("hex");
   if (digest !== digests.get(name)) throw new Error(`${name} does not match the vendored manifest digest`);
   const suite = JSON.parse(bytes.toString("utf8"));
-  const hasCases = name === "comments.json" ? Array.isArray(suite.textCases) && Array.isArray(suite.yamlCases) : Array.isArray(suite.cases);
+  const hasCases = name === "cross-database.json" ? ["textCases", "errorCases", "treeCases", "yamlCases", "formatCases", "resolveCases"].every((key) => Array.isArray(suite[key])) : name === "comments.json" ? Array.isArray(suite.textCases) && Array.isArray(suite.yamlCases) : Array.isArray(suite.cases);
   if (suite.format !== expectedFormats.get(name) || suite.version !== 1 || !hasCases) {
     throw new Error(`${name} has an unexpected format, version, or cases field`);
   }

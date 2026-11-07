@@ -28,6 +28,10 @@
     {
       "name": "comments.json",
       "format": "tugql-comments-suite"
+    },
+    {
+      "name": "cross-database.json",
+      "format": "tugql-cross-database-suite"
     }
   ],
   "slashPaths": {
