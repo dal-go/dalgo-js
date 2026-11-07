@@ -22,21 +22,25 @@ export function validDatabaseName(name: string): boolean {
 
 /**
  * Whether a target carries a password. Credentials come from the caller.
- * (1) After the last `://` (or in the whole target when there is none), user
- * information is the text before the first `@` when that text has no `/`; it
- * carries a password when it contains `:`. (2) A `password`, `pwd` or `passwd`
- * key followed by `=` at the target start or right after `;`, `&`, `?` or
- * a space or a tab is a password parameter.
+ * (1) At the target start and right after every `://`, user information is
+ * the text before the next `@` when that text has no `/`; it carries a password
+ * when it contains `:`. (2) A `password`, `pwd` or `passwd` key followed by `=`
+ * at the target start or right after `;`, `&`, `?`, `,`, a space or a tab is a
+ * password parameter.
  */
 export function targetHasPassword(target: string): boolean {
-  const scheme = target.lastIndexOf("://");
-  const rest = scheme < 0 ? target : target.slice(scheme + 3);
-  const at = rest.indexOf("@");
-  if (at >= 0) {
-    const userInfo = rest.slice(0, at);
-    if (!userInfo.includes("/") && userInfo.includes(":")) return true;
+  for (let start = 0; ;) {
+    const rest = target.slice(start);
+    const at = rest.indexOf("@");
+    if (at >= 0) {
+      const userInfo = rest.slice(0, at);
+      if (!userInfo.includes("/") && userInfo.includes(":")) return true;
+    }
+    const next = rest.indexOf("://");
+    if (next < 0) break;
+    start += next + 3;
   }
-  return /(^|[;&? \t])(password|pwd|passwd)[ \t]*=/iu.test(target);
+  return /(^|[;&?, \t])(password|pwd|passwd)[ \t]*=/iu.test(target);
 }
 
 /** Checks declarations with the rules the parser applies to the `databases (` block; returns the first failure. */
