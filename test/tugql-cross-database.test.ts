@@ -32,7 +32,7 @@ interface CrossDatabaseVectors {
   readonly treeCases: readonly { readonly name: string; readonly operation: "print" | "resolve"; readonly tree: TugQLTree; readonly expected: { readonly code?: string; readonly query?: string; readonly text?: string } }[];
   readonly yamlCases: readonly { readonly name: string; readonly yaml: string; readonly expected: { readonly code?: string; readonly text?: string } }[];
   readonly formatCases: readonly { readonly name: string; readonly text: string; readonly options: TugQLFormatOptions; readonly expected: { readonly text: string } }[];
-  readonly resolveCases: readonly { readonly name: string; readonly text: string; readonly context?: Partial<TugQLResolveContext>; readonly expected: { readonly code?: string; readonly query?: string; readonly schemaVersion?: string; readonly columns?: readonly string[] } }[];
+  readonly resolveCases: readonly { readonly name: string; readonly text: string; readonly context?: Partial<TugQLResolveContext>; readonly expected: { readonly code?: string; readonly query?: string; readonly schemaVersion?: string; readonly columns?: readonly string[]; readonly outputColumns?: readonly { readonly name: string; readonly type: string; readonly lineage: readonly unknown[] | null }[] } }[];
 }
 
 const corpus = new URL("./testdata/tugql/v1/", import.meta.url);
@@ -159,6 +159,10 @@ describe("TugQL cross-database vectors", () => {
         expect(normalizeScalarAliases(parseYaml(stringifyRecursiveTugQL(resolved.resolved!.query)))).toEqual(normalizedQuery(item.expected.query!));
         expect(resolved.resolved!.schemaVersion).toBe(item.expected.schemaVersion);
         expect(resolved.resolved!.columns.map((column) => column.name)).toEqual(item.expected.columns);
+        // A null lineage equals an empty one.
+        const normalize = (columns: readonly { readonly name: string; readonly type: string; readonly lineage: readonly unknown[] | null }[]): unknown => columns.map((column) => ({ name: column.name, type: column.type, lineage: column.lineage ?? [] }));
+        expect(item.expected.outputColumns).toBeDefined();
+        expect(normalize(resolved.resolved!.columns)).toEqual(normalize(item.expected.outputColumns!));
       });
     }
   });
@@ -178,7 +182,7 @@ describe("TugQL cross-database edges", () => {
   const withTarget = (target: string): string => `databases (\n  pg = '${target}'\n)\nfrom pg::Invoice\nselect Id`;
 
   it("rejects passwords in targets", () => {
-    for (const target of ["postgres://app:secret@db/x", "app:secret@db/x", "host=db;Password = x", "dsn?pwd=1", "a&passwd=1"]) {
+    for (const target of ["postgres://app:secret@db/x", "app:secret@db/x", "host=db;Password = x", "dsn?pwd=1", "a&passwd=1", "h=1;pwd\t\t= x"]) {
       expect(parseTugQL(withTarget(target)).diagnostics[0]?.code, target).toBe("database_credentials");
     }
     for (const target of ["postgres://app@db/x", "datatug://chinook/sales?env=prod", "https://h/a@b:c", "x=password"]) {

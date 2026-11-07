@@ -26,7 +26,7 @@ export function validDatabaseName(name: string): boolean {
  * information is the text before the first `@` when that text has no `/`; it
  * carries a password when it contains `:`. (2) A `password`, `pwd` or `passwd`
  * key followed by `=` at the target start or right after `;`, `&`, `?` or
- * whitespace is a password parameter.
+ * a space or a tab is a password parameter.
  */
 export function targetHasPassword(target: string): boolean {
   const scheme = target.lastIndexOf("://");
@@ -36,7 +36,7 @@ export function targetHasPassword(target: string): boolean {
     const userInfo = rest.slice(0, at);
     if (!userInfo.includes("/") && userInfo.includes(":")) return true;
   }
-  return /(^|[;&?\s])(password|pwd|passwd)\s*=/iu.test(target);
+  return /(^|[;&? \t])(password|pwd|passwd)[ \t]*=/iu.test(target);
 }
 
 /** Checks declarations with the rules the parser applies to the `databases (` block; returns the first failure. */

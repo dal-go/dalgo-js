@@ -922,7 +922,7 @@ function parseSourceDatabase(tokens: readonly Token[]): { readonly database?: st
   if (tokens.length < 2 || !isSymbol(tokens[1], "::")) return { start: 0 };
   const alias = tokens[0]!;
   if (tokens.length < 3 || !tokensTouch(alias, tokens[1]!) || !tokensTouch(tokens[1]!, tokens[2]!) || alias.kind !== "word" || !validDatabaseName(alias.text)) {
-    throw new Error("a database qualifier is alias::path, with an unquoted alias and no spaces around '::'");
+    throw new PathError("invalid_database_qualifier", "a database qualifier is alias::path, with an unquoted alias and no spaces around '::'", { start: alias.span.start, end: tokens[1]!.span.end });
   }
   return { database: alias.text, start: 2 };
 }
