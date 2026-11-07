@@ -480,8 +480,14 @@ async function scanRelations(
       limit: relation.scan?.limit ?? limits.maxFetchedRows + 1,
     };
     if (prepared === undefined && relation.database !== undefined && resolveExecutor === undefined) planError(aliasOf(relation), "database-qualified relation requires resolveExecutor");
+    let scanner = executor;
+    if (prepared === undefined && resolveExecutor !== undefined) {
+      const resolved = resolveExecutor(relation) as QueryExecutor | undefined;
+      if (resolved === undefined && relation.database !== undefined) planError(aliasOf(relation), `resolveExecutor returned no executor for database ${relation.database}`);
+      scanner = resolved ?? executor;
+    }
     const page = prepared === undefined
-      ? await (resolveExecutor?.(relation) ?? executor).query(source)
+      ? await scanner.query(source)
       : await prepared.execute(structuredClone(source));
     if (prepared === undefined) requireUnannotatedQueryInput(page);
     else {
