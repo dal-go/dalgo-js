@@ -1,0 +1,7 @@
+---
+"@dalgo/core": minor
+---
+
+TugQL text queries can read several databases. A root `databases (` block declares one alias per line, `alias` or `alias = '<target>'` (the target is single-quoted, opaque to DALgo, and rejected with `database_credentials` when it carries a password), and `alias::path` qualifies a `FROM` or `JOIN` source in the main query, a CTE or a scalar subquery. The tree gains `databases?: readonly TugQLDatabase[]` (`{ name, target? }`), a qualified source lowers to the structured form's existing `database` key, and `printTugQL` / `yamlToTugQL` spell that key back as `alias::`. New diagnostics: `invalid_databases`, `unclosed_databases`, `invalid_database`, `duplicate_database`, `database_credentials`, `undeclared_database`, `unused_database`, `nested_databases`, `cross_database_relationship` (a cross-database join needs an explicit `on`) and `invalid_database_qualifier`. With declarations present, an unqualified source matches only a schema without a database. Documents without a `databases` block parse, resolve and print exactly as before. The parser passes the shared Go vectors in `test/testdata/tugql/v1/cross-database.json`.
+
+`RecursiveQueryExecutionOptions` gains `resolveExecutor(database)`, which picks the executor for a qualified source. A qualified source whose database has no executor now fails with `resolveExecutor returned no executor for database <name>` instead of falling back to the default executor, in recursive and joined execution alike.
