@@ -3,7 +3,7 @@
   "version": "0.9.0",
   "description": "Database abstraction layer for TypeScript and browser applications",
   "type": "module",
-  "packageManager": "pnpm@11.28.9",
+  "packageManager": "pnpm@11.28.12",
   "sideEffects": false,
   "exports": {
     ".": {
