@@ -282,7 +282,8 @@ async function projectGroups(executor: QueryExecutor, query: RecursiveTugQLQuery
     const value: Data = {};
     for (const [index, column] of query.columns.entries()) {
       const output = column.as ?? fieldOutput(column, `${path}.columns[${index.toString()}]`);
-      value[output] = (await expression(executor, column.expression, row, budget, options, `${path}.columns[${index.toString()}]`, group)) ?? null;
+      const projected = (await expression(executor, column.expression, row, budget, options, `${path}.columns[${index.toString()}]`, group)) ?? null;
+      setOwnData(value, output, projected);
     }
     result.push(value);
   }
@@ -396,7 +397,19 @@ function joinEqual(left: unknown, right: unknown): boolean {
 }
 
 function field(row: Environment, reference: QueryFieldReference): unknown { return row.get(resolvedSources.get(reference) ?? reference.source)?.data[reference.field]; }
-function merge(row: Environment): Data { const value: Data = {}; for (const record of row.values()) if (record !== undefined) Object.assign(value, record.data); return value; }
+function setOwnData(value: Data, key: PropertyKey, item: unknown): void { Object.defineProperty(value, key, { value: item, enumerable: true, writable: true, configurable: true }); }
+function merge(row: Environment): Data {
+  const value: Data = {};
+  for (const record of row.values()) {
+    if (record === undefined) continue;
+    const data = record.data as Record<PropertyKey, unknown>;
+    for (const key of Reflect.ownKeys(data)) {
+      if (Object.getOwnPropertyDescriptor(data, key)?.enumerable !== true) continue;
+      setOwnData(value, key, data[key]);
+    }
+  }
+  return value;
+}
 function fieldOutput(column: RecursiveTugQLColumn, path: string): string { if (column.expression.kind === "field") return column.expression.field.field; if (column.expression.kind === "aggregate") return column.expression.function; if (column.expression.kind === "query" && column.expression.query.as !== undefined) return column.expression.query.as; return shape(path, "non-field column requires as"); }
 function equal(left: unknown, right: unknown): boolean { return typeof left === "number" && typeof right === "number" ? Number.isFinite(left) && Number.isFinite(right) && left === right : left === right; }
 function compare(left: unknown, right: unknown): number { return left === right ? 0 : left === null || left === undefined ? -1 : right === null || right === undefined ? 1 : left < right ? -1 : 1; }
