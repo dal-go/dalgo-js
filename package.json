@@ -1,9 +1,9 @@
 {
   "name": "@dalgo/core",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Database abstraction layer for TypeScript and browser applications",
   "type": "module",
-  "packageManager": "pnpm@11.28.9",
+  "packageManager": "pnpm@12.21.0",
   "sideEffects": false,
   "exports": {
     ".": {
@@ -46,10 +46,10 @@
   "devDependencies": {
     "@changesets/cli": "3.0.3",
     "@eslint/js": "10.0.1",
-    "eslint": "10.13.0",
+    "eslint": "10.15.0",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.72.1",
-    "vitest": "5.0.5"
+    "typescript-eslint": "8.73.0",
+    "vitest": "5.1.0"
   },
   "dependencies": {
     "yaml": "^2.9.1"
