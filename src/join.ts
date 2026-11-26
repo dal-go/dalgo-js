@@ -818,12 +818,21 @@ function stableOrder(rows: readonly MaterializedRow[], query: JoinedTugQLQuery):
   }).map(({ row }) => row);
 }
 
+function setOwnData(value: Data, key: PropertyKey, item: unknown): void {
+  Object.defineProperty(value, key, { value: item, enumerable: true, writable: true, configurable: true });
+}
+
 function project(value: MaterializedRow, query: JoinedTugQLQuery, aliases: readonly string[]): Data {
   if (query.columns === undefined) {
     const result: Data = {};
     for (const alias of aliases) {
       const record = value.row.aliases.get(alias);
-      if (record !== undefined) Object.assign(result, record.data);
+      if (record === undefined) continue;
+      const data = record.data as Record<PropertyKey, unknown>;
+      for (const key of Reflect.ownKeys(data)) {
+        if (Object.getOwnPropertyDescriptor(data, key)?.enumerable !== true) continue;
+        setOwnData(result, key, data[key]);
+      }
     }
     return result;
   }
@@ -834,7 +843,7 @@ function project(value: MaterializedRow, query: JoinedTugQLQuery, aliases: reado
     if (expression === undefined) planError(location, "column expression is required");
     const output = expressionValue(value.row, value.group, expression, location) ?? null;
     rejectNonFinite(output, location);
-    result[columnOutput(column, location)] = output;
+    setOwnData(result, columnOutput(column, location), output);
   }
   return result;
 }
@@ -1415,7 +1424,7 @@ function streamProject(group: StreamGroup, query: JoinedTugQLQuery, aliases: rea
     if (column.expression === undefined) planError(location, "column expression is required");
     const output = streamExpression(group, column.expression, location, exact) ?? null;
     rejectNonFinite(output, location);
-    data[columnOutput(column, location)] = output;
+    setOwnData(data, columnOutput(column, location), output);
   }
   return data;
 }
