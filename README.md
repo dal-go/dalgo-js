@@ -15,6 +15,8 @@ The adapters are being migrated to the `@dalgo/*` scope separately; the
 
 In [DataTug](https://datatug.app), current DALgo work uses the [Go implementation](https://github.com/dal-go/dalgo); this TypeScript implementation remains separate. Read [how DataTug’s development tools were built](https://datatug.app/en/under-the-hood/tools-we-built/#implement).
 
+For the language contract, see [TugQL.org](https://tugql.org/) and the [TugQL specification](https://github.com/tugql/tugql). The [Go TugQL package](https://github.com/dal-go/dalgo/tree/main/tugql) has its own supported profile; check each implementation and adapter before relying on the same query behavior. [QueryDock](https://querydock.run/) is a related browser SQL playground for PostgreSQL-compatible PGlite, SQLite and DuckDB. Its current editors do not execute TugQL.
+
 ## Install
 
 Install the published core package:
