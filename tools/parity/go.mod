@@ -3,7 +3,7 @@ module github.com/dal-go/dalgo-js/tools/parity
 go 1.26.0
 
 require (
-	github.com/dal-go/dalgo v0.102.6
+	github.com/dal-go/dalgo v0.104.0
 	github.com/dal-go/record v0.1.5
 )
 
